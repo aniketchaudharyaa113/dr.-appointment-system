@@ -1,0 +1,58 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    scroll-behavior: smooth;
+  }
+  body {
+    @apply bg-paper text-ink font-body antialiased;
+  }
+  h1, h2, h3, h4 {
+    @apply font-display;
+  }
+  :focus-visible {
+    outline: 2px solid theme("colors.sage.500");
+    outline-offset: 2px;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
+}
+
+@layer components {
+  /* Signature element: a thin pulse/ECG line used as a section divider */
+  .pulse-divider {
+    width: 100%;
+    height: 20px;
+  }
+
+  /* Torn-ticket-stub top edge for doctor / appointment cards */
+  .ticket-edge {
+    background-image: radial-gradient(circle at 10px 0, transparent 6px, var(--ticket-bg, #F4F6F4) 6.5px);
+    background-size: 20px 12px;
+    background-repeat: repeat-x;
+    background-position: top;
+    height: 12px;
+    margin-bottom: -1px;
+  }
+
+  .btn-primary {
+    @apply inline-flex items-center justify-center gap-2 rounded-card bg-sage-500 px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-sage-600 disabled:cursor-not-allowed disabled:opacity-50;
+  }
+  .btn-secondary {
+    @apply inline-flex items-center justify-center gap-2 rounded-card border border-line bg-white px-5 py-2.5 text-sm font-semibold text-ink transition-colors hover:border-sage-500 hover:text-sage-600 disabled:cursor-not-allowed disabled:opacity-50;
+  }
+  .input-field {
+    @apply w-full rounded-card border border-line bg-white px-4 py-2.5 text-sm text-ink placeholder:text-inkSoft/50 focus:border-sage-500 focus:outline-none;
+  }
+  .card {
+    @apply rounded-card border border-line bg-white shadow-card;
+  }
+}

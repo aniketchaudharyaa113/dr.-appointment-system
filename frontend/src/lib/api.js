@@ -1,0 +1,65 @@
+const BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:5000";
+
+// Every request goes through here, so token attachment and error
+// shaping only has to be written once.
+async function request(path, { method = "GET", body, token } = {}) {
+  const headers = { "Content-Type": "application/json" };
+  if (token) headers.Authorization = `Bearer ${token}`;
+
+  const res = await fetch(`${BASE_URL}${path}`, {
+    method,
+    headers,
+    body: body ? JSON.stringify(body) : undefined,
+  });
+
+  const data = await res.json().catch(() => ({}));
+
+  if (!res.ok) {
+    throw new Error(data.error || `Request failed (${res.status})`);
+  }
+  return data;
+}
+
+export const api = {
+  signup: (payload) => request("/auth/signup", { method: "POST", body: payload }),
+  login: (payload) => request("/auth/login", { method: "POST", body: payload }),
+
+  getDoctors: (params = {}) => {
+    const qs = new URLSearchParams(params).toString();
+    return request(`/doctors${qs ? `?${qs}` : ""}`);
+  },
+  getDoctorById: (id) => request(`/doctors/${id}`),
+  getBookedSlots: (id) => request(`/doctors/${id}/booked-slots`),
+  getMyDoctorProfile: (token) => request("/doctors/me", { token }),
+  updateMyDoctorProfile: (payload, token) =>
+    request("/doctors/me", { method: "PATCH", body: payload, token }),
+  setAvailability: (slots, token) =>
+    request("/doctors/me/availability", { method: "PATCH", body: { slots }, token }),
+  getMyEarnings: (token) => request("/doctors/me/earnings", { token }),
+
+  symptomSearch: (q, lat, lng) => {
+    const params = new URLSearchParams({ q });
+    if (lat && lng) {
+      params.set("lat", lat);
+      params.set("lng", lng);
+    }
+    return request(`/search/symptom?${params.toString()}`);
+  },
+
+  createAppointment: (payload, token) =>
+    request("/appointments", { method: "POST", body: payload, token }),
+  getMyAppointments: (token) => request("/appointments/mine", { token }),
+  cancelAppointment: (id, token) =>
+    request(`/appointments/${id}/cancel`, { method: "PATCH", token }),
+  completeAppointment: (id, notes, token) =>
+    request(`/appointments/${id}/complete`, { method: "PATCH", body: { notes }, token }),
+
+  createReview: (payload, token) =>
+    request("/reviews", { method: "POST", body: payload, token }),
+
+  getPendingDoctors: (token) => request("/admin/doctors/pending", { token }),
+  verifyDoctor: (id, approve, token) =>
+    request(`/admin/doctors/${id}/verify`, { method: "PATCH", body: { approve }, token }),
+  getAllAppointments: (token) => request("/admin/appointments", { token }),
+  getStats: (token) => request("/admin/stats", { token }),
+};
