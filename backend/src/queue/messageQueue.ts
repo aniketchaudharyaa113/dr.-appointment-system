@@ -58,14 +58,16 @@ export const defaultJobOptions: JobsOptions = {
 
 export function createRedisConnection(customUrl?: string): Redis {
   const url = customUrl || process.env.REDIS_URL || "redis://localhost:6379";
-  return new Redis(url, {
+  const client = new Redis(url, {
     maxRetriesPerRequest: null,
     enableReadyCheck: false,
     retryStrategy(times) {
-      if (times > 10) return null;
-      return Math.min(times * 100, 2000);
+      if (times > 5) return null;
+      return Math.min(times * 100, 1000);
     },
   });
+  client.on("error", () => {});
+  return client;
 }
 
 let sharedRedisConn: Redis | null = null;
