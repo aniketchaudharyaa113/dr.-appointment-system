@@ -79,6 +79,12 @@ export const api = {
     return request(`/search/symptom?${params.toString()}`);
   },
 
+  holdSlot: (payload, token) =>
+    request("/appointments/hold", { method: "POST", body: payload, token }),
+  releaseHold: (payload, token) =>
+    request("/appointments/release-hold", { method: "POST", body: payload, token }),
+  getHeldSlots: (doctorId, token) =>
+    request(`/doctors/${doctorId}/held-slots`, { token }),
   createAppointment: (payload, token) =>
     request("/appointments", { method: "POST", body: payload, token }),
   getMyAppointments: (token, params = {}) => {

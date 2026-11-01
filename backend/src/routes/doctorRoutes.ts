@@ -10,6 +10,7 @@ import {
   addDoctorLeave,
   removeDoctorLeave,
 } from "../controllers/doctorController";
+import { getDoctorHeldSlots } from "../controllers/appointmentController";
 import { verifyToken, requireRole } from "../middleware/authMiddleware";
 import { validate } from "../middleware/validate";
 import {
@@ -54,5 +55,6 @@ router.get("/me/earnings", verifyToken, requireRole("DOCTOR"), getMyEarnings);
 // Public (must come after /me routes)
 router.get("/:id", validate({ params: uuidParamSchema }), getDoctorById);
 router.get("/:id/booked-slots", validate({ params: uuidParamSchema }), getBookedSlots);
+router.get("/:id/held-slots", validate({ params: uuidParamSchema }), getDoctorHeldSlots);
 
 export default router;

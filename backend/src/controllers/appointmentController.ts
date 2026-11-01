@@ -3,7 +3,8 @@ import pool from "../db/pool";
 import { AuthRequest } from "../types";
 import { getIO } from "../sockets/slotEvents";
 import { parseSlot, slotKey, nowInClinicTimezone } from "../utils/datetime";
-import { cacheDel, cacheDelPattern } from "../cache/redis";
+import crypto from "crypto";
+import { cacheDel, cacheDelPattern, getRedisClient, isRedisConnected } from "../cache/redis";
 import { insertOutboxEvent } from "../queue/outboxRelay";
 import { scheduleAppointmentReminders, cancelAppointmentReminders } from "../services/reminderService";
 
@@ -16,10 +17,27 @@ export async function createAppointment(req: AuthRequest, res: Response, next: N
   let inTransaction = false;
   try {
     const patientId = req.user!.id;
-    const { doctorId, slotTime } = req.body;
+    const { doctorId, slotTime, holdToken } = req.body;
 
     if (!doctorId || !slotTime) {
       return res.status(400).json({ error: "doctorId and slotTime are required" });
+    }
+
+    const redis = getRedisClient();
+    const holdKey = `hold:${doctorId}:${slotTime}`;
+    if (redis && isRedisConnected()) {
+      const currentHolder = await redis.get(holdKey);
+      if (currentHolder) {
+        const [holderId, token] = currentHolder.split(":");
+        if (holderId !== patientId) {
+          return res.status(409).json({ error: "This slot is currently held by another patient." });
+        }
+        if (holdToken && token && holdToken !== token) {
+          return res.status(409).json({ error: "Invalid hold token for this slot." });
+        }
+      } else if (holdToken) {
+        return res.status(409).json({ error: "Slot hold has expired. Please re-select the slot." });
+      }
     }
 
     const slot = parseSlot(slotTime);
@@ -202,6 +220,14 @@ export async function createAppointment(req: AuthRequest, res: Response, next: N
     // Invalidate caches
     await cacheDel(`medibook:slots:${doctorId}`);
     await cacheDelPattern(`medibook:admin:*`);
+
+    // Release slot hold if active
+    if (redis && isRedisConnected()) {
+      await redis.del(holdKey);
+    }
+    try {
+      getIO().to(`doctor:${doctorId}`).emit("slot-hold-released", { doctorId, slotTime: storedSlotTime });
+    } catch {}
 
     // Real-time broadcast to doctor room
     getIO().to(`doctor:${doctorId}`).emit("slot-booked", { doctorId, slotTime: storedSlotTime });
@@ -794,5 +820,146 @@ export async function rescheduleAppointment(req: AuthRequest, res: Response, nex
     next(err);
   } finally {
     client.release();
+  }
+}
+
+// POST /appointments/hold - creates a 5-minute Redis hold
+export async function holdSlot(req: AuthRequest, res: Response, next: NextFunction) {
+  try {
+    const userId = req.user!.id;
+    const { doctorId, slotTime } = req.body;
+    const redis = getRedisClient();
+
+    // 1. Check if slot is already booked in database
+    const existing = await pool.query(
+      `SELECT id FROM appointments
+       WHERE doctor_id = $1 AND slot_time = $2 AND status IN ('PENDING', 'CONFIRMED')`,
+      [doctorId, slotTime]
+    );
+    if (existing.rows.length > 0) {
+      return res.status(409).json({ error: "That slot is already booked. Please choose another." });
+    }
+
+    // 2. Validate format & not past
+    const slot = parseSlot(slotTime);
+    if (!slot) {
+      return res.status(400).json({ error: "slotTime must look like YYYY-MM-DDTHH:MM:SS" });
+    }
+    if (slotKey(slot) <= slotKey(nowInClinicTimezone())) {
+      return res.status(400).json({ error: "slotTime must be in the future" });
+    }
+
+    // 3. Check leave
+    const pad = (n: number) => String(n).padStart(2, "0");
+    const bookingDate = `${slot.year}-${pad(slot.month)}-${pad(slot.day)}`;
+    const leaveCheck = await pool.query(
+      `SELECT id, reason FROM doctor_leaves WHERE doctor_id = $1 AND leave_date = $2`,
+      [doctorId, bookingDate]
+    );
+    if (leaveCheck.rows.length > 0) {
+      return res.status(400).json({
+        error: `Doctor is unavailable on this date (${leaveCheck.rows[0].reason || "Doctor on leave"})`,
+      });
+    }
+
+    const holdKey = `hold:${doctorId}:${slotTime}`;
+    const holdToken = crypto.randomUUID();
+    const holdVal = `${userId}:${holdToken}`;
+
+    if (redis && isRedisConnected()) {
+      // SET hold:{doctor}:{slot} {userId} NX EX 300
+      const acquired = await redis.set(holdKey, holdVal, "NX", "EX", 300);
+      if (!acquired) {
+        const currentHolder = await redis.get(holdKey);
+        if (currentHolder && currentHolder.startsWith(`${userId}:`)) {
+          const existingToken = currentHolder.split(":")[1];
+          const ttl = await redis.ttl(holdKey);
+          return res.status(200).json({
+            message: "Slot already held by you",
+            holdToken: existingToken,
+            doctorId,
+            slotTime,
+            expiresIn: ttl > 0 ? ttl : 300,
+          });
+        }
+        return res.status(409).json({ error: "This slot is currently held by another patient." });
+      }
+    }
+
+    // Emit live slot-held event to doctor room
+    try {
+      getIO().to(`doctor:${doctorId}`).emit("slot-held", {
+        doctorId,
+        slotTime,
+        heldBy: userId,
+      });
+    } catch {}
+
+    return res.status(201).json({
+      message: "Slot held successfully for 5 minutes",
+      holdToken,
+      doctorId,
+      slotTime,
+      expiresIn: 300,
+    });
+  } catch (err) {
+    next(err);
+  }
+}
+
+// POST /appointments/release-hold - release a held slot
+export async function releaseHold(req: AuthRequest, res: Response, next: NextFunction) {
+  try {
+    const userId = req.user!.id;
+    const { doctorId, slotTime, holdToken } = req.body;
+    const redis = getRedisClient();
+    const holdKey = `hold:${doctorId}:${slotTime}`;
+
+    if (redis && isRedisConnected()) {
+      const currentHolder = await redis.get(holdKey);
+      if (currentHolder) {
+        const [holderId, token] = currentHolder.split(":");
+        if (holderId === userId && (!holdToken || holdToken === token)) {
+          await redis.del(holdKey);
+          try {
+            getIO().to(`doctor:${doctorId}`).emit("slot-hold-released", { doctorId, slotTime });
+          } catch {}
+        }
+      }
+    }
+
+    res.json({ message: "Hold released", doctorId, slotTime });
+  } catch (err) {
+    next(err);
+  }
+}
+
+// GET /doctors/:id/held-slots
+export async function getDoctorHeldSlots(req: AuthRequest, res: Response, next: NextFunction) {
+  try {
+    const { id } = req.params;
+    const redis = getRedisClient();
+    const heldSlots: { slotTime: string; heldByMe: boolean }[] = [];
+
+    if (redis && isRedisConnected()) {
+      let cursor = "0";
+      const pattern = `hold:${id}:*`;
+      do {
+        const [nextCursor, keys] = await redis.scan(cursor, "MATCH", pattern, "COUNT", 100);
+        cursor = nextCursor;
+        for (const key of keys) {
+          const slotTime = key.replace(`hold:${id}:`, "");
+          const val = await redis.get(key);
+          const holderId = val ? val.split(":")[0] : null;
+          heldSlots.push({
+            slotTime,
+            heldByMe: req.user ? holderId === req.user.id : false,
+          });
+        }
+      } while (cursor !== "0");
+    }
+    res.json(heldSlots);
+  } catch (err) {
+    next(err);
   }
 }

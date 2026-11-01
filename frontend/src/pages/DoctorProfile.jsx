@@ -56,22 +56,30 @@ export default function DoctorProfile() {
   const [error, setError] = useState("");
   const [selectedDate, setSelectedDate] = useState(null);
   const [takenSlots, setTakenSlots] = useState(new Set()); // "YYYY-MM-DDTHH:MM" strings
+  const [heldSlots, setHeldSlots] = useState(new Set()); // slots held by other users
+  const [myHold, setMyHold] = useState(null); // { slotTime, holdToken, secondsLeft, hhmm }
   const [booking, setBooking] = useState(false);
   const [bookingMsg, setBookingMsg] = useState("");
 
   useEffect(() => {
     api.getDoctorById(id).then(setDoctor).catch((e) => setError(e.message)).finally(() => setLoading(false));
 
-    // Pre-fill already-booked slots so the grid is accurate from the
-    // first render, not just after a live socket event or a failed click.
+    // Pre-fill already-booked slots
     api.getBookedSlots(id)
       .then((slots) => {
         setTakenSlots(new Set(slots.map(slotToKey)));
       })
-      .catch(() => {}); // non-critical - booking still enforces this server-side either way
-  }, [id]);
+      .catch(() => {});
 
-  // Live updates: when anyone books or cancels a slot for this doctor,
+    // Pre-fill currently held slots
+    api.getHeldSlots(id, token)
+      .then((holds) => {
+        const otherHolds = holds.filter((h) => !h.heldByMe).map((h) => slotToKey(h.slotTime));
+        setHeldSlots(new Set(otherHolds));
+      })
+      .catch(() => {});
+  }, [id, token]);
+
   // Live updates: join doctor's room to receive scoped slot events
   useEffect(() => {
     if (!id) return;
@@ -81,6 +89,11 @@ export default function DoctorProfile() {
     function onBooked(payload) {
       if (payload.doctorId !== id) return;
       setTakenSlots((prev) => new Set(prev).add(slotToKey(payload.slotTime)));
+      setHeldSlots((prev) => {
+        const next = new Set(prev);
+        next.delete(slotToKey(payload.slotTime));
+        return next;
+      });
     }
     function onFreed(payload) {
       if (payload.doctorId !== id) return;
@@ -90,14 +103,51 @@ export default function DoctorProfile() {
         return next;
       });
     }
+    function onHeld(payload) {
+      if (payload.doctorId !== id) return;
+      if (payload.heldBy !== user?.id) {
+        setHeldSlots((prev) => new Set(prev).add(slotToKey(payload.slotTime)));
+      }
+    }
+    function onHoldReleased(payload) {
+      if (payload.doctorId !== id) return;
+      setHeldSlots((prev) => {
+        const next = new Set(prev);
+        next.delete(slotToKey(payload.slotTime));
+        return next;
+      });
+    }
+
     socket.on("slot-booked", onBooked);
     socket.on("slot-freed", onFreed);
+    socket.on("slot-held", onHeld);
+    socket.on("slot-hold-released", onHoldReleased);
+
     return () => {
       socket.emit("unwatch-doctor", id);
       socket.off("slot-booked", onBooked);
       socket.off("slot-freed", onFreed);
+      socket.off("slot-held", onHeld);
+      socket.off("slot-hold-released", onHoldReleased);
     };
-  }, [id]);
+  }, [id, user]);
+
+  // 5-minute hold countdown timer
+  useEffect(() => {
+    if (!myHold) return;
+    const interval = setInterval(() => {
+      setMyHold((prev) => {
+        if (!prev) return null;
+        if (prev.secondsLeft <= 1) {
+          clearInterval(interval);
+          setBookingMsg("Your 5-minute hold on this slot has expired. Please select a slot again.");
+          return null;
+        }
+        return { ...prev, secondsLeft: prev.secondsLeft - 1 };
+      });
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [myHold]);
 
   const dates = useMemo(() => upcomingDates(), []);
 
@@ -118,12 +168,6 @@ export default function DoctorProfile() {
     return generateSlotsForDay(avail.start_time, avail.end_time, avail.slot_duration_minutes || 15);
   }, [doctor, selectedDate, isSelectedDateOnLeave]);
 
-  // Builds the exact wall-clock string the patient chose - e.g. picking
-  // 9:00 AM produces "2026-08-02T09:00:00", literally. This deliberately
-  // avoids toISOString(), which converts to UTC and would silently shift
-  // the hour - that mismatch was the actual cause of correct bookings being
-  // rejected as "outside available hours" (backend re-parsed the UTC-shifted
-  // string as if it were already local time).
   function isoFor(date, hhmm) {
     const [h, m] = hhmm.split(":").map(Number);
     const y = date.getFullYear();
@@ -134,7 +178,7 @@ export default function DoctorProfile() {
     return `${y}-${mo}-${d}T${hh}:${mm}:00`;
   }
 
-  async function handleBook(hhmm) {
+  async function handleSlotClick(hhmm) {
     if (!user) return navigate("/login");
     if (user.role !== "PATIENT") {
       setBookingMsg("Only patient accounts can book appointments.");
@@ -143,20 +187,55 @@ export default function DoctorProfile() {
     const slotTime = isoFor(selectedDate, hhmm);
     setBooking(true);
     setBookingMsg("");
+
     try {
-      const appt = await api.createAppointment({ doctorId: id, slotTime }, token);
-      setTakenSlots((prev) => new Set(prev).add(slotTime));
+      if (myHold && myHold.slotTime !== slotTime) {
+        api.releaseHold({ doctorId: id, slotTime: myHold.slotTime, holdToken: myHold.holdToken }, token).catch(() => {});
+      }
+      const res = await api.holdSlot({ doctorId: id, slotTime }, token);
+      setMyHold({
+        slotTime,
+        holdToken: res.holdToken,
+        secondsLeft: res.expiresIn || 300,
+        hhmm,
+      });
+    } catch (err) {
+      setBookingMsg(err.message);
+    } finally {
+      setBooking(false);
+    }
+  }
+
+  async function handleConfirmBooking() {
+    if (!myHold) return;
+    setBooking(true);
+    setBookingMsg("");
+    try {
+      const appt = await api.createAppointment(
+        { doctorId: id, slotTime: myHold.slotTime, holdToken: myHold.holdToken },
+        token
+      );
+      setTakenSlots((prev) => new Set(prev).add(myHold.slotTime));
       setBookingMsg(
         `Booked! Your reference: ${appt.booking_ref}. Address: ${appt.clinic_address || doctor.clinic_address || "see clinic details above"}.`
       );
+      setMyHold(null);
     } catch (err) {
       setBookingMsg(err.message);
       if (err.message.toLowerCase().includes("booked")) {
-        setTakenSlots((prev) => new Set(prev).add(slotTime));
+        setTakenSlots((prev) => new Set(prev).add(myHold.slotTime));
       }
     } finally {
       setBooking(false);
     }
+  }
+
+  async function handleCancelHold() {
+    if (!myHold) return;
+    try {
+      await api.releaseHold({ doctorId: id, slotTime: myHold.slotTime, holdToken: myHold.holdToken }, token);
+    } catch {}
+    setMyHold(null);
   }
 
   if (loading) return <p className="mx-auto max-w-4xl px-6 py-16 text-inkSoft">Loading…</p>;
@@ -222,27 +301,75 @@ export default function DoctorProfile() {
               <div className="grid grid-cols-3 gap-2 sm:grid-cols-4">
                 {slotsForSelectedDate.map((hhmm) => {
                   const iso = isoFor(selectedDate, hhmm);
-                  const taken = takenSlots.has(iso);
-                  const past = isPastSlot(selectedDate, hhmm);
-                  const unavailable = taken || past;
+                  const isTaken = takenSlots.has(iso);
+                  const isHeldByOther = heldSlots.has(iso);
+                  const isHeldByMe = myHold?.slotTime === iso;
+                  const isPast = isPastSlot(selectedDate, hhmm);
+                  const unavailable = isTaken || isHeldByOther || isPast;
+
+                  let style = "border-line bg-white text-ink hover:border-sage-500 hover:bg-sage-50";
+                  if (isHeldByMe) {
+                    style = "border-sage-600 bg-sage-100 text-sage-900 ring-2 ring-sage-500 font-bold";
+                  } else if (isHeldByOther) {
+                    style = "cursor-not-allowed border-amber-300 bg-amber-50 text-amber-800/80";
+                  } else if (unavailable) {
+                    style = "cursor-not-allowed border-line bg-paperDim text-inkSoft/40 line-through";
+                  }
+
+                  let title = undefined;
+                  if (isPast) title = "This time has already passed today";
+                  else if (isTaken) title = "Already booked";
+                  else if (isHeldByOther) title = "Currently reserved by another patient";
+                  else if (isHeldByMe) title = "Held by you";
+
                   return (
                     <button
                       key={hhmm}
-                      disabled={unavailable || booking}
-                      title={past ? "This time has already passed today" : taken ? "Already booked" : undefined}
-                      onClick={() => handleBook(hhmm)}
-                      className={`rounded-card border px-3 py-2 font-mono text-sm transition-colors ${
-                        unavailable
-                          ? "cursor-not-allowed border-line bg-paperDim text-inkSoft/40 line-through"
-                          : "border-line bg-white text-ink hover:border-sage-500 hover:bg-sage-50"
-                      }`}
+                      disabled={(unavailable && !isHeldByMe) || booking}
+                      title={title}
+                      onClick={() => handleSlotClick(hhmm)}
+                      className={`rounded-card border px-3 py-2 font-mono text-sm transition-colors ${style}`}
                     >
                       {hhmm}
+                      {isHeldByOther && <span className="block text-[10px] font-sans font-medium uppercase tracking-tight text-amber-700">Held</span>}
+                      {isHeldByMe && <span className="block text-[10px] font-sans font-medium uppercase tracking-tight text-sage-700">Reserved</span>}
                     </button>
                   );
                 })}
               </div>
             )}
+
+            {myHold && (
+              <div className="mt-4 flex flex-col sm:flex-row items-center justify-between gap-3 rounded-card border border-sage-500 bg-sage-50 p-4">
+                <div>
+                  <p className="text-sm font-semibold text-ink">
+                    Slot reserved for you: <span className="font-mono text-sage-800">{myHold.hhmm}</span>
+                  </p>
+                  <p className="text-xs text-inkSoft">
+                    Hold expires in: <span className="font-mono font-bold text-amber-700">
+                      {Math.floor(myHold.secondsLeft / 60)}:{String(myHold.secondsLeft % 60).padStart(2, "0")}
+                    </span>
+                  </p>
+                </div>
+                <div className="flex gap-2">
+                  <button
+                    onClick={handleConfirmBooking}
+                    disabled={booking}
+                    className="rounded-button bg-sage-600 px-4 py-2 text-sm font-medium text-white hover:bg-sage-700 disabled:opacity-50"
+                  >
+                    {booking ? "Confirming..." : "Confirm Booking"}
+                  </button>
+                  <button
+                    onClick={handleCancelHold}
+                    disabled={booking}
+                    className="rounded-button border border-line bg-white px-3 py-2 text-xs font-medium text-inkSoft hover:bg-paperDim"
+                  >
+                    Release
+                  </button>
+                </div>
+              </div>
+            )}
+
             {bookingMsg && (
               <p className={`mt-3 text-sm ${bookingMsg.startsWith("Booked") ? "text-sage-600" : "text-clay-600"}`}>
                 {bookingMsg}

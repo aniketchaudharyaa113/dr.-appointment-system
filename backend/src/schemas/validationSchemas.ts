@@ -22,6 +22,18 @@ export const loginSchema = z.object({
 export const createAppointmentSchema = z.object({
   doctorId: z.string().uuid("Invalid doctorId UUID"),
   slotTime: z.string().min(10, "slotTime is required"),
+  holdToken: z.string().optional(),
+});
+
+export const holdSlotSchema = z.object({
+  doctorId: z.string().uuid("Invalid doctorId UUID"),
+  slotTime: z.string().min(10, "slotTime is required"),
+});
+
+export const releaseHoldSchema = z.object({
+  doctorId: z.string().uuid("Invalid doctorId UUID"),
+  slotTime: z.string().min(10, "slotTime is required"),
+  holdToken: z.string().optional(),
 });
 
 export const cancelAppointmentSchema = z.object({

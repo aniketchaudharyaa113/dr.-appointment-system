@@ -5,6 +5,8 @@ import {
   cancelAppointment,
   completeAppointment,
   rescheduleAppointment,
+  holdSlot,
+  releaseHold,
 } from "../controllers/appointmentController";
 import { verifyToken, requireRole } from "../middleware/authMiddleware";
 import { validate } from "../middleware/validate";
@@ -15,10 +17,26 @@ import {
   rescheduleAppointmentSchema,
   appointmentsQuerySchema,
   uuidParamSchema,
+  holdSlotSchema,
+  releaseHoldSchema,
 } from "../schemas/validationSchemas";
 
 const router = Router();
 
+router.post(
+  "/hold",
+  verifyToken,
+  requireRole("PATIENT"),
+  validate({ body: holdSlotSchema }),
+  holdSlot
+);
+router.post(
+  "/release-hold",
+  verifyToken,
+  requireRole("PATIENT"),
+  validate({ body: releaseHoldSchema }),
+  releaseHold
+);
 router.post(
   "/",
   verifyToken,
