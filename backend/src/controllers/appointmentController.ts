@@ -4,7 +4,8 @@ import { AuthRequest } from "../types";
 import { getIO } from "../sockets/slotEvents";
 import { parseSlot, slotKey, nowInClinicTimezone } from "../utils/datetime";
 import { cacheDel, cacheDelPattern } from "../cache/redis";
-import { enqueueJob } from "../queue/messageQueue";
+import { insertOutboxEvent } from "../queue/outboxRelay";
+import { scheduleAppointmentReminders, cancelAppointmentReminders } from "../services/reminderService";
 
 // POST /appointments - book a slot
 // The UNIQUE(doctor_id, slot_time) constraint in the DB is what actually
@@ -114,6 +115,80 @@ export async function createAppointment(req: AuthRequest, res: Response, next: N
       [patientId, doctorId, storedSlotTime, bookingRef]
     );
 
+    // Fetch patient name for notifications
+    const patientQuery = await client.query("SELECT name, email FROM users WHERE id = $1", [patientId]);
+    const patientName = patientQuery.rows[0]?.name || "Patient";
+    const patientEmail = patientQuery.rows[0]?.email;
+
+    // Transactional outbox events (in the SAME DB transaction)
+    await insertOutboxEvent(client, {
+      aggregateType: "APPOINTMENT",
+      aggregateId: result.rows[0].id,
+      eventType: "NOTIFICATION",
+      payload: {
+        userId: patientId,
+        type: "BOOKING_CONFIRMED",
+        title: "Appointment Confirmed",
+        message: `Your appointment with ${doctor.doctor_name} is confirmed for ${bookingDate} at ${slot.hhmmss.slice(0, 5)}. Booking Ref: ${bookingRef}`,
+        link: "/my-appointments",
+      },
+    });
+
+    await insertOutboxEvent(client, {
+      aggregateType: "APPOINTMENT",
+      aggregateId: result.rows[0].id,
+      eventType: "NOTIFICATION",
+      payload: {
+        userId: doctor.user_id,
+        type: "NEW_APPOINTMENT",
+        title: "New Booking Received",
+        message: `${patientName} booked a slot for ${bookingDate} at ${slot.hhmmss.slice(0, 5)} (${bookingRef}).`,
+        link: "/doctor/dashboard",
+      },
+    });
+
+    if (patientEmail) {
+      await insertOutboxEvent(client, {
+        aggregateType: "APPOINTMENT",
+        aggregateId: result.rows[0].id,
+        eventType: "EMAIL_DISPATCH",
+        payload: {
+          to: patientEmail,
+          recipient: patientEmail,
+          subject: `Appointment Confirmation - ${bookingRef}`,
+          template: "booking_confirmation",
+          templateData: {
+            patientName,
+            doctorName: doctor.doctor_name,
+            specialty: doctor.specialty,
+            slotTime: storedSlotTime,
+            bookingRef,
+          },
+        },
+      });
+    }
+
+    await insertOutboxEvent(client, {
+      aggregateType: "APPOINTMENT",
+      aggregateId: result.rows[0].id,
+      eventType: "AUDIT",
+      payload: {
+        actorId: patientId,
+        actorRole: "PATIENT",
+        action: "APPOINTMENT_BOOKED",
+        targetId: result.rows[0].id,
+        details: { doctorId, bookingRef, slotTime: storedSlotTime },
+      },
+    });
+
+    // Schedule 24h & 1h delayed reminders via outbox
+    await scheduleAppointmentReminders(client, {
+      id: result.rows[0].id,
+      slot_time: storedSlotTime,
+      patient_id: patientId,
+      doctor_id: doctorId,
+    });
+
     await client.query("COMMIT");
     inTransaction = false;
 
@@ -130,42 +205,6 @@ export async function createAppointment(req: AuthRequest, res: Response, next: N
 
     // Real-time broadcast to doctor room
     getIO().to(`doctor:${doctorId}`).emit("slot-booked", { doctorId, slotTime: storedSlotTime });
-
-    // Fetch patient name for notifications
-    const patientQuery = await pool.query("SELECT name, email FROM users WHERE id = $1", [patientId]);
-    const patientName = patientQuery.rows[0]?.name || "Patient";
-    const patientEmail = patientQuery.rows[0]?.email;
-
-    // Asynchronously dispatch notifications and audit via Message Queue
-    await enqueueJob("NOTIFICATION", {
-      userId: patientId,
-      type: "BOOKING_CONFIRMED",
-      title: "Appointment Confirmed",
-      message: `Your appointment with ${doctor.doctor_name} is confirmed for ${bookingDate} at ${slot.hhmmss.slice(0, 5)}. Booking Ref: ${bookingRef}`,
-      link: "/my-appointments",
-    });
-
-    await enqueueJob("NOTIFICATION", {
-      userId: doctor.user_id,
-      type: "NEW_APPOINTMENT",
-      title: "New Booking Received",
-      message: `${patientName} booked a slot for ${bookingDate} at ${slot.hhmmss.slice(0, 5)} (${bookingRef}).`,
-      link: "/doctor/dashboard",
-    });
-
-    await enqueueJob("EMAIL_DISPATCH", {
-      recipient: patientEmail,
-      subject: `Appointment Confirmation - ${bookingRef}`,
-      details: { doctorName: doctor.doctor_name, bookingRef, slotTime: storedSlotTime },
-    });
-
-    await enqueueJob("AUDIT", {
-      actorId: patientId,
-      actorRole: "PATIENT",
-      action: "APPOINTMENT_BOOKED",
-      targetId: appointment.id,
-      details: { doctorId, bookingRef, slotTime: storedSlotTime },
-    });
 
     res.status(201).json(appointment);
   } catch (err: any) {
@@ -259,6 +298,8 @@ export async function getMyAppointments(req: AuthRequest, res: Response, next: N
 
 // PATCH /appointments/:id/cancel
 export async function cancelAppointment(req: AuthRequest, res: Response, next: NextFunction) {
+  const client = await pool.connect();
+  let inTransaction = false;
   try {
     const { id } = req.params;
     const { id: userId, role } = req.user!;
@@ -294,13 +335,96 @@ export async function cancelAppointment(req: AuthRequest, res: Response, next: N
       return res.status(403).json({ error: "Unauthorized" });
     }
 
-    const result = await pool.query(query, values);
+    await client.query("BEGIN");
+    inTransaction = true;
+
+    const result = await client.query(query, values);
 
     if (result.rows.length === 0) {
+      await client.query("ROLLBACK");
+      inTransaction = false;
       return res.status(404).json({ error: "Appointment not found, not yours, or already cancelled/completed" });
     }
 
     const appt = result.rows[0];
+
+    // Fetch doctor user id for notifications
+    const docQuery = await client.query("SELECT user_id, (SELECT name FROM users WHERE id = doctors.user_id) as doctor_name FROM doctors WHERE id = $1", [appt.doctor_id]);
+    const doctorUserId = docQuery.rows[0]?.user_id;
+    const doctorName = docQuery.rows[0]?.doctor_name || "Doctor";
+
+    // Fetch patient info
+    const patQuery = await client.query("SELECT name, email FROM users WHERE id = $1", [appt.patient_id]);
+    const patientName = patQuery.rows[0]?.name || "Patient";
+    const patientEmail = patQuery.rows[0]?.email;
+
+    // Transactional outbox events
+    if (role === "PATIENT") {
+      if (doctorUserId) {
+        await insertOutboxEvent(client, {
+          aggregateType: "APPOINTMENT",
+          aggregateId: id,
+          eventType: "NOTIFICATION",
+          payload: {
+            userId: doctorUserId,
+            type: "APPOINTMENT_CANCELLED",
+            title: "Appointment Cancelled",
+            message: `Appointment ${appt.booking_ref} was cancelled by the patient.`,
+            link: "/doctor/dashboard",
+          },
+        });
+      }
+    } else {
+      await insertOutboxEvent(client, {
+        aggregateType: "APPOINTMENT",
+        aggregateId: id,
+        eventType: "NOTIFICATION",
+        payload: {
+          userId: appt.patient_id,
+          type: "APPOINTMENT_CANCELLED",
+          title: "Appointment Cancelled",
+          message: `Your appointment ${appt.booking_ref} has been cancelled${reason ? `: ${reason}` : "."}`,
+          link: "/my-appointments",
+        },
+      });
+    }
+
+    if (patientEmail) {
+      await insertOutboxEvent(client, {
+        aggregateType: "APPOINTMENT",
+        aggregateId: id,
+        eventType: "EMAIL_DISPATCH",
+        payload: {
+          to: patientEmail,
+          recipient: patientEmail,
+          subject: `Appointment Cancelled - ${appt.booking_ref}`,
+          template: "cancellation",
+          templateData: {
+            patientName,
+            doctorName,
+            slotTime: appt.slot_time,
+            bookingRef: appt.booking_ref,
+            reason: reason || "No reason specified",
+          },
+        },
+      });
+    }
+
+    await insertOutboxEvent(client, {
+      aggregateType: "APPOINTMENT",
+      aggregateId: id,
+      eventType: "AUDIT",
+      payload: {
+        actorId: userId,
+        actorRole: role,
+        action: "APPOINTMENT_CANCELLED",
+        targetId: id,
+        details: { bookingRef: appt.booking_ref, reason: reason || "No reason specified" },
+      },
+    });
+
+    await client.query("COMMIT");
+    inTransaction = false;
 
     // Invalidate caches
     await cacheDel(`medibook:slots:${appt.doctor_id}`);
@@ -309,53 +433,33 @@ export async function cancelAppointment(req: AuthRequest, res: Response, next: N
     // Emit live slot-freed socket event to doctor room
     getIO().to(`doctor:${appt.doctor_id}`).emit("slot-freed", { doctorId: appt.doctor_id, slotTime: appt.slot_time });
 
-    // Fetch doctor user id for notifications
-    const docQuery = await pool.query("SELECT user_id FROM doctors WHERE id = $1", [appt.doctor_id]);
-    const doctorUserId = docQuery.rows[0]?.user_id;
-
-    // Asynchronously notify via queue
-    if (role === "PATIENT") {
-      if (doctorUserId) {
-        await enqueueJob("NOTIFICATION", {
-          userId: doctorUserId,
-          type: "APPOINTMENT_CANCELLED",
-          title: "Appointment Cancelled",
-          message: `Appointment ${appt.booking_ref} was cancelled by the patient.`,
-          link: "/doctor/dashboard",
-        });
-      }
-    } else {
-      await enqueueJob("NOTIFICATION", {
-        userId: appt.patient_id,
-        type: "APPOINTMENT_CANCELLED",
-        title: "Appointment Cancelled",
-        message: `Your appointment ${appt.booking_ref} has been cancelled${reason ? `: ${reason}` : "."}`,
-        link: "/my-appointments",
-      });
-    }
-
-    await enqueueJob("AUDIT", {
-      actorId: userId,
-      actorRole: role,
-      action: "APPOINTMENT_CANCELLED",
-      targetId: id,
-      details: { bookingRef: appt.booking_ref, reason: reason || "No reason specified" },
-    });
+    // Cancel delayed reminders
+    await cancelAppointmentReminders(id);
 
     res.json(appt);
   } catch (err) {
+    if (inTransaction) {
+      await client.query("ROLLBACK");
+    }
     next(err);
+  } finally {
+    client.release();
   }
 }
 
 // PATCH /appointments/:id/complete - doctor marks a visit done, adds notes
 export async function completeAppointment(req: AuthRequest, res: Response, next: NextFunction) {
+  const client = await pool.connect();
+  let inTransaction = false;
   try {
     const { id } = req.params;
     const { notes } = req.body;
     const userId = req.user!.id;
 
-    const result = await pool.query(
+    await client.query("BEGIN");
+    inTransaction = true;
+
+    const result = await client.query(
       `UPDATE appointments SET status = 'COMPLETED', notes = $1
        WHERE id = $2 AND doctor_id = (SELECT id FROM doctors WHERE user_id = $3)
          AND status = 'CONFIRMED'
@@ -364,36 +468,59 @@ export async function completeAppointment(req: AuthRequest, res: Response, next:
     );
 
     if (result.rows.length === 0) {
+      await client.query("ROLLBACK");
+      inTransaction = false;
       return res.status(404).json({ error: "Appointment not found, not yours, or not in a completable state" });
     }
 
     const appt = result.rows[0];
+
+    // Transactional outbox events
+    await insertOutboxEvent(client, {
+      aggregateType: "APPOINTMENT",
+      aggregateId: id,
+      eventType: "NOTIFICATION",
+      payload: {
+        userId: appt.patient_id,
+        type: "APPOINTMENT_COMPLETED",
+        title: "Appointment Completed",
+        message: `Your visit (${appt.booking_ref}) is marked completed. How was your experience? Leave a review!`,
+        link: "/my-appointments",
+      },
+    });
+
+    await insertOutboxEvent(client, {
+      aggregateType: "APPOINTMENT",
+      aggregateId: id,
+      eventType: "AUDIT",
+      payload: {
+        actorId: userId,
+        actorRole: "DOCTOR",
+        action: "APPOINTMENT_COMPLETED",
+        targetId: id,
+        details: { bookingRef: appt.booking_ref },
+      },
+    });
+
+    await client.query("COMMIT");
+    inTransaction = false;
 
     // Invalidate caches
     await cacheDel(`medibook:slots:${appt.doctor_id}`);
     await cacheDelPattern(`medibook:doctor:${appt.doctor_id}*`);
     await cacheDelPattern(`medibook:admin:*`);
 
-    // Notify patient
-    await enqueueJob("NOTIFICATION", {
-      userId: appt.patient_id,
-      type: "APPOINTMENT_COMPLETED",
-      title: "Appointment Completed",
-      message: `Your visit (${appt.booking_ref}) is marked completed. How was your experience? Leave a review!`,
-      link: "/my-appointments",
-    });
-
-    await enqueueJob("AUDIT", {
-      actorId: userId,
-      actorRole: "DOCTOR",
-      action: "APPOINTMENT_COMPLETED",
-      targetId: id,
-      details: { bookingRef: appt.booking_ref },
-    });
+    // Cancel reminders on completion
+    await cancelAppointmentReminders(id);
 
     res.json(appt);
   } catch (err) {
+    if (inTransaction) {
+      await client.query("ROLLBACK");
+    }
     next(err);
+  } finally {
+    client.release();
   }
 }
 
@@ -554,6 +681,86 @@ export async function rescheduleAppointment(req: AuthRequest, res: Response, nex
       ]
     );
 
+    // Fetch patient info inside transaction
+    const patientQuery = await client.query("SELECT name, email FROM users WHERE id = $1", [patientId]);
+    const patientName = patientQuery.rows[0]?.name || "Patient";
+    const patientEmail = patientQuery.rows[0]?.email;
+
+    // Transactional outbox events
+    await insertOutboxEvent(client, {
+      aggregateType: "APPOINTMENT",
+      aggregateId: newApptResult.rows[0].id,
+      eventType: "NOTIFICATION",
+      payload: {
+        userId: patientId,
+        type: "APPOINTMENT_RESCHEDULED",
+        title: "Appointment Rescheduled",
+        message: `Your appointment with ${doctor.doctor_name} has been rescheduled to ${bookingDate} at ${slot.hhmmss.slice(0, 5)}. New Ref: ${newBookingRef}`,
+        link: "/my-appointments",
+      },
+    });
+
+    await insertOutboxEvent(client, {
+      aggregateType: "APPOINTMENT",
+      aggregateId: newApptResult.rows[0].id,
+      eventType: "NOTIFICATION",
+      payload: {
+        userId: doctor.user_id,
+        type: "APPOINTMENT_RESCHEDULED",
+        title: "Appointment Rescheduled",
+        message: `${patientName} rescheduled from ${String(oldAppt.slot_time).slice(0, 16)} to ${storedNewSlotTime} (${newBookingRef}).`,
+        link: "/doctor/dashboard",
+      },
+    });
+
+    if (patientEmail) {
+      await insertOutboxEvent(client, {
+        aggregateType: "APPOINTMENT",
+        aggregateId: newApptResult.rows[0].id,
+        eventType: "EMAIL_DISPATCH",
+        payload: {
+          to: patientEmail,
+          recipient: patientEmail,
+          subject: `Appointment Rescheduled - ${newBookingRef}`,
+          template: "booking_confirmation",
+          templateData: {
+            patientName,
+            doctorName: doctor.doctor_name,
+            specialty: doctor.specialty,
+            slotTime: storedNewSlotTime,
+            bookingRef: newBookingRef,
+          },
+        },
+      });
+    }
+
+    await insertOutboxEvent(client, {
+      aggregateType: "APPOINTMENT",
+      aggregateId: newApptResult.rows[0].id,
+      eventType: "AUDIT",
+      payload: {
+        actorId: userId,
+        actorRole: role,
+        action: "APPOINTMENT_RESCHEDULED",
+        targetId: newApptResult.rows[0].id,
+        details: {
+          oldAppointmentId: id,
+          oldBookingRef: oldAppt.booking_ref,
+          oldSlotTime: oldAppt.slot_time,
+          newBookingRef,
+          newSlotTime: storedNewSlotTime,
+        },
+      },
+    });
+
+    // Schedule new reminders via outbox
+    await scheduleAppointmentReminders(client, {
+      id: newApptResult.rows[0].id,
+      slot_time: storedNewSlotTime,
+      patient_id: patientId,
+      doctor_id: doctorId,
+    });
+
     await client.query("COMMIT");
     inTransaction = false;
 
@@ -573,47 +780,8 @@ export async function rescheduleAppointment(req: AuthRequest, res: Response, nex
     getIO().to(`doctor:${doctorId}`).emit("slot-freed", { doctorId, slotTime: oldAppt.slot_time });
     getIO().to(`doctor:${doctorId}`).emit("slot-booked", { doctorId, slotTime: storedNewSlotTime });
 
-    // Fetch patient info
-    const patientQuery = await pool.query("SELECT name, email FROM users WHERE id = $1", [patientId]);
-    const patientName = patientQuery.rows[0]?.name || "Patient";
-    const patientEmail = patientQuery.rows[0]?.email;
-
-    // Notifications + Audit via Queue
-    await enqueueJob("NOTIFICATION", {
-      userId: patientId,
-      type: "APPOINTMENT_RESCHEDULED",
-      title: "Appointment Rescheduled",
-      message: `Your appointment with ${doctor.doctor_name} has been rescheduled to ${bookingDate} at ${slot.hhmmss.slice(0, 5)}. New Ref: ${newBookingRef}`,
-      link: "/my-appointments",
-    });
-
-    await enqueueJob("NOTIFICATION", {
-      userId: doctor.user_id,
-      type: "APPOINTMENT_RESCHEDULED",
-      title: "Appointment Rescheduled",
-      message: `${patientName} rescheduled from ${String(oldAppt.slot_time).slice(0, 16)} to ${storedNewSlotTime} (${newBookingRef}).`,
-      link: "/doctor/dashboard",
-    });
-
-    await enqueueJob("EMAIL_DISPATCH", {
-      recipient: patientEmail,
-      subject: `Appointment Rescheduled - ${newBookingRef}`,
-      details: { doctorName: doctor.doctor_name, bookingRef: newBookingRef, slotTime: storedNewSlotTime },
-    });
-
-    await enqueueJob("AUDIT", {
-      actorId: userId,
-      actorRole: role,
-      action: "APPOINTMENT_RESCHEDULED",
-      targetId: newAppointment.id,
-      details: {
-        oldAppointmentId: id,
-        oldBookingRef: oldAppt.booking_ref,
-        oldSlotTime: oldAppt.slot_time,
-        newBookingRef,
-        newSlotTime: storedNewSlotTime,
-      },
-    });
+    // Cancel old appointment's delayed reminders
+    await cancelAppointmentReminders(id);
 
     res.json(newAppointment);
   } catch (err: any) {

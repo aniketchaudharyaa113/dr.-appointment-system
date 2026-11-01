@@ -2,7 +2,7 @@ import { Response, NextFunction } from "express";
 import pool from "../db/pool";
 import { AuthRequest } from "../types";
 import { cacheGet, cacheSet, cacheDelPattern } from "../cache/redis";
-import { enqueueJob } from "../queue/messageQueue";
+import { insertOutboxEvent } from "../queue/outboxRelay";
 
 // GET /admin/doctors/pending
 export async function getPendingDoctors(req: AuthRequest, res: Response, next: NextFunction) {
@@ -46,23 +46,33 @@ export async function verifyDoctor(req: AuthRequest, res: Response, next: NextFu
     await cacheDelPattern(`medibook:doctor:${id}*`);
     await cacheDelPattern("medibook:admin:*");
 
-    // Asynchronously notify doctor and record audit log
-    await enqueueJob("NOTIFICATION", {
-      userId: doc.user_id,
-      type: approve ? "DOCTOR_VERIFIED" : "DOCTOR_REJECTED",
-      title: approve ? "Verification Approved!" : "Verification Update",
-      message: approve
-        ? "Congratulations! Your clinic verification was approved. You are now active in patient searches."
-        : "Your verification request was not approved. Please review your credentials.",
-      link: "/doctor/dashboard",
+    // Asynchronously notify doctor and record audit log via outbox
+    await insertOutboxEvent(pool, {
+      aggregateType: "DOCTOR",
+      aggregateId: id,
+      eventType: "NOTIFICATION",
+      payload: {
+        userId: doc.user_id,
+        type: approve ? "DOCTOR_VERIFIED" : "DOCTOR_REJECTED",
+        title: approve ? "Verification Approved!" : "Verification Update",
+        message: approve
+          ? "Congratulations! Your clinic verification was approved. You are now active in patient searches."
+          : "Your verification request was not approved. Please review your credentials.",
+        link: "/doctor/dashboard",
+      },
     });
 
-    await enqueueJob("AUDIT", {
-      actorId: adminId,
-      actorRole: "ADMIN",
-      action: approve ? "DOCTOR_VERIFIED" : "DOCTOR_REJECTED",
-      targetId: id,
-      details: { doctorId: id, approved: !!approve },
+    await insertOutboxEvent(pool, {
+      aggregateType: "DOCTOR",
+      aggregateId: id,
+      eventType: "AUDIT",
+      payload: {
+        actorId: adminId,
+        actorRole: "ADMIN",
+        action: approve ? "DOCTOR_VERIFIED" : "DOCTOR_REJECTED",
+        targetId: id,
+        details: { doctorId: id, approved: !!approve },
+      },
     });
 
     res.json(doc);

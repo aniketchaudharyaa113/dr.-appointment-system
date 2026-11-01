@@ -2,7 +2,7 @@ import { Response, NextFunction } from "express";
 import { z } from "zod";
 import pool from "../db/pool";
 import { AuthRequest } from "../types";
-import { enqueueJob } from "../queue/messageQueue";
+import { insertOutboxEvent } from "../queue/outboxRelay";
 
 const medicineSchema = z.object({
   name: z.string().min(1, "Medicine name is required"),
@@ -51,69 +51,121 @@ export async function createPrescription(req: AuthRequest, res: Response, next: 
       return res.status(400).json({ error: "Prescriptions can only be created for COMPLETED appointments" });
     }
 
-    // Check if prescription already exists for this appointment
-    const existing = await pool.query(
-      `SELECT id, diagnosis, medicines, notes FROM prescriptions WHERE appointment_id = $1`,
-      [appointmentId]
-    );
+    const client = await pool.connect();
+    let inTransaction = false;
+    try {
+      await client.query("BEGIN");
+      inTransaction = true;
 
-    let result;
-    if (existing.rows.length > 0) {
-      const prev = existing.rows[0];
-      const versionCountRes = await pool.query(
-        `SELECT COUNT(*) as count FROM prescription_versions WHERE prescription_id = $1`,
-        [prev.id]
-      );
-      const nextVersion = Number(versionCountRes.rows[0].count) + 1;
-
-      // Save previous version before overwriting
-      await pool.query(
-        `INSERT INTO prescription_versions (prescription_id, diagnosis, medicines, notes, version, saved_at)
-         VALUES ($1, $2, $3, $4, $5, now())`,
-        [prev.id, prev.diagnosis, JSON.stringify(prev.medicines), prev.notes, nextVersion]
+      // Check if prescription already exists for this appointment
+      const existing = await client.query(
+        `SELECT id, diagnosis, medicines, notes FROM prescriptions WHERE appointment_id = $1 FOR UPDATE`,
+        [appointmentId]
       );
 
-      result = await pool.query(
-        `UPDATE prescriptions
-         SET diagnosis = $1, medicines = $2, notes = $3, created_at = now()
-         WHERE id = $4
-         RETURNING *`,
-        [diagnosis, JSON.stringify(medicines), notes || null, prev.id]
-      );
-    } else {
-      result = await pool.query(
-        `INSERT INTO prescriptions (appointment_id, doctor_id, patient_id, diagnosis, medicines, notes)
-         VALUES ($1, $2, $3, $4, $5, $6)
-         RETURNING *`,
-        [
-          appointmentId,
-          appt.doctor_id,
-          appt.patient_id,
-          diagnosis,
-          JSON.stringify(medicines),
-          notes || null,
-        ]
-      );
+      let result;
+      if (existing.rows.length > 0) {
+        const prev = existing.rows[0];
+        const versionCountRes = await client.query(
+          `SELECT COUNT(*) as count FROM prescription_versions WHERE prescription_id = $1`,
+          [prev.id]
+        );
+        const nextVersion = Number(versionCountRes.rows[0].count) + 1;
+
+        // Save previous version before overwriting
+        await client.query(
+          `INSERT INTO prescription_versions (prescription_id, diagnosis, medicines, notes, version, saved_at)
+           VALUES ($1, $2, $3, $4, $5, now())`,
+          [prev.id, prev.diagnosis, JSON.stringify(prev.medicines), prev.notes, nextVersion]
+        );
+
+        result = await client.query(
+          `UPDATE prescriptions
+           SET diagnosis = $1, medicines = $2, notes = $3, created_at = now()
+           WHERE id = $4
+           RETURNING *`,
+          [diagnosis, JSON.stringify(medicines), notes || null, prev.id]
+        );
+      } else {
+        result = await client.query(
+          `INSERT INTO prescriptions (appointment_id, doctor_id, patient_id, diagnosis, medicines, notes)
+           VALUES ($1, $2, $3, $4, $5, $6)
+           RETURNING *`,
+          [
+            appointmentId,
+            appt.doctor_id,
+            appt.patient_id,
+            diagnosis,
+            JSON.stringify(medicines),
+            notes || null,
+          ]
+        );
+      }
+
+      // Fetch patient email for prescription notification
+      const patRes = await client.query(`SELECT email, name FROM users WHERE id = $1`, [appt.patient_id]);
+      const patientEmail = patRes.rows[0]?.email;
+      const patientName = patRes.rows[0]?.name || "Patient";
+
+      // Transactional outbox events
+      await insertOutboxEvent(client, {
+        aggregateType: "PRESCRIPTION",
+        aggregateId: result.rows[0].id,
+        eventType: "NOTIFICATION",
+        payload: {
+          userId: appt.patient_id,
+          type: "PRESCRIPTION_ADDED",
+          title: "Prescription Available",
+          message: `${appt.doctor_name} has generated your prescription for appointment ${appt.booking_ref}.`,
+          link: `/my-appointments`,
+        },
+      });
+
+      if (patientEmail) {
+        await insertOutboxEvent(client, {
+          aggregateType: "PRESCRIPTION",
+          aggregateId: result.rows[0].id,
+          eventType: "EMAIL_DISPATCH",
+          payload: {
+            to: patientEmail,
+            recipient: patientEmail,
+            subject: `Prescription Available - ${appt.booking_ref}`,
+            template: "prescription_ready",
+            templateData: {
+              patientName,
+              doctorName: appt.doctor_name,
+              diagnosis,
+              notes,
+            },
+          },
+        });
+      }
+
+      await insertOutboxEvent(client, {
+        aggregateType: "PRESCRIPTION",
+        aggregateId: result.rows[0].id,
+        eventType: "AUDIT",
+        payload: {
+          actorId: userId,
+          actorRole: "DOCTOR",
+          action: existing.rows.length > 0 ? "PRESCRIPTION_UPDATED" : "PRESCRIPTION_CREATED",
+          targetId: appointmentId,
+          details: { diagnosis, medicinesCount: medicines.length, isUpdate: existing.rows.length > 0 },
+        },
+      });
+
+      await client.query("COMMIT");
+      inTransaction = false;
+
+      res.status(existing.rows.length > 0 ? 200 : 201).json(result.rows[0]);
+    } catch (err) {
+      if (inTransaction) {
+        await client.query("ROLLBACK");
+      }
+      throw err;
+    } finally {
+      client.release();
     }
-
-    // Asynchronously notify patient via Queue
-    await enqueueJob("NOTIFICATION", {
-      userId: appt.patient_id,
-      type: "PRESCRIPTION_ADDED",
-      title: "Prescription Available",
-      message: `${appt.doctor_name} has generated your prescription for appointment ${appt.booking_ref}.`,
-      link: `/my-appointments`,
-    });
-
-    await enqueueJob("AUDIT", {
-      actorId: userId,
-      actorRole: "DOCTOR",
-      action: existing.rows.length > 0 ? "PRESCRIPTION_UPDATED" : "PRESCRIPTION_CREATED",
-      targetId: appointmentId,
-      details: { diagnosis, medicinesCount: medicines.length, isUpdate: existing.rows.length > 0 },
-    });
-
-    res.status(existing.rows.length > 0 ? 200 : 201).json(result.rows[0]);
   } catch (err) {
     next(err);
   }
@@ -148,12 +200,17 @@ export async function getPrescriptionVersions(req: AuthRequest, res: Response, n
       [prescriptionId]
     );
 
-    await enqueueJob("AUDIT", {
-      actorId: userId,
-      actorRole: role,
-      action: "PRESCRIPTION_VERSIONS_VIEWED",
-      targetId: prescriptionId,
-      details: { count: versions.rows.length, viewedAt: new Date().toISOString() },
+    await insertOutboxEvent(pool, {
+      aggregateType: "PRESCRIPTION",
+      aggregateId: prescriptionId,
+      eventType: "AUDIT",
+      payload: {
+        actorId: userId,
+        actorRole: role,
+        action: "PRESCRIPTION_VERSIONS_VIEWED",
+        targetId: prescriptionId,
+        details: { count: versions.rows.length, viewedAt: new Date().toISOString() },
+      },
     });
 
     res.json(versions.rows);
@@ -199,15 +256,20 @@ export async function getPrescriptionByAppointment(req: AuthRequest, res: Respon
     const prescription = result.rows[0];
 
     // Audit prescription read access
-    await enqueueJob("AUDIT", {
-      actorId: userId,
-      actorRole: role,
-      action: "PRESCRIPTION_VIEWED",
-      targetId: prescription.id,
-      details: {
-        appointmentId,
-        bookingRef: prescription.booking_ref,
-        viewedAt: new Date().toISOString(),
+    await insertOutboxEvent(pool, {
+      aggregateType: "PRESCRIPTION",
+      aggregateId: prescription.id,
+      eventType: "AUDIT",
+      payload: {
+        actorId: userId,
+        actorRole: role,
+        action: "PRESCRIPTION_VIEWED",
+        targetId: prescription.id,
+        details: {
+          appointmentId,
+          bookingRef: prescription.booking_ref,
+          viewedAt: new Date().toISOString(),
+        },
       },
     });
 
@@ -236,12 +298,17 @@ export async function getMyPrescriptions(req: AuthRequest, res: Response, next: 
     );
 
     if (result.rows.length > 0) {
-      await enqueueJob("AUDIT", {
-        actorId: userId,
-        actorRole: "PATIENT",
-        action: "PRESCRIPTION_LIST_VIEWED",
-        targetId: userId,
-        details: { count: result.rows.length, viewedAt: new Date().toISOString() },
+      await insertOutboxEvent(pool, {
+        aggregateType: "PRESCRIPTION",
+        aggregateId: userId,
+        eventType: "AUDIT",
+        payload: {
+          actorId: userId,
+          actorRole: "PATIENT",
+          action: "PRESCRIPTION_LIST_VIEWED",
+          targetId: userId,
+          details: { count: result.rows.length, viewedAt: new Date().toISOString() },
+        },
       });
     }
 

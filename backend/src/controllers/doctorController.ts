@@ -6,7 +6,8 @@ import { SPECIALTIES } from "../constants";
 import { nowInClinicTimezone, parseSlot } from "../utils/datetime";
 import { cacheGet, cacheSet, cacheDel, cacheDelPattern } from "../cache/redis";
 import { getIO } from "../sockets/slotEvents";
-import { enqueueJob } from "../queue/messageQueue";
+import { insertOutboxEvent } from "../queue/outboxRelay";
+import { cancelAppointmentReminders } from "../services/reminderService";
 
 const emptyToUndefined = (val: unknown) => (val === "" ? undefined : val);
 
@@ -385,6 +386,35 @@ export async function setAvailability(req: AuthRequest, res: Response, next: Nex
          WHERE id = ANY($1::uuid[])`,
         [affectedIds]
       );
+
+      // Insert transactional outbox events
+      for (const appt of affectedAppointments) {
+        await insertOutboxEvent(client, {
+          aggregateType: "APPOINTMENT",
+          aggregateId: appt.id,
+          eventType: "NOTIFICATION",
+          payload: {
+            userId: appt.patient_id,
+            type: "APPOINTMENT_CANCELLED",
+            title: "Appointment Cancelled",
+            message: `Your appointment at ${String(appt.slot_time).slice(0, 16)} was cancelled because the doctor modified their schedule. Booking Ref: ${appt.booking_ref}`,
+            link: "/my-appointments",
+          },
+        });
+
+        await insertOutboxEvent(client, {
+          aggregateType: "APPOINTMENT",
+          aggregateId: appt.id,
+          eventType: "AUDIT",
+          payload: {
+            actorId: userId,
+            actorRole: "DOCTOR",
+            action: "APPOINTMENT_CANCELLED_BY_SCHEDULE_CHANGE",
+            targetId: appt.id,
+            details: { doctorId, slotTime: appt.slot_time, bookingRef: appt.booking_ref },
+          },
+        });
+      }
     }
 
     await client.query("COMMIT");
@@ -394,25 +424,10 @@ export async function setAvailability(req: AuthRequest, res: Response, next: Nex
     await cacheDel(`medibook:slots:${doctorId}`);
     await cacheDelPattern(`medibook:admin:*`);
 
-    // Emit socket events to doctor room, queue notifications and audits
+    // Emit socket events to doctor room and cancel BullMQ reminders
     for (const appt of affectedAppointments) {
       getIO().to(`doctor:${doctorId}`).emit("slot-freed", { doctorId, slotTime: appt.slot_time });
-
-      await enqueueJob("NOTIFICATION", {
-        userId: appt.patient_id,
-        type: "APPOINTMENT_CANCELLED",
-        title: "Appointment Cancelled",
-        message: `Your appointment at ${String(appt.slot_time).slice(0, 16)} was cancelled because the doctor modified their schedule. Booking Ref: ${appt.booking_ref}`,
-        link: "/my-appointments",
-      });
-
-      await enqueueJob("AUDIT", {
-        actorId: userId,
-        actorRole: "DOCTOR",
-        action: "APPOINTMENT_CANCELLED_BY_SCHEDULE_CHANGE",
-        targetId: appt.id,
-        details: { doctorId, slotTime: appt.slot_time, bookingRef: appt.booking_ref },
-      });
+      await cancelAppointmentReminders(appt.id);
     }
 
     res.json({ message: "Availability updated", affectedCount });
@@ -490,6 +505,34 @@ export async function addDoctorLeave(req: AuthRequest, res: Response, next: Next
            AND slot_time::date = $2::date`,
         [doctorId, leaveDate, reason || "Doctor on leave"]
       );
+      // Insert outbox events
+      for (const appt of affectedAppointments) {
+        await insertOutboxEvent(client, {
+          aggregateType: "APPOINTMENT",
+          aggregateId: appt.id,
+          eventType: "NOTIFICATION",
+          payload: {
+            userId: appt.patient_id,
+            type: "APPOINTMENT_CANCELLED",
+            title: "Appointment Cancelled",
+            message: `Your appointment on ${leaveDate} was cancelled due to doctor leave (${reason || "Doctor on leave"}). Booking Ref: ${appt.booking_ref}`,
+            link: "/my-appointments",
+          },
+        });
+
+        await insertOutboxEvent(client, {
+          aggregateType: "APPOINTMENT",
+          aggregateId: appt.id,
+          eventType: "AUDIT",
+          payload: {
+            actorId: userId,
+            actorRole: "DOCTOR",
+            action: "APPOINTMENT_CANCELLED_BY_LEAVE",
+            targetId: appt.id,
+            details: { doctorId, leaveDate, reason: reason || "Doctor on leave" },
+          },
+        });
+      }
     }
 
     await client.query("COMMIT");
@@ -499,25 +542,10 @@ export async function addDoctorLeave(req: AuthRequest, res: Response, next: Next
     await cacheDel(`medibook:slots:${doctorId}`);
     await cacheDelPattern(`medibook:admin:*`);
 
-    // Emit socket events to doctor room, notify patients, write audit entries
+    // Emit socket events to doctor room and cancel BullMQ reminders
     for (const appt of affectedAppointments) {
       getIO().to(`doctor:${doctorId}`).emit("slot-freed", { doctorId, slotTime: appt.slot_time });
-
-      await enqueueJob("NOTIFICATION", {
-        userId: appt.patient_id,
-        type: "APPOINTMENT_CANCELLED",
-        title: "Appointment Cancelled",
-        message: `Your appointment on ${leaveDate} was cancelled due to doctor leave (${reason || "Doctor on leave"}). Booking Ref: ${appt.booking_ref}`,
-        link: "/my-appointments",
-      });
-
-      await enqueueJob("AUDIT", {
-        actorId: userId,
-        actorRole: "DOCTOR",
-        action: "APPOINTMENT_CANCELLED_BY_LEAVE",
-        targetId: appt.id,
-        details: { doctorId, leaveDate, reason: reason || "Doctor on leave" },
-      });
+      await cancelAppointmentReminders(appt.id);
     }
 
     res.status(201).json({

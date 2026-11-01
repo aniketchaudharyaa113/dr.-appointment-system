@@ -3,7 +3,7 @@ import { z } from "zod";
 import pool from "../db/pool";
 import { AuthRequest } from "../types";
 import { cacheDelPattern } from "../cache/redis";
-import { enqueueJob } from "../queue/messageQueue";
+import { insertOutboxEvent } from "../queue/outboxRelay";
 
 const reviewSchema = z.object({
   appointmentId: z.string().uuid("appointmentId must be a valid id").optional(),
@@ -86,12 +86,17 @@ export async function createReview(req: AuthRequest, res: Response, next: NextFu
     ]);
 
     if (docUser.rows.length > 0) {
-      await enqueueJob("NOTIFICATION", {
-        userId: docUser.rows[0].user_id,
-        type: "NEW_REVIEW",
-        title: "New Patient Review",
-        message: `${patientUser.rows[0]?.name || "A patient"} left you a ${rating}★ review: "${comment || "No comment"}"`,
-        link: "/doctor/dashboard",
+      await insertOutboxEvent(pool, {
+        aggregateType: "REVIEW",
+        aggregateId: result.rows[0].id,
+        eventType: "NOTIFICATION",
+        payload: {
+          userId: docUser.rows[0].user_id,
+          type: "NEW_REVIEW",
+          title: "New Patient Review",
+          message: `${patientUser.rows[0]?.name || "A patient"} left you a ${rating}★ review: "${comment || "No comment"}"`,
+          link: "/doctor/dashboard",
+        },
       });
     }
 
