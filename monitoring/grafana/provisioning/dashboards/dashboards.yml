@@ -1,0 +1,11 @@
+apiVersion: 1
+
+providers:
+  - name: "MediBook Observability"
+    orgId: 1
+    folder: "MediBook"
+    type: file
+    disableDeletion: false
+    editable: true
+    options:
+      path: /var/lib/grafana/dashboards

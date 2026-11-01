@@ -5,6 +5,7 @@ import { createAdapter } from "@socket.io/redis-adapter";
 import { Emitter } from "@socket.io/redis-emitter";
 import Redis from "ioredis";
 import { logger } from "../lib/logger";
+import { activeSocketConnections } from "../metrics/prometheus";
 
 let io: Server | null = null;
 let adapterPub: Redis | null = null;
@@ -81,6 +82,8 @@ export function initSocket(httpServer: HttpServer, customRedisUrl?: string) {
   });
 
   io.on("connection", (socket: Socket) => {
+    try { activeSocketConnections.inc(); } catch {}
+
     const user = socket.data.user;
     if (user && user.id) {
       socket.join(`user:${user.id}`);
@@ -100,6 +103,10 @@ export function initSocket(httpServer: HttpServer, customRedisUrl?: string) {
       if (doctorId && typeof doctorId === "string") {
         socket.leave(`doctor:${doctorId}`);
       }
+    });
+
+    socket.on("disconnect", () => {
+      try { activeSocketConnections.dec(); } catch {}
     });
   });
 

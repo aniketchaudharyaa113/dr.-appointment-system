@@ -8,6 +8,7 @@ import { cacheDel, cacheDelPattern, getRedisClient, isRedisConnected } from "../
 import { insertOutboxEvent } from "../queue/outboxRelay";
 import { scheduleAppointmentReminders, cancelAppointmentReminders } from "../services/reminderService";
 import { offerSlotToNextWaitlistedPatient } from "../services/waitlistService";
+import { bookingCounter } from "../metrics/prometheus";
 
 // POST /appointments - book a slot
 // The UNIQUE(doctor_id, slot_time) constraint in the DB is what actually
@@ -234,14 +235,17 @@ export async function createAppointment(req: AuthRequest, res: Response, next: N
     // Real-time broadcast to doctor room
     getIO().to(`doctor:${doctorId}`).emit("slot-booked", { doctorId, slotTime: storedSlotTime });
 
+    try { bookingCounter.inc({ status: "success" }); } catch {}
     res.status(201).json(appointment);
   } catch (err: any) {
     if (inTransaction) {
       await client.query("ROLLBACK");
     }
     if (err.code === "23505") {
+      try { bookingCounter.inc({ status: "conflict" }); } catch {}
       return res.status(409).json({ error: "That slot was just booked by someone else. Please pick another." });
     }
+    try { bookingCounter.inc({ status: "error" }); } catch {}
     next(err);
   } finally {
     client.release();

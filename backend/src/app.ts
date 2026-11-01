@@ -23,6 +23,7 @@ import pool from "./db/pool";
 import helmet from "helmet";
 import cookieParser from "cookie-parser";
 import { httpLogger } from "./lib/logger";
+import { metricsMiddleware, register, updateQueueMetrics } from "./metrics/prometheus";
 
 dotenv.config();
 
@@ -39,6 +40,7 @@ const httpServer = http.createServer(app);
 
 app.use(helmet());
 app.use(httpLogger);
+app.use(metricsMiddleware);
 
 const allowedOrigins = process.env.CLIENT_URL
   ? process.env.CLIENT_URL.split(",").map((s) => s.trim())
@@ -125,6 +127,18 @@ app.get("/health", async (req, res) => {
     redis: isRedisConnected() ? "connected" : "fallback_memory",
     timestamp: new Date().toISOString(),
   });
+});
+
+app.get("/metrics", async (req, res) => {
+  const internalSecret = process.env.METRICS_TOKEN;
+  if (process.env.NODE_ENV === "production" && internalSecret) {
+    if (req.headers["x-metrics-token"] !== internalSecret) {
+      return res.status(403).json({ error: "Forbidden: Internal metrics endpoint" });
+    }
+  }
+  await updateQueueMetrics();
+  res.setHeader("Content-Type", register.contentType);
+  res.send(await register.metrics());
 });
 
 app.use("/auth", authRoutes);

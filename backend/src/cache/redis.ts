@@ -1,6 +1,7 @@
 import Redis from "ioredis";
 import dotenv from "dotenv";
 import { logger } from "../lib/logger";
+import { cacheHitsCounter, cacheMissesCounter } from "../metrics/prometheus";
 
 dotenv.config();
 
@@ -13,10 +14,12 @@ let cacheMisses = 0;
 
 export function recordCacheHit() {
   cacheHits++;
+  try { cacheHitsCounter.inc(); } catch {}
 }
 
 export function recordCacheMiss() {
   cacheMisses++;
+  try { cacheMissesCounter.inc(); } catch {}
 }
 
 export function getCacheMetrics() {

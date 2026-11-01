@@ -1,0 +1,13 @@
+global:
+  scrape_interval: 5s
+  evaluation_interval: 5s
+
+scrape_configs:
+  - job_name: "medibook-backends"
+    metrics_path: "/metrics"
+    static_configs:
+      - targets:
+          - "backend-1:5000"
+          - "backend-2:5000"
+        labels:
+          app: "medibook"
