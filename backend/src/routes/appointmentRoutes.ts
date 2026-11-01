@@ -7,13 +7,49 @@ import {
   rescheduleAppointment,
 } from "../controllers/appointmentController";
 import { verifyToken, requireRole } from "../middleware/authMiddleware";
+import { validate } from "../middleware/validate";
+import {
+  createAppointmentSchema,
+  cancelAppointmentSchema,
+  completeAppointmentSchema,
+  rescheduleAppointmentSchema,
+  appointmentsQuerySchema,
+  uuidParamSchema,
+} from "../schemas/validationSchemas";
 
 const router = Router();
 
-router.post("/", verifyToken, requireRole("PATIENT"), createAppointment);
-router.get("/mine", verifyToken, getMyAppointments);
-router.patch("/:id/cancel", verifyToken, cancelAppointment);
-router.patch("/:id/complete", verifyToken, requireRole("DOCTOR"), completeAppointment);
-router.patch("/:id/reschedule", verifyToken, rescheduleAppointment);
+router.post(
+  "/",
+  verifyToken,
+  requireRole("PATIENT"),
+  validate({ body: createAppointmentSchema }),
+  createAppointment
+);
+router.get(
+  "/mine",
+  verifyToken,
+  validate({ query: appointmentsQuerySchema }),
+  getMyAppointments
+);
+router.patch(
+  "/:id/cancel",
+  verifyToken,
+  validate({ params: uuidParamSchema, body: cancelAppointmentSchema }),
+  cancelAppointment
+);
+router.patch(
+  "/:id/complete",
+  verifyToken,
+  requireRole("DOCTOR"),
+  validate({ params: uuidParamSchema, body: completeAppointmentSchema }),
+  completeAppointment
+);
+router.patch(
+  "/:id/reschedule",
+  verifyToken,
+  validate({ params: uuidParamSchema, body: rescheduleAppointmentSchema }),
+  rescheduleAppointment
+);
 
 export default router;
