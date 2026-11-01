@@ -16,6 +16,7 @@ import {
 import { getIO } from "../sockets/slotEvents";
 import { insertOutboxEvent } from "../queue/outboxRelay";
 import { cancelAppointmentReminders } from "../services/reminderService";
+import { attachNextAvailableSlots } from "../services/slotService";
 
 const emptyToUndefined = (val: unknown) => (val === "" ? undefined : val);
 
@@ -97,6 +98,8 @@ export async function getDoctors(req: AuthRequest, res: Response, next: NextFunc
     `;
 
     const result = await pool.query(query, values);
+    await attachNextAvailableSlots(result.rows);
+
     const responsePayload = {
       data: result.rows,
       pagination: {

@@ -1,5 +1,6 @@
 import { Link } from "react-router-dom";
-import { Star, MapPin, Award } from "lucide-react";
+import { Star, MapPin, Award, Clock } from "lucide-react";
+import { formatSlot } from "../lib/format";
 
 export default function DoctorCard({ doctor }) {
   const fee = doctor.consultation_fee ? Number(doctor.consultation_fee) : null;
@@ -56,6 +57,20 @@ export default function DoctorCard({ doctor }) {
             <MapPin className="w-3 h-3 text-inkSoft/60 shrink-0" />
             <span className="truncate">{doctor.clinic_address}</span>
           </p>
+        )}
+
+        {doctor.next_available_slot ? (
+          <div className="mt-2.5 flex items-center gap-1.5 rounded-md bg-sage-50/90 px-2.5 py-1 text-xs text-sage-800 border border-sage-200">
+            <Clock className="w-3.5 h-3.5 text-sage-600 shrink-0" />
+            <span className="truncate">
+              Next: <strong className="font-semibold text-sage-900">{formatSlot(doctor.next_available_slot)}</strong>
+            </span>
+          </div>
+        ) : (
+          <div className="mt-2.5 flex items-center gap-1.5 rounded-md bg-paperDim px-2.5 py-1 text-xs text-inkSoft">
+            <Clock className="w-3.5 h-3.5 text-inkSoft/60 shrink-0" />
+            <span>Check profile for waitlist</span>
+          </div>
         )}
 
         <div className="mt-4 flex items-center justify-between border-t border-dashed border-line pt-3">

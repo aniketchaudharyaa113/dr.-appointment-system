@@ -221,6 +221,7 @@ export async function createAppointment(req: AuthRequest, res: Response, next: N
     // Invalidate caches
     await cacheDel(`medibook:slots:${doctorId}`);
     await cacheDelPattern(`medibook:admin:*`);
+    await cacheDelPattern(`medibook:doctors:list:*`);
 
     // Release slot hold if active
     if (redis && isRedisConnected()) {
@@ -456,6 +457,7 @@ export async function cancelAppointment(req: AuthRequest, res: Response, next: N
     // Invalidate caches
     await cacheDel(`medibook:slots:${appt.doctor_id}`);
     await cacheDelPattern(`medibook:admin:*`);
+    await cacheDelPattern(`medibook:doctors:list:*`);
 
     // Emit live slot-freed socket event to doctor room
     getIO().to(`doctor:${appt.doctor_id}`).emit("slot-freed", { doctorId: appt.doctor_id, slotTime: appt.slot_time });

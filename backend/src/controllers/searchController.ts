@@ -2,6 +2,7 @@ import { Response, NextFunction, Request } from "express";
 import pool from "../db/pool";
 import { haversineDistance } from "../utils/haversine";
 import { cacheGet, cacheSet } from "../cache/redis";
+import { attachNextAvailableSlots } from "../services/slotService";
 
 // GET /search/symptom?q=chest%20pain&lat=22.57&lng=88.36
 export async function symptomSearch(req: Request, res: Response, next: NextFunction) {
@@ -91,6 +92,8 @@ export async function symptomSearch(req: Request, res: Response, next: NextFunct
         }))
         .sort((a, b) => (a.distanceKm ?? Infinity) - (b.distanceKm ?? Infinity));
     }
+
+    await attachNextAvailableSlots(doctors);
 
     const payload = { specialty, matchedSymptom: mapResult.rows[0].symptom, doctors };
     await cacheSet(cacheKey, payload, 180); // Cache for 3 minutes
