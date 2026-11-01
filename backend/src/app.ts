@@ -9,6 +9,7 @@ import appointmentRoutes from "./routes/appointmentRoutes";
 import searchRoutes from "./routes/searchRoutes";
 import reviewRoutes from "./routes/reviewRoutes";
 import adminRoutes from "./routes/adminRoutes";
+import queueRoutes from "./routes/queueRoutes";
 import prescriptionRoutes from "./routes/prescriptionRoutes";
 import notificationRoutes from "./routes/notificationRoutes";
 
@@ -130,6 +131,7 @@ app.use("/prescriptions", prescriptionRoutes);
 app.use("/notifications", notificationRoutes);
 app.use("/search", searchRoutes);
 app.use("/reviews", reviewRoutes);
+app.use("/admin/queues", queueRoutes);
 app.use("/admin", adminRoutes);
 
 app.use(notFound);
