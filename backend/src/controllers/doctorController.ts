@@ -3,8 +3,10 @@ import { z } from "zod";
 import pool from "../db/pool";
 import { AuthRequest } from "../types";
 import { SPECIALTIES } from "../constants";
-import { nowInClinicTimezone } from "../utils/datetime";
+import { nowInClinicTimezone, parseSlot } from "../utils/datetime";
 import { cacheGet, cacheSet, cacheDel, cacheDelPattern } from "../cache/redis";
+import { getIO } from "../sockets/slotEvents";
+import { enqueueJob } from "../queue/messageQueue";
 
 const emptyToUndefined = (val: unknown) => (val === "" ? undefined : val);
 
@@ -261,6 +263,7 @@ export async function setAvailability(req: AuthRequest, res: Response, next: Nex
   try {
     const userId = req.user!.id;
     const { slots } = req.body;
+    const dryRun = req.query.dryRun === "true";
 
     const doctorResult = await client.query("SELECT id FROM doctors WHERE user_id = $1", [userId]);
     if (doctorResult.rows.length === 0) {
@@ -268,15 +271,92 @@ export async function setAvailability(req: AuthRequest, res: Response, next: Nex
     }
     const doctorId = doctorResult.rows[0].id;
 
+    // Normalize new slots
+    const normalizedSlots = (slots || []).map((s: any) => ({
+      dayOfWeek: Number(s.dayOfWeek),
+      startTime: String(s.startTime).length === 5 ? `${s.startTime}:00` : String(s.startTime),
+      endTime: String(s.endTime).length === 5 ? `${s.endTime}:00` : String(s.endTime),
+      slotDurationMinutes: Number(s.slotDurationMinutes) || 15,
+    }));
+
+    const timeToMinutes = (t: string) => {
+      const [h, m] = t.split(":").map(Number);
+      return h * 60 + m;
+    };
+
+    // Find future active appointments for this doctor
+    const nowClinic = nowInClinicTimezone();
+    const pad = (n: number) => String(n).padStart(2, "0");
+    const nowIso = `${nowClinic.year}-${pad(nowClinic.month)}-${pad(nowClinic.day)} ${nowClinic.hhmmss}`;
+
+    const futureAppts = await client.query(
+      `SELECT a.*, u.email as patient_email, u.name as patient_name
+       FROM appointments a
+       JOIN users u ON u.id = a.patient_id
+       WHERE a.doctor_id = $1
+         AND a.status IN ('CONFIRMED', 'PENDING')
+         AND a.slot_time >= $2`,
+      [doctorId, nowIso]
+    );
+
+    const affectedAppointments = futureAppts.rows.filter((appt) => {
+      const p = parseSlot(String(appt.slot_time));
+      if (!p) return false;
+      const apptMins = timeToMinutes(p.hhmmss);
+
+      // Check if any slot in normalizedSlots covers this appointment
+      const matched = normalizedSlots.some((slot: any) => {
+        if (slot.dayOfWeek !== p.dayOfWeek) return false;
+        const startMins = timeToMinutes(slot.startTime);
+        const endMins = timeToMinutes(slot.endTime);
+        const duration = slot.slotDurationMinutes;
+
+        // Is it inside window?
+        if (apptMins < startMins || apptMins + duration > endMins) return false;
+        // Is it aligned?
+        if ((apptMins - startMins) % duration !== 0) return false;
+
+        return true;
+      });
+
+      return !matched; // affected if not covered by any new slot
+    });
+
+    const affectedCount = affectedAppointments.length;
+
+    if (dryRun) {
+      return res.json({
+        dryRun: true,
+        affectedCount,
+        affectedAppointments: affectedAppointments.map((a) => ({
+          id: a.id,
+          slotTime: a.slot_time,
+          patientName: a.patient_name,
+          bookingRef: a.booking_ref,
+        })),
+      });
+    }
+
     await client.query("BEGIN");
     inTransaction = true;
     await client.query("DELETE FROM availability WHERE doctor_id = $1", [doctorId]);
 
-    for (const slot of slots || []) {
+    for (const slot of normalizedSlots) {
       await client.query(
         `INSERT INTO availability (doctor_id, day_of_week, start_time, end_time, slot_duration_minutes)
          VALUES ($1, $2, $3, $4, $5)`,
-        [doctorId, slot.dayOfWeek, slot.startTime, slot.endTime, slot.slotDurationMinutes || 15]
+        [doctorId, slot.dayOfWeek, slot.startTime, slot.endTime, slot.slotDurationMinutes]
+      );
+    }
+
+    if (affectedCount > 0) {
+      const affectedIds = affectedAppointments.map((a) => a.id);
+      await client.query(
+        `UPDATE appointments
+         SET status = 'CANCELLED',
+             notes = COALESCE(notes || ' | ', '') || 'Cancelled due to doctor schedule reduction'
+         WHERE id = ANY($1::uuid[])`,
+        [affectedIds]
       );
     }
 
@@ -285,8 +365,30 @@ export async function setAvailability(req: AuthRequest, res: Response, next: Nex
 
     await cacheDel(`medibook:doctor:${doctorId}`);
     await cacheDel(`medibook:slots:${doctorId}`);
+    await cacheDelPattern(`medibook:admin:*`);
 
-    res.json({ message: "Availability updated" });
+    // Emit socket events, queue notifications and audits
+    for (const appt of affectedAppointments) {
+      getIO().emit("slot-freed", { doctorId, slotTime: appt.slot_time });
+
+      await enqueueJob("NOTIFICATION", {
+        userId: appt.patient_id,
+        type: "APPOINTMENT_CANCELLED",
+        title: "Appointment Cancelled",
+        message: `Your appointment at ${String(appt.slot_time).slice(0, 16)} was cancelled because the doctor modified their schedule. Booking Ref: ${appt.booking_ref}`,
+        link: "/my-appointments",
+      });
+
+      await enqueueJob("AUDIT", {
+        actorId: userId,
+        actorRole: "DOCTOR",
+        action: "APPOINTMENT_CANCELLED_BY_SCHEDULE_CHANGE",
+        targetId: appt.id,
+        details: { doctorId, slotTime: appt.slot_time, bookingRef: appt.booking_ref },
+      });
+    }
+
+    res.json({ message: "Availability updated", affectedCount });
   } catch (err) {
     if (inTransaction) {
       await client.query("ROLLBACK");
@@ -299,19 +401,51 @@ export async function setAvailability(req: AuthRequest, res: Response, next: Nex
 
 // POST /doctors/me/leaves - add blackout date
 export async function addDoctorLeave(req: AuthRequest, res: Response, next: NextFunction) {
+  const client = await pool.connect();
+  let inTransaction = false;
   try {
     const userId = req.user!.id;
     const { leaveDate, reason } = req.body;
+    const dryRun = req.query.dryRun === "true";
 
     if (!leaveDate) {
       return res.status(400).json({ error: "leaveDate is required (YYYY-MM-DD)" });
     }
 
-    const docRes = await pool.query("SELECT id FROM doctors WHERE user_id = $1", [userId]);
+    const docRes = await client.query("SELECT id FROM doctors WHERE user_id = $1", [userId]);
     if (docRes.rows.length === 0) return res.status(404).json({ error: "Doctor not found" });
     const doctorId = docRes.rows[0].id;
 
-    const result = await pool.query(
+    // Find affected CONFIRMED / PENDING appointments on this leave date
+    const affectedRes = await client.query(
+      `SELECT a.*, u.email as patient_email, u.name as patient_name
+       FROM appointments a
+       JOIN users u ON u.id = a.patient_id
+       WHERE a.doctor_id = $1
+         AND a.status IN ('CONFIRMED', 'PENDING')
+         AND a.slot_time::date = $2::date`,
+      [doctorId, leaveDate]
+    );
+    const affectedAppointments = affectedRes.rows;
+    const affectedCount = affectedAppointments.length;
+
+    if (dryRun) {
+      return res.json({
+        dryRun: true,
+        affectedCount,
+        affectedAppointments: affectedAppointments.map((a) => ({
+          id: a.id,
+          slotTime: a.slot_time,
+          patientName: a.patient_name,
+          bookingRef: a.booking_ref,
+        })),
+      });
+    }
+
+    await client.query("BEGIN");
+    inTransaction = true;
+
+    const leaveResult = await client.query(
       `INSERT INTO doctor_leaves (doctor_id, leave_date, reason)
        VALUES ($1, $2, $3)
        ON CONFLICT (doctor_id, leave_date) DO UPDATE SET reason = $3
@@ -319,12 +453,57 @@ export async function addDoctorLeave(req: AuthRequest, res: Response, next: Next
       [doctorId, leaveDate, reason || "On Leave"]
     );
 
+    if (affectedCount > 0) {
+      await client.query(
+        `UPDATE appointments
+         SET status = 'CANCELLED',
+             notes = COALESCE(notes || ' | ', '') || 'Cancelled due to doctor leave: ' || $3
+         WHERE doctor_id = $1
+           AND status IN ('CONFIRMED', 'PENDING')
+           AND slot_time::date = $2::date`,
+        [doctorId, leaveDate, reason || "Doctor on leave"]
+      );
+    }
+
+    await client.query("COMMIT");
+    inTransaction = false;
+
     await cacheDel(`medibook:doctor:${doctorId}`);
     await cacheDel(`medibook:slots:${doctorId}`);
+    await cacheDelPattern(`medibook:admin:*`);
 
-    res.status(201).json(result.rows[0]);
+    // Emit socket events, notify patients, write audit entries
+    for (const appt of affectedAppointments) {
+      getIO().emit("slot-freed", { doctorId, slotTime: appt.slot_time });
+
+      await enqueueJob("NOTIFICATION", {
+        userId: appt.patient_id,
+        type: "APPOINTMENT_CANCELLED",
+        title: "Appointment Cancelled",
+        message: `Your appointment on ${leaveDate} was cancelled due to doctor leave (${reason || "Doctor on leave"}). Booking Ref: ${appt.booking_ref}`,
+        link: "/my-appointments",
+      });
+
+      await enqueueJob("AUDIT", {
+        actorId: userId,
+        actorRole: "DOCTOR",
+        action: "APPOINTMENT_CANCELLED_BY_LEAVE",
+        targetId: appt.id,
+        details: { doctorId, leaveDate, reason: reason || "Doctor on leave" },
+      });
+    }
+
+    res.status(201).json({
+      ...leaveResult.rows[0],
+      affectedCount,
+    });
   } catch (err) {
+    if (inTransaction) {
+      await client.query("ROLLBACK");
+    }
     next(err);
+  } finally {
+    client.release();
   }
 }
 

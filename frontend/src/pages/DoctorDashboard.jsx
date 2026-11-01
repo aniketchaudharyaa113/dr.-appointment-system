@@ -161,8 +161,22 @@ function AvailabilityTab({ token }) {
     setMsg("");
     try {
       const slots = rows.filter((r) => r.enabled).map(({ enabled, ...rest }) => rest);
-      await api.setAvailability(slots, token);
-      setMsg("Weekly schedule updated successfully.");
+      const check = await api.setAvailability(slots, token, true);
+      if (check.affectedCount > 0) {
+        const ok = window.confirm(
+          `This schedule change will cancel ${check.affectedCount} existing booking(s) that no longer fit into your hours. Do you wish to proceed?`
+        );
+        if (!ok) {
+          setSaving(false);
+          return;
+        }
+      }
+      const res = await api.setAvailability(slots, token, false);
+      setMsg(
+        res.affectedCount > 0
+          ? `Weekly schedule updated. ${res.affectedCount} conflicting booking(s) were cancelled and patients notified.`
+          : "Weekly schedule updated successfully."
+      );
     } catch (err) {
       setMsg(err.message);
     } finally {
@@ -217,10 +231,24 @@ function LeavesTab({ token }) {
     setLoading(true);
     setMsg("");
     try {
-      await api.addDoctorLeave(leaveDate, reason, token);
+      const check = await api.addDoctorLeave(leaveDate, reason, token, true);
+      if (check.affectedCount > 0) {
+        const ok = window.confirm(
+          `Scheduling leave on ${leaveDate} will cancel ${check.affectedCount} existing booking(s) and notify the patient(s). Do you wish to continue?`
+        );
+        if (!ok) {
+          setLoading(false);
+          return;
+        }
+      }
+      const res = await api.addDoctorLeave(leaveDate, reason, token, false);
       setLeaveDate("");
       setReason("");
-      setMsg("Leave added.");
+      setMsg(
+        res.affectedCount > 0
+          ? `Leave added. ${res.affectedCount} booking(s) cancelled and patients notified.`
+          : "Leave added."
+      );
       load();
     } catch (err) {
       setMsg(err.message);

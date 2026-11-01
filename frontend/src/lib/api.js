@@ -33,10 +33,10 @@ export const api = {
   getMyDoctorProfile: (token) => request("/doctors/me", { token }),
   updateMyDoctorProfile: (payload, token) =>
     request("/doctors/me", { method: "PATCH", body: payload, token }),
-  setAvailability: (slots, token) =>
-    request("/doctors/me/availability", { method: "PATCH", body: { slots }, token }),
-  addDoctorLeave: (leaveDate, reason, token) =>
-    request("/doctors/me/leaves", { method: "POST", body: { leaveDate, reason }, token }),
+  setAvailability: (slots, token, dryRun = false) =>
+    request(`/doctors/me/availability${dryRun ? "?dryRun=true" : ""}`, { method: "PATCH", body: { slots }, token }),
+  addDoctorLeave: (leaveDate, reason, token, dryRun = false) =>
+    request(`/doctors/me/leaves${dryRun ? "?dryRun=true" : ""}`, { method: "POST", body: { leaveDate, reason }, token }),
   removeDoctorLeave: (date, token) =>
     request(`/doctors/me/leaves/${date}`, { method: "DELETE", token }),
   getMyEarnings: (token) => request("/doctors/me/earnings", { token }),
