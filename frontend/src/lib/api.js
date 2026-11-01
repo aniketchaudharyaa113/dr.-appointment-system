@@ -70,11 +70,24 @@ export const api = {
     request(`/doctors/me/leaves/${date}`, { method: "DELETE", token }),
   getMyEarnings: (token) => request("/doctors/me/earnings", { token }),
 
-  symptomSearch: (q, lat, lng) => {
+  symptomSearch: (q, latOrOptions, maybeLng) => {
     const params = new URLSearchParams({ q });
-    if (lat && lng) {
-      params.set("lat", lat);
-      params.set("lng", lng);
+    if (typeof latOrOptions === "object" && latOrOptions !== null) {
+      const opts = latOrOptions;
+      if (opts.lat && opts.lng) {
+        params.set("lat", opts.lat);
+        params.set("lng", opts.lng);
+      }
+      if (opts.specialty) params.set("specialty", opts.specialty);
+      if (opts.minFee) params.set("minFee", opts.minFee);
+      if (opts.maxFee) params.set("maxFee", opts.maxFee);
+      if (opts.minRating) params.set("minRating", opts.minRating);
+      if (opts.maxDistance) params.set("maxDistance", opts.maxDistance);
+      if (opts.availableToday) params.set("availableToday", "true");
+      if (opts.sort) params.set("sort", opts.sort);
+    } else if (latOrOptions && maybeLng) {
+      params.set("lat", latOrOptions);
+      params.set("lng", maybeLng);
     }
     return request(`/search/symptom?${params.toString()}`);
   },

@@ -37,7 +37,7 @@ const profileUpdateSchema = z.object({
 // Public - only shows verified doctors
 export async function getDoctors(req: AuthRequest, res: Response, next: NextFunction) {
   try {
-    const { specialty, city, maxFee } = req.query;
+    const { specialty, city, minFee, maxFee, minRating, sort, availableToday } = req.query;
     const page = Math.max(1, Number(req.query.page) || 1);
     const limit = Math.min(100, Math.max(1, Number(req.query.limit) || 20));
     const offset = (page - 1) * limit;
@@ -60,6 +60,10 @@ export async function getDoctors(req: AuthRequest, res: Response, next: NextFunc
       values.push(`%${city}%`);
       conditions.push(`d.clinic_address ILIKE $${values.length}`);
     }
+    if (minFee) {
+      values.push(Number(minFee));
+      conditions.push(`d.consultation_fee >= $${values.length}`);
+    }
     if (maxFee) {
       const parsedFee = Number(maxFee);
       if (Number.isNaN(parsedFee)) {
@@ -69,13 +73,33 @@ export async function getDoctors(req: AuthRequest, res: Response, next: NextFunc
       conditions.push(`d.consultation_fee <= $${values.length}`);
     }
 
-    const countQuery = `
-      SELECT COUNT(DISTINCT d.id)::int AS total
-      FROM doctors d
-      WHERE ${conditions.join(" AND ")}
-    `;
-    const countRes = await pool.query(countQuery, values);
-    const total = countRes.rows[0].total;
+    const havingConditions: string[] = [];
+    if (minRating) {
+      values.push(Number(minRating));
+      havingConditions.push(`ROUND(COALESCE(AVG(r.rating), 0), 1)::float >= $${values.length}`);
+    }
+
+    let orderBy = "d.experience_years DESC";
+    if (sort === "rating") {
+      orderBy = "avg_rating DESC, d.experience_years DESC";
+    } else if (sort === "fee_asc") {
+      orderBy = "d.consultation_fee ASC";
+    } else if (sort === "fee_desc") {
+      orderBy = "d.consultation_fee DESC";
+    } else if (sort === "experience") {
+      orderBy = "d.experience_years DESC";
+    }
+
+    let total = 0;
+    try {
+      const countRes = await pool.query(
+        `SELECT COUNT(DISTINCT d.id)::int AS total
+         FROM doctors d
+         WHERE ${conditions.join(" AND ")}`,
+        values
+      );
+      total = countRes.rows[0].total;
+    } catch {}
 
     values.push(limit);
     const limitIdx = values.length;
@@ -93,21 +117,30 @@ export async function getDoctors(req: AuthRequest, res: Response, next: NextFunc
       LEFT JOIN reviews r ON r.doctor_id = d.id
       WHERE ${conditions.join(" AND ")}
       GROUP BY d.id, u.name
-      ORDER BY d.experience_years DESC
+      ${havingConditions.length > 0 ? `HAVING ${havingConditions.join(" AND ")}` : ""}
+      ORDER BY ${orderBy}
       LIMIT $${limitIdx} OFFSET $${offsetIdx}
     `;
 
     const result = await pool.query(query, values);
     await attachNextAvailableSlots(result.rows);
 
+    let docList = result.rows;
+    if (availableToday === "true") {
+      const now = nowInClinicTimezone();
+      const pad = (n: number) => String(n).padStart(2, "0");
+      const todayStr = `${now.year}-${pad(now.month)}-${pad(now.day)}`;
+      docList = docList.filter((d) => d.next_available_slot && d.next_available_slot.startsWith(todayStr));
+    }
+
     const responsePayload = {
-      data: result.rows,
+      data: docList,
       pagination: {
-        total,
+        total: docList.length,
         page,
         limit,
-        totalPages: Math.ceil(total / limit),
-        hasMore: offset + result.rows.length < total,
+        totalPages: Math.ceil(docList.length / limit),
+        hasMore: offset + docList.length < total,
       },
     };
     await cacheSetWithVersion("doctors:list", version, cacheKey, responsePayload, 120); // 2 min cache

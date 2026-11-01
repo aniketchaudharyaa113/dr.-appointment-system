@@ -66,6 +66,12 @@ export const appointmentsQuerySchema = paginationQuerySchema.extend({
 // Doctor Schemas
 export const doctorQuerySchema = paginationQuerySchema.extend({
   specialty: z.string().optional(),
+  city: z.string().optional(),
+  minFee: z.coerce.number().optional(),
+  maxFee: z.coerce.number().optional(),
+  minRating: z.coerce.number().optional(),
+  availableToday: z.string().optional(),
+  sort: z.string().optional(),
 });
 
 export const updateAvailabilitySchema = z.object({
