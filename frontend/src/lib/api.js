@@ -69,6 +69,7 @@ export const api = {
   removeDoctorLeave: (date, token) =>
     request(`/doctors/me/leaves/${date}`, { method: "DELETE", token }),
   getMyEarnings: (token) => request("/doctors/me/earnings", { token }),
+  getDoctorDayView: (date, token) => request(`/doctors/me/day-view?date=${date}`, { token }),
 
   symptomSearch: (q, latOrOptions, maybeLng) => {
     const params = new URLSearchParams({ q });
@@ -119,6 +120,8 @@ export const api = {
     request(`/appointments/${id}/cancel`, { method: "PATCH", body: { reason }, token }),
   completeAppointment: (id, notes, token) =>
     request(`/appointments/${id}/complete`, { method: "PATCH", body: { notes }, token }),
+  markNoShow: (id, token, reason) =>
+    request(`/appointments/${id}/no-show`, { method: "PATCH", body: { reason }, token }),
   rescheduleAppointment: (id, newSlotTime, token) =>
     request(`/appointments/${id}/reschedule`, { method: "PATCH", body: { newSlotTime }, token }),
 

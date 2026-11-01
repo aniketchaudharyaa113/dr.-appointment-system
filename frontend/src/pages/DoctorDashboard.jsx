@@ -331,17 +331,35 @@ function LeavesTab({ token }) {
 
 function AppointmentsTab({ token }) {
   const [appointments, setAppointments] = useState([]);
+  const [viewMode, setViewMode] = useState("all"); // "all" | "day"
+  const [selectedDate, setSelectedDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [notes, setNotes] = useState({});
   const [prescribingAppt, setPrescribingAppt] = useState(null);
   const [viewingRx, setViewingRx] = useState(null);
+  const [loading, setLoading] = useState(false);
 
   function load() {
-    api.getMyAppointments(token).then(setAppointments);
+    setLoading(true);
+    if (viewMode === "day") {
+      api.getDoctorDayView(selectedDate, token)
+        .then(setAppointments)
+        .finally(() => setLoading(false));
+    } else {
+      api.getMyAppointments(token)
+        .then(setAppointments)
+        .finally(() => setLoading(false));
+    }
   }
-  useEffect(load, [token]);
+  useEffect(load, [token, viewMode, selectedDate]);
 
   async function complete(id) {
     await api.completeAppointment(id, notes[id] || "", token);
+    load();
+  }
+
+  async function noShow(id) {
+    if (!confirm("Are you sure you want to mark this patient as No-Show? This frees up the slot and notifies the patient.")) return;
+    await api.markNoShow(id, token);
     load();
   }
 
@@ -363,7 +381,48 @@ function AppointmentsTab({ token }) {
 
   return (
     <div className="space-y-4">
-      {appointments.length === 0 && <p className="text-inkSoft">No appointments scheduled.</p>}
+      {/* View Mode Filter */}
+      <div className="flex flex-wrap items-center justify-between gap-3 bg-white p-3 rounded-lg border border-line">
+        <div className="flex gap-2">
+          <button
+            onClick={() => setViewMode("all")}
+            className={`px-3 py-1.5 rounded text-xs font-semibold transition-colors ${
+              viewMode === "all" ? "bg-sage-600 text-white" : "bg-paperDim text-inkSoft hover:text-ink"
+            }`}
+          >
+            All Appointments
+          </button>
+          <button
+            onClick={() => setViewMode("day")}
+            className={`px-3 py-1.5 rounded text-xs font-semibold transition-colors ${
+              viewMode === "day" ? "bg-sage-600 text-white" : "bg-paperDim text-inkSoft hover:text-ink"
+            }`}
+          >
+            Day View (Schedule)
+          </button>
+        </div>
+
+        {viewMode === "day" && (
+          <div className="flex items-center gap-2">
+            <label className="text-xs font-semibold text-ink">Date:</label>
+            <input
+              type="date"
+              className="input-field text-xs py-1 px-2.5 font-mono"
+              value={selectedDate}
+              onChange={(e) => setSelectedDate(e.target.value)}
+            />
+          </div>
+        )}
+      </div>
+
+      {loading && <p className="text-inkSoft text-xs">Loading appointments…</p>}
+
+      {!loading && appointments.length === 0 && (
+        <p className="text-inkSoft text-xs">
+          {viewMode === "day" ? `No appointments scheduled for ${selectedDate}.` : "No appointments scheduled."}
+        </p>
+      )}
+
       {appointments.map((appt) => (
         <div key={appt.id} className="card p-5 bg-white border border-line shadow-sm">
           <div className="flex items-start justify-between">
@@ -380,7 +439,9 @@ function AppointmentsTab({ token }) {
             </div>
             <span className={`rounded-full px-2.5 py-0.5 text-xs font-mono font-medium ${
               appt.status === "CONFIRMED" ? "bg-sage-50 text-sage-700" :
-              appt.status === "COMPLETED" ? "bg-line text-inkSoft" : "bg-clay-50 text-clay-700"
+              appt.status === "COMPLETED" ? "bg-line text-inkSoft" :
+              appt.status === "NO_SHOW" ? "bg-amber-50 text-amber-800 border border-amber-200" :
+              "bg-clay-50 text-clay-700"
             }`}>
               {appt.status}
             </span>
@@ -398,6 +459,12 @@ function AppointmentsTab({ token }) {
               <div className="flex flex-wrap items-center gap-2">
                 <button onClick={() => complete(appt.id)} className="btn-primary !py-1.5 text-xs">
                   Mark Completed
+                </button>
+                <button
+                  onClick={() => noShow(appt.id)}
+                  className="btn-secondary !py-1.5 text-xs text-amber-700 hover:text-amber-900 border-amber-200"
+                >
+                  Mark No-Show
                 </button>
                 <button
                   onClick={() => setPrescribingAppt(appt)}
@@ -451,19 +518,77 @@ function AppointmentsTab({ token }) {
 
 function EarningsTab({ token }) {
   const [earnings, setEarnings] = useState(null);
+  const [chartMode, setChartMode] = useState("weekly"); // "weekly" | "monthly"
+
   useEffect(() => { api.getMyEarnings(token).then(setEarnings); }, [token]);
   if (!earnings) return <p className="text-inkSoft">Loading…</p>;
 
+  const activeSeries = chartMode === "weekly" ? (earnings.weekly || []) : (earnings.monthly || []);
+  const maxVal = Math.max(...activeSeries.map((s) => s.earnings), 1);
+
   return (
-    <div className="card p-8 text-center bg-white border border-line">
-      <p className="text-xs uppercase tracking-wider font-semibold text-inkSoft">Revenue Analytics</p>
-      <p className="mt-1 text-sm text-inkSoft">Total earnings from completed consultations</p>
-      <p className="mt-3 font-display text-5xl font-bold text-sage-600">
-        ₹{Number(earnings.total_earnings).toFixed(0)}
-      </p>
-      <p className="mt-2 font-mono text-xs text-inkSoft">
-        Based on {earnings.completed_appointments} completed appointment{earnings.completed_appointments === "1" ? "" : "s"}
-      </p>
+    <div className="space-y-6">
+      <div className="card p-8 text-center bg-white border border-line">
+        <p className="text-xs uppercase tracking-wider font-semibold text-inkSoft">Revenue Analytics</p>
+        <p className="mt-1 text-sm text-inkSoft">Total earnings from completed consultations</p>
+        <p className="mt-3 font-display text-5xl font-bold text-sage-600">
+          ₹{Number(earnings.total_earnings).toFixed(0)}
+        </p>
+        <p className="mt-2 font-mono text-xs text-inkSoft">
+          Based on {earnings.completed_appointments} completed appointment{earnings.completed_appointments === "1" ? "" : "s"}
+        </p>
+      </div>
+
+      {/* Chart by Week / Month */}
+      <div className="card p-6 bg-white border border-line space-y-4">
+        <div className="flex items-center justify-between">
+          <h3 className="font-display text-base font-semibold text-ink">Earnings Breakdown</h3>
+          <div className="flex gap-1 bg-paperDim p-0.5 rounded-lg border border-line">
+            <button
+              onClick={() => setChartMode("weekly")}
+              className={`px-3 py-1 rounded text-xs font-semibold ${
+                chartMode === "weekly" ? "bg-white shadow-xs text-ink" : "text-inkSoft hover:text-ink"
+              }`}
+            >
+              By Week
+            </button>
+            <button
+              onClick={() => setChartMode("monthly")}
+              className={`px-3 py-1 rounded text-xs font-semibold ${
+                chartMode === "monthly" ? "bg-white shadow-xs text-ink" : "text-inkSoft hover:text-ink"
+              }`}
+            >
+              By Month
+            </button>
+          </div>
+        </div>
+
+        {activeSeries.length === 0 ? (
+          <p className="text-xs text-inkSoft py-4 text-center">No completed consultations in this period.</p>
+        ) : (
+          <div className="space-y-3 pt-2">
+            {activeSeries.map((item) => {
+              const pct = Math.max(8, Math.round((item.earnings / maxVal) * 100));
+              return (
+                <div key={item.period} className="space-y-1">
+                  <div className="flex justify-between text-xs font-mono">
+                    <span className="font-medium text-ink">{item.period}</span>
+                    <span className="text-sage-700 font-semibold">
+                      ₹{item.earnings} <span className="text-inkSoft font-normal">({item.count} visits)</span>
+                    </span>
+                  </div>
+                  <div className="w-full h-3 bg-paperDim rounded-full overflow-hidden">
+                    <div
+                      className="h-full bg-sage-500 rounded-full transition-all duration-300"
+                      style={{ width: `${pct}%` }}
+                    />
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
     </div>
   );
 }

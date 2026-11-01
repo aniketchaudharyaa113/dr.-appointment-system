@@ -560,6 +560,87 @@ export async function completeAppointment(req: AuthRequest, res: Response, next:
   }
 }
 
+// PATCH /appointments/:id/no-show - doctor marks a patient as no-show
+export async function markNoShow(req: AuthRequest, res: Response, next: NextFunction) {
+  const client = await pool.connect();
+  let inTransaction = false;
+  try {
+    const { id } = req.params;
+    const { reason } = req.body || {};
+    const userId = req.user!.id;
+
+    await client.query("BEGIN");
+    inTransaction = true;
+
+    const result = await client.query(
+      `UPDATE appointments SET status = 'NO_SHOW', notes = COALESCE($1, notes)
+       WHERE id = $2 AND doctor_id = (SELECT id FROM doctors WHERE user_id = $3)
+         AND status = 'CONFIRMED'
+       RETURNING *`,
+      [reason ? `No-show: ${reason}` : null, id, userId]
+    );
+
+    if (result.rows.length === 0) {
+      await client.query("ROLLBACK");
+      inTransaction = false;
+      return res.status(404).json({ error: "Appointment not found, not yours, or not in a confirmed state" });
+    }
+
+    const appt = result.rows[0];
+
+    // Transactional outbox events
+    await insertOutboxEvent(client, {
+      aggregateType: "APPOINTMENT",
+      aggregateId: id,
+      eventType: "NOTIFICATION",
+      payload: {
+        userId: appt.patient_id,
+        type: "APPOINTMENT_NO_SHOW",
+        title: "Marked as No-Show",
+        message: `Your appointment (${appt.booking_ref}) was marked as No-Show by your doctor.`,
+        link: "/my-appointments",
+      },
+    });
+
+    await insertOutboxEvent(client, {
+      aggregateType: "APPOINTMENT",
+      aggregateId: id,
+      eventType: "AUDIT",
+      payload: {
+        actorId: userId,
+        actorRole: "DOCTOR",
+        action: "APPOINTMENT_NO_SHOW",
+        targetId: id,
+        details: { bookingRef: appt.booking_ref, reason: reason || "No-show marked by doctor" },
+      },
+    });
+
+    await client.query("COMMIT");
+    inTransaction = false;
+
+    // Invalidate caches
+    await cacheDel(`medibook:slots:${appt.doctor_id}`);
+    await cacheDelPattern(`medibook:doctor:${appt.doctor_id}*`);
+    await cacheDelPattern(`medibook:admin:*`);
+    await cacheDelPattern(`medibook:doctors:list:*`);
+
+    // Emit live slot-freed socket event to doctor room
+    getIO().to(`doctor:${appt.doctor_id}`).emit("slot-freed", { doctorId: appt.doctor_id, slotTime: appt.slot_time });
+
+    // Cancel reminders
+    await cancelAppointmentReminders(id);
+
+    res.json(appt);
+  } catch (err) {
+    if (inTransaction) {
+      await client.query("ROLLBACK");
+    }
+    next(err);
+  } finally {
+    client.release();
+  }
+}
+
 // PATCH /appointments/:id/reschedule - atomic cancel old slot + rebook new slot in ONE transaction
 export async function rescheduleAppointment(req: AuthRequest, res: Response, next: NextFunction) {
   const client = await pool.connect();

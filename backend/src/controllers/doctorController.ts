@@ -631,12 +631,41 @@ export async function removeDoctorLeave(req: AuthRequest, res: Response, next: N
   }
 }
 
+// GET /doctors/me/day-view?date=YYYY-MM-DD
+export async function getDayView(req: AuthRequest, res: Response, next: NextFunction) {
+  try {
+    const userId = req.user!.id;
+    const { date } = req.query as { date: string };
+
+    const result = await pool.query(
+      `SELECT a.*,
+              u.name AS patient_name,
+              u.email AS patient_email,
+              u.phone AS patient_phone,
+              p.id AS prescription_id
+       FROM appointments a
+       JOIN doctors d ON d.id = a.doctor_id
+       JOIN users u ON u.id = a.patient_id
+       LEFT JOIN prescriptions p ON p.appointment_id = a.id
+       WHERE d.user_id = $1
+         AND a.slot_time >= ($2 || ' 00:00:00')::timestamp
+         AND a.slot_time <= ($2 || ' 23:59:59')::timestamp
+       ORDER BY a.slot_time ASC`,
+      [userId, date]
+    );
+
+    res.json(result.rows);
+  } catch (err) {
+    next(err);
+  }
+}
+
 // GET /doctors/me/earnings
 export async function getMyEarnings(req: AuthRequest, res: Response, next: NextFunction) {
   try {
     const userId = req.user!.id;
 
-    const result = await pool.query(
+    const totalResult = await pool.query(
       `SELECT COALESCE(SUM(d.consultation_fee), 0) AS total_earnings,
               COUNT(*) AS completed_appointments
        FROM appointments a
@@ -645,7 +674,44 @@ export async function getMyEarnings(req: AuthRequest, res: Response, next: NextF
       [userId]
     );
 
-    res.json(result.rows[0]);
+    const weeklyResult = await pool.query(
+      `SELECT TO_CHAR(DATE_TRUNC('week', a.slot_time), 'YYYY-MM-DD') AS period,
+              COALESCE(SUM(d.consultation_fee), 0) AS earnings,
+              COUNT(*) AS count
+       FROM appointments a
+       JOIN doctors d ON d.id = a.doctor_id
+       WHERE d.user_id = $1 AND a.status = 'COMPLETED'
+       GROUP BY DATE_TRUNC('week', a.slot_time)
+       ORDER BY DATE_TRUNC('week', a.slot_time) ASC`,
+      [userId]
+    );
+
+    const monthlyResult = await pool.query(
+      `SELECT TO_CHAR(DATE_TRUNC('month', a.slot_time), 'YYYY-MM') AS period,
+              COALESCE(SUM(d.consultation_fee), 0) AS earnings,
+              COUNT(*) AS count
+       FROM appointments a
+       JOIN doctors d ON d.id = a.doctor_id
+       WHERE d.user_id = $1 AND a.status = 'COMPLETED'
+       GROUP BY DATE_TRUNC('month', a.slot_time)
+       ORDER BY DATE_TRUNC('month', a.slot_time) ASC`,
+      [userId]
+    );
+
+    res.json({
+      total_earnings: totalResult.rows[0].total_earnings,
+      completed_appointments: totalResult.rows[0].completed_appointments,
+      weekly: weeklyResult.rows.map((r) => ({
+        period: r.period,
+        earnings: Number(r.earnings),
+        count: Number(r.count),
+      })),
+      monthly: monthlyResult.rows.map((r) => ({
+        period: r.period,
+        earnings: Number(r.earnings),
+        count: Number(r.count),
+      })),
+    });
   } catch (err) {
     next(err);
   }

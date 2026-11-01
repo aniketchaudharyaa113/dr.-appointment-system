@@ -5,6 +5,7 @@ import {
   cancelAppointment,
   completeAppointment,
   rescheduleAppointment,
+  markNoShow,
   holdSlot,
   releaseHold,
 } from "../controllers/appointmentController";
@@ -15,6 +16,7 @@ import {
   cancelAppointmentSchema,
   completeAppointmentSchema,
   rescheduleAppointmentSchema,
+  noShowAppointmentSchema,
   appointmentsQuerySchema,
   uuidParamSchema,
   holdSlotSchema,
@@ -65,6 +67,13 @@ router.patch(
   requireRole("DOCTOR"),
   validate({ params: uuidParamSchema, body: completeAppointmentSchema }),
   completeAppointment
+);
+router.patch(
+  "/:id/no-show",
+  verifyToken,
+  requireRole("DOCTOR"),
+  validate({ params: uuidParamSchema, body: noShowAppointmentSchema }),
+  markNoShow
 );
 router.patch(
   "/:id/reschedule",
