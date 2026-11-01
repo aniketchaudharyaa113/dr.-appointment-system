@@ -78,6 +78,11 @@ export function isRedisConnected(): boolean {
   return redisAvailable;
 }
 
+export function setRedisClient(client: Redis | null): void {
+  redisClient = client;
+  redisAvailable = !!client;
+}
+
 export async function cacheGet<T>(key: string): Promise<T | null> {
   try {
     if (redisAvailable && redisClient) {

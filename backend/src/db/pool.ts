@@ -9,8 +9,26 @@ dotenv.config();
 // the IST wall-clock values MediBook actually stores).
 types.setTypeParser(1114, (val: string) => val);
 
-const pool = new Pool({
+let activePool = new Pool({
   connectionString: process.env.DATABASE_URL,
+});
+
+export function setPool(newPool: Pool): void {
+  activePool = newPool;
+}
+
+export function getPool(): Pool {
+  return activePool;
+}
+
+const pool = new Proxy({} as Pool, {
+  get(target, prop) {
+    const value = Reflect.get(activePool, prop, activePool);
+    if (typeof value === "function") {
+      return value.bind(activePool);
+    }
+    return value;
+  },
 });
 
 export default pool;
