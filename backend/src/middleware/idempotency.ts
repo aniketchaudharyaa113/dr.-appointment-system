@@ -3,10 +3,14 @@ import { getRedisClient, isRedisConnected } from "../cache/redis";
 
 export function idempotency(prefix = "idempotency:appointment:") {
   return async (req: Request, res: Response, next: NextFunction) => {
-    const key = (req.headers["idempotency-key"] || req.headers["x-idempotency-key"]) as string | undefined;
+    const key = (req.headers["idempotency-key"] || req.headers["x-idempotency-key"]) as
+      string | undefined;
 
     if (!key) {
-      if (process.env.NODE_ENV === "production" || req.headers["x-enforce-idempotency"] === "true") {
+      if (
+        process.env.NODE_ENV === "production" ||
+        req.headers["x-enforce-idempotency"] === "true"
+      ) {
         return res.status(400).json({ error: "Idempotency-Key header is required" });
       }
       return next();
@@ -34,7 +38,9 @@ export function idempotency(prefix = "idempotency:appointment:") {
     res.json = (body: any) => {
       if (res.statusCode >= 200 && res.statusCode < 300) {
         try {
-          redis.set(cacheKey, JSON.stringify({ status: res.statusCode, body }), "EX", 86400).catch(() => {});
+          redis
+            .set(cacheKey, JSON.stringify({ status: res.statusCode, body }), "EX", 86400)
+            .catch(() => {});
         } catch {}
       }
       return originalJson(body);

@@ -32,7 +32,9 @@ if (process.env.NODE_ENV === "production" && !process.env.CLIENT_URL) {
 }
 
 if (!process.env.JWT_SECRET || process.env.JWT_SECRET.length < 32) {
-  throw new Error("Fatal: JWT_SECRET environment variable is missing or shorter than 32 characters");
+  throw new Error(
+    "Fatal: JWT_SECRET environment variable is missing or shorter than 32 characters"
+  );
 }
 
 const app = express();
@@ -95,11 +97,7 @@ app.get("/", (req, res) => {
         "/prescriptions/mine",
         "/prescriptions/appointment/:appointmentId",
       ],
-      notifications: [
-        "/notifications",
-        "/notifications/:id/read",
-        "/notifications/read-all",
-      ],
+      notifications: ["/notifications", "/notifications/:id/read", "/notifications/read-all"],
       search: ["/search/symptom?q=...&lat=...&lng=..."],
       reviews: ["/reviews"],
       admin: [
@@ -144,7 +142,10 @@ app.get("/health/ready", async (req, res) => {
     queueStatus = "error";
   }
 
-  const isReady = dbStatus === "ok" && (redisStatus === "ok" || redisStatus === "fallback_memory") && queueStatus === "ok";
+  const isReady =
+    dbStatus === "ok" &&
+    (redisStatus === "ok" || redisStatus === "fallback_memory") &&
+    queueStatus === "ok";
 
   res.status(isReady ? 200 : 503).json({
     status: isReady ? "ready" : "unhealthy",

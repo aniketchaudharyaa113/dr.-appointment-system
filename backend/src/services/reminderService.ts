@@ -62,6 +62,9 @@ export async function cancelAppointmentReminders(appointmentId: string): Promise
       await job1h.remove();
     }
   } catch (err: any) {
-    console.warn(`[ReminderService] Failed to cancel reminder jobs for ${appointmentId}:`, err?.message || err);
+    console.warn(
+      `[ReminderService] Failed to cancel reminder jobs for ${appointmentId}:`,
+      err?.message || err
+    );
   }
 }

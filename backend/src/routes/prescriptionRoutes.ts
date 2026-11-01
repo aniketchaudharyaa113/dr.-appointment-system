@@ -7,10 +7,7 @@ import {
 } from "../controllers/prescriptionController";
 import { verifyToken, requireRole } from "../middleware/authMiddleware";
 import { validate } from "../middleware/validate";
-import {
-  createPrescriptionSchema,
-  appointmentIdParamSchema,
-} from "../schemas/validationSchemas";
+import { createPrescriptionSchema, appointmentIdParamSchema } from "../schemas/validationSchemas";
 import { z } from "zod";
 
 const router = Router();

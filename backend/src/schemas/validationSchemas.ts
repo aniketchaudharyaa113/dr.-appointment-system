@@ -54,9 +54,11 @@ export const rescheduleAppointmentSchema = z.object({
   newSlotTime: z.string().min(10, "newSlotTime is required"),
 });
 
-export const noShowAppointmentSchema = z.object({
-  reason: z.string().optional(),
-}).optional();
+export const noShowAppointmentSchema = z
+  .object({
+    reason: z.string().optional(),
+  })
+  .optional();
 
 export const dayViewQuerySchema = z.object({
   date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "date must be in YYYY-MM-DD format"),

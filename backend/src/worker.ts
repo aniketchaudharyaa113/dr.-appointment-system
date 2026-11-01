@@ -40,7 +40,10 @@ const notificationsWorker = new Worker<NotificationPayload>(
       emitter.to(`user:${p.userId}`).emit("notification", res.rows[0]);
       emitter.to(`user:${p.userId}`).emit(`notification:${p.userId}`, res.rows[0]);
     } catch (err: any) {
-      console.warn("[Worker] Failed to broadcast notification via Redis emitter:", err?.message || err);
+      console.warn(
+        "[Worker] Failed to broadcast notification via Redis emitter:",
+        err?.message || err
+      );
     }
 
     return { processed: true, notificationId: res.rows[0]?.id };
@@ -124,7 +127,10 @@ const remindersWorker = new Worker<ReminderPayload>(
     );
 
     if (aptRes.rows.length === 0) {
-      logger.info({ appointmentId: reminder.appointmentId }, `[Worker:Reminder] Appointment cancelled or completed, skipping reminder.`);
+      logger.info(
+        { appointmentId: reminder.appointmentId },
+        `[Worker:Reminder] Appointment cancelled or completed, skipping reminder.`
+      );
       return { skipped: true };
     }
 
@@ -171,10 +177,16 @@ workers.push(remindersWorker);
 // DLQ and Error Handling for all workers
 workers.forEach((worker) => {
   worker.on("failed", (job, err) => {
-    logger.warn({ queue: worker.name, jobId: job?.id, attempt: job?.attemptsMade, error: err.message }, `[Worker:${worker.name}] Job failed`);
+    logger.warn(
+      { queue: worker.name, jobId: job?.id, attempt: job?.attemptsMade, error: err.message },
+      `[Worker:${worker.name}] Job failed`
+    );
     const maxAttempts = job?.opts?.attempts || 3;
     if (job && job.attemptsMade >= maxAttempts) {
-      logger.error({ queue: worker.name, jobId: job.id }, `[Worker:DLQ] Job permanently failed and moved to Dead Letter Queue.`);
+      logger.error(
+        { queue: worker.name, jobId: job.id },
+        `[Worker:DLQ] Job permanently failed and moved to Dead Letter Queue.`
+      );
     }
   });
 

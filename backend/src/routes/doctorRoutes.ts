@@ -52,7 +52,13 @@ router.post(
   addDoctorLeave
 );
 router.delete("/me/leaves/:date", verifyToken, requireRole("DOCTOR"), removeDoctorLeave);
-router.get("/me/day-view", verifyToken, requireRole("DOCTOR"), validate({ query: dayViewQuerySchema }), getDayView);
+router.get(
+  "/me/day-view",
+  verifyToken,
+  requireRole("DOCTOR"),
+  validate({ query: dayViewQuerySchema }),
+  getDayView
+);
 router.get("/me/earnings", verifyToken, requireRole("DOCTOR"), getMyEarnings);
 
 // Public (must come after /me routes)

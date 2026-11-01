@@ -57,10 +57,10 @@ export async function signup(req: Request, res: Response, next: NextFunction) {
     const user = result.rows[0];
 
     if (finalRole === "DOCTOR") {
-      await pool.query(
-        `INSERT INTO doctors (user_id, specialty) VALUES ($1, $2)`,
-        [user.id, "Not set"]
-      );
+      await pool.query(`INSERT INTO doctors (user_id, specialty) VALUES ($1, $2)`, [
+        user.id,
+        "Not set",
+      ]);
     }
 
     // Short-lived 15-minute access token
@@ -136,10 +136,9 @@ export async function refreshToken(req: Request, res: Response, next: NextFuncti
     // Atomically revoke current refresh token (rotation)
     await pool.query(`UPDATE refresh_tokens SET revoked = true WHERE id = $1`, [currentToken.id]);
 
-    const userRes = await pool.query(
-      `SELECT id, email, name, role FROM users WHERE id = $1`,
-      [currentToken.user_id]
-    );
+    const userRes = await pool.query(`SELECT id, email, name, role FROM users WHERE id = $1`, [
+      currentToken.user_id,
+    ]);
 
     if (userRes.rows.length === 0) {
       return res.status(401).json({ error: "User no longer exists" });
@@ -172,7 +171,9 @@ export async function logout(req: Request, res: Response, next: NextFunction) {
     const rawToken = req.cookies?.refreshToken || req.body?.refreshToken;
     if (rawToken) {
       const tokenHash = hashToken(rawToken);
-      await pool.query(`UPDATE refresh_tokens SET revoked = true WHERE token_hash = $1`, [tokenHash]);
+      await pool.query(`UPDATE refresh_tokens SET revoked = true WHERE token_hash = $1`, [
+        tokenHash,
+      ]);
     }
 
     res.clearCookie("refreshToken", {

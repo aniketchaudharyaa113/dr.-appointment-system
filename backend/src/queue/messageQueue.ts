@@ -153,7 +153,11 @@ export async function enqueueJob<T = any>(
       job = await queues.emailQueue.add("email", payload as unknown as EmailPayload, options);
       break;
     case "REMINDER":
-      job = await queues.remindersQueue.add("reminder", payload as unknown as ReminderPayload, options);
+      job = await queues.remindersQueue.add(
+        "reminder",
+        payload as unknown as ReminderPayload,
+        options
+      );
       break;
     default:
       throw new Error(`Unsupported queue job type: ${type}`);

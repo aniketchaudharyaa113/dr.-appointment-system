@@ -132,13 +132,16 @@ export async function offerSlotToNextWaitlistedPatient(doctorId: string, rawSlot
 
     // Schedule automatic expiry check in 10 minutes (outside of unit test environment)
     if (process.env.NODE_ENV !== "test") {
-      setTimeout(async () => {
-        try {
-          await handleWaitlistExpiry(waitlistId, doctorId, slotTime);
-        } catch (e) {
-          console.warn(`[Waitlist] Error expiring waitlist ${waitlistId}:`, e);
-        }
-      }, 10 * 60 * 1000);
+      setTimeout(
+        async () => {
+          try {
+            await handleWaitlistExpiry(waitlistId, doctorId, slotTime);
+          } catch (e) {
+            console.warn(`[Waitlist] Error expiring waitlist ${waitlistId}:`, e);
+          }
+        },
+        10 * 60 * 1000
+      );
     }
 
     return { waitlistId, patientId, holdToken, doctorId, slotTime };
@@ -152,19 +155,15 @@ export async function offerSlotToNextWaitlistedPatient(doctorId: string, rawSlot
 
 export async function handleWaitlistExpiry(waitlistId: string, doctorId: string, slotTime: string) {
   if ((pool as any).ending || (pool as any).ended) return;
-  const check = await pool.query(
-    `SELECT id, status, hold_token FROM waitlists WHERE id = $1`,
-    [waitlistId]
-  );
+  const check = await pool.query(`SELECT id, status, hold_token FROM waitlists WHERE id = $1`, [
+    waitlistId,
+  ]);
   if (check.rows.length === 0 || check.rows[0].status !== "OFFERED") {
     return; // Already claimed or cancelled
   }
 
   // Mark expired
-  await pool.query(
-    `UPDATE waitlists SET status = 'EXPIRED' WHERE id = $1`,
-    [waitlistId]
-  );
+  await pool.query(`UPDATE waitlists SET status = 'EXPIRED' WHERE id = $1`, [waitlistId]);
 
   const redis = getRedisClient();
   const holdKey = `hold:${doctorId}:${slotTime}`;

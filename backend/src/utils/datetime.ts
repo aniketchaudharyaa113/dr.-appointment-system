@@ -49,8 +49,13 @@ export function slotKey(p: ParsedSlot): string {
 export function nowInClinicTimezone(): ParsedSlot {
   const parts = new Intl.DateTimeFormat("en-CA", {
     timeZone: "Asia/Kolkata",
-    year: "numeric", month: "2-digit", day: "2-digit",
-    hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
   }).formatToParts(new Date());
 
   const get = (type: string) => parts.find((p) => p.type === type)!.value;

@@ -49,12 +49,7 @@ router.post(
   validate({ body: createAppointmentSchema }),
   createAppointment
 );
-router.get(
-  "/mine",
-  verifyToken,
-  validate({ query: appointmentsQuerySchema }),
-  getMyAppointments
-);
+router.get("/mine", verifyToken, validate({ query: appointmentsQuerySchema }), getMyAppointments);
 router.patch(
   "/:id/cancel",
   verifyToken,

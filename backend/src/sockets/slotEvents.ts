@@ -55,7 +55,10 @@ export function initSocket(httpServer: HttpServer, customRedisUrl?: string) {
       io.adapter(createAdapter(adapterPub, adapterSub));
       logger.info("[Socket.IO] Redis adapter attached successfully.");
     } catch (err: any) {
-      logger.warn({ err: err?.message || err }, "[Socket.IO] Redis adapter init failed, using default in-memory adapter");
+      logger.warn(
+        { err: err?.message || err },
+        "[Socket.IO] Redis adapter init failed, using default in-memory adapter"
+      );
     }
   }
 
@@ -74,7 +77,7 @@ export function initSocket(httpServer: HttpServer, customRedisUrl?: string) {
           process.env.JWT_SECRET || "fallback_secret_not_for_prod"
         ) as { id: string; role: string };
         socket.data.user = decoded;
-      } catch (err) {
+      } catch {
         return next(new Error("Authentication error: invalid or expired token"));
       }
     }
@@ -82,7 +85,9 @@ export function initSocket(httpServer: HttpServer, customRedisUrl?: string) {
   });
 
   io.on("connection", (socket: Socket) => {
-    try { activeSocketConnections.inc(); } catch {}
+    try {
+      activeSocketConnections.inc();
+    } catch {}
 
     const user = socket.data.user;
     if (user && user.id) {
@@ -106,7 +111,9 @@ export function initSocket(httpServer: HttpServer, customRedisUrl?: string) {
     });
 
     socket.on("disconnect", () => {
-      try { activeSocketConnections.dec(); } catch {}
+      try {
+        activeSocketConnections.dec();
+      } catch {}
     });
   });
 

@@ -71,7 +71,9 @@ async function seed() {
     }
 
     // Create demo patient if none exists
-    const patientCheck = await client.query("SELECT id FROM users WHERE email = 'patient@medibook.com' LIMIT 1");
+    const patientCheck = await client.query(
+      "SELECT id FROM users WHERE email = 'patient@medibook.com' LIMIT 1"
+    );
     if (patientCheck.rows.length === 0) {
       const patientHash = await bcrypt.hash("patient123", 10);
       await client.query(
@@ -124,7 +126,7 @@ async function seed() {
           experienceYears: 8,
           clinicName: "Glow Skin & Laser Center",
           clinicAddress: "Ballygunge, Kolkata, West Bengal",
-          clinicLat: 22.5280,
+          clinicLat: 22.528,
           clinicLng: 88.3654,
           consultationFee: 650,
           licenseNumber: "WBMC-88231",
@@ -145,9 +147,16 @@ async function seed() {
             consultation_fee, license_number, is_verified
           ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, true) RETURNING id`,
           [
-            uId, d.specialty, d.qualifications, d.experienceYears,
-            d.clinicName, d.clinicAddress, d.clinicLat, d.clinicLng,
-            d.consultationFee, d.licenseNumber
+            uId,
+            d.specialty,
+            d.qualifications,
+            d.experienceYears,
+            d.clinicName,
+            d.clinicAddress,
+            d.clinicLat,
+            d.clinicLng,
+            d.consultationFee,
+            d.licenseNumber,
           ]
         );
         const docId = docRes.rows[0].id;

@@ -1,11 +1,6 @@
 // Calculates the straight-line distance (in km) between two lat/lng points.
 // This is the Haversine formula - plain math, no external API needed.
-export function haversineDistance(
-  lat1: number,
-  lng1: number,
-  lat2: number,
-  lng2: number
-): number {
+export function haversineDistance(lat1: number, lng1: number, lat2: number, lng2: number): number {
   const R = 6371; // Earth's radius in km
   const dLat = toRad(lat2 - lat1);
   const dLng = toRad(lng2 - lng1);

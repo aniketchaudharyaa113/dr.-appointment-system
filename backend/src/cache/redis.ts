@@ -14,12 +14,16 @@ let cacheMisses = 0;
 
 export function recordCacheHit() {
   cacheHits++;
-  try { cacheHitsCounter.inc(); } catch {}
+  try {
+    cacheHitsCounter.inc();
+  } catch {}
 }
 
 export function recordCacheMiss() {
   cacheMisses++;
-  try { cacheMissesCounter.inc(); } catch {}
+  try {
+    cacheMissesCounter.inc();
+  } catch {}
 }
 
 export function getCacheMetrics() {
@@ -102,7 +106,9 @@ try {
     if (isDev) {
       logger.info("[Cache] Redis unavailable, using local development in-memory cache.");
     } else {
-      logger.info("[Cache] Redis unavailable. Operating in gracefully degraded mode directly against DB.");
+      logger.info(
+        "[Cache] Redis unavailable. Operating in gracefully degraded mode directly against DB."
+      );
     }
   });
 } catch {
@@ -214,7 +220,9 @@ export async function cacheGet<T>(key: string): Promise<T | null> {
       recordCacheMiss();
       return null;
     } catch (err: any) {
-      console.warn(`[Cache] Redis read failure on "${key}": ${err?.message || err}. Serving from DB.`);
+      console.warn(
+        `[Cache] Redis read failure on "${key}": ${err?.message || err}. Serving from DB.`
+      );
     }
   } else if (!isDev) {
     recordCacheMiss();
@@ -270,7 +278,9 @@ export async function cacheSetWithVersion(
 ): Promise<boolean> {
   const currentVersion = await getCacheVersion(scope);
   if (currentVersion !== expectedVersion) {
-    console.warn(`[Cache] Slow reader stale race detected for "${scope}" (expected v${expectedVersion}, current v${currentVersion}). Write discarded.`);
+    console.warn(
+      `[Cache] Slow reader stale race detected for "${scope}" (expected v${expectedVersion}, current v${currentVersion}). Write discarded.`
+    );
     return false;
   }
 

@@ -38,7 +38,9 @@ export async function createReview(req: AuthRequest, res: Response, next: NextFu
         return res.status(403).json({ error: "You can only review your own appointments" });
       }
       if (appt.status !== "COMPLETED") {
-        return res.status(400).json({ error: "You can only review a doctor after a completed appointment" });
+        return res
+          .status(400)
+          .json({ error: "You can only review a doctor after a completed appointment" });
       }
       docId = appt.doctor_id;
     } else if (docId) {
@@ -53,7 +55,8 @@ export async function createReview(req: AuthRequest, res: Response, next: NextFu
       );
       if (completedCheck.rows.length === 0) {
         return res.status(403).json({
-          error: "You can only review a doctor after a completed appointment (or this appointment was already reviewed)",
+          error:
+            "You can only review a doctor after a completed appointment (or this appointment was already reviewed)",
         });
       }
       apptId = completedCheck.rows[0].id;
@@ -61,12 +64,13 @@ export async function createReview(req: AuthRequest, res: Response, next: NextFu
       return res.status(400).json({ error: "Either appointmentId or doctorId is required" });
     }
 
-    const existingReview = await pool.query(
-      `SELECT id FROM reviews WHERE appointment_id = $1`,
-      [apptId]
-    );
+    const existingReview = await pool.query(`SELECT id FROM reviews WHERE appointment_id = $1`, [
+      apptId,
+    ]);
     if (existingReview.rows.length > 0) {
-      return res.status(409).json({ error: "This completed appointment has already been reviewed" });
+      return res
+        .status(409)
+        .json({ error: "This completed appointment has already been reviewed" });
     }
 
     const result = await pool.query(

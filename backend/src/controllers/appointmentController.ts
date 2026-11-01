@@ -6,7 +6,10 @@ import { parseSlot, slotKey, nowInClinicTimezone } from "../utils/datetime";
 import crypto from "crypto";
 import { cacheDel, cacheDelPattern, getRedisClient, isRedisConnected } from "../cache/redis";
 import { insertOutboxEvent } from "../queue/outboxRelay";
-import { scheduleAppointmentReminders, cancelAppointmentReminders } from "../services/reminderService";
+import {
+  scheduleAppointmentReminders,
+  cancelAppointmentReminders,
+} from "../services/reminderService";
 import { offerSlotToNextWaitlistedPatient } from "../services/waitlistService";
 import { bookingCounter } from "../metrics/prometheus";
 
@@ -136,7 +139,9 @@ export async function createAppointment(req: AuthRequest, res: Response, next: N
     );
 
     // Fetch patient name for notifications
-    const patientQuery = await client.query("SELECT name, email FROM users WHERE id = $1", [patientId]);
+    const patientQuery = await client.query("SELECT name, email FROM users WHERE id = $1", [
+      patientId,
+    ]);
     const patientName = patientQuery.rows[0]?.name || "Patient";
     const patientEmail = patientQuery.rows[0]?.email;
 
@@ -229,23 +234,33 @@ export async function createAppointment(req: AuthRequest, res: Response, next: N
       await redis.del(holdKey);
     }
     try {
-      getIO().to(`doctor:${doctorId}`).emit("slot-hold-released", { doctorId, slotTime: storedSlotTime });
+      getIO()
+        .to(`doctor:${doctorId}`)
+        .emit("slot-hold-released", { doctorId, slotTime: storedSlotTime });
     } catch {}
 
     // Real-time broadcast to doctor room
     getIO().to(`doctor:${doctorId}`).emit("slot-booked", { doctorId, slotTime: storedSlotTime });
 
-    try { bookingCounter.inc({ status: "success" }); } catch {}
+    try {
+      bookingCounter.inc({ status: "success" });
+    } catch {}
     res.status(201).json(appointment);
   } catch (err: any) {
     if (inTransaction) {
       await client.query("ROLLBACK");
     }
     if (err.code === "23505") {
-      try { bookingCounter.inc({ status: "conflict" }); } catch {}
-      return res.status(409).json({ error: "That slot was just booked by someone else. Please pick another." });
+      try {
+        bookingCounter.inc({ status: "conflict" });
+      } catch {}
+      return res
+        .status(409)
+        .json({ error: "That slot was just booked by someone else. Please pick another." });
     }
-    try { bookingCounter.inc({ status: "error" }); } catch {}
+    try {
+      bookingCounter.inc({ status: "error" });
+    } catch {}
     next(err);
   } finally {
     client.release();
@@ -375,18 +390,25 @@ export async function cancelAppointment(req: AuthRequest, res: Response, next: N
     if (result.rows.length === 0) {
       await client.query("ROLLBACK");
       inTransaction = false;
-      return res.status(404).json({ error: "Appointment not found, not yours, or already cancelled/completed" });
+      return res
+        .status(404)
+        .json({ error: "Appointment not found, not yours, or already cancelled/completed" });
     }
 
     const appt = result.rows[0];
 
     // Fetch doctor user id for notifications
-    const docQuery = await client.query("SELECT user_id, (SELECT name FROM users WHERE id = doctors.user_id) as doctor_name FROM doctors WHERE id = $1", [appt.doctor_id]);
+    const docQuery = await client.query(
+      "SELECT user_id, (SELECT name FROM users WHERE id = doctors.user_id) as doctor_name FROM doctors WHERE id = $1",
+      [appt.doctor_id]
+    );
     const doctorUserId = docQuery.rows[0]?.user_id;
     const doctorName = docQuery.rows[0]?.doctor_name || "Doctor";
 
     // Fetch patient info
-    const patQuery = await client.query("SELECT name, email FROM users WHERE id = $1", [appt.patient_id]);
+    const patQuery = await client.query("SELECT name, email FROM users WHERE id = $1", [
+      appt.patient_id,
+    ]);
     const patientName = patQuery.rows[0]?.name || "Patient";
     const patientEmail = patQuery.rows[0]?.email;
 
@@ -464,7 +486,9 @@ export async function cancelAppointment(req: AuthRequest, res: Response, next: N
     await cacheDelPattern(`medibook:doctors:list:*`);
 
     // Emit live slot-freed socket event to doctor room
-    getIO().to(`doctor:${appt.doctor_id}`).emit("slot-freed", { doctorId: appt.doctor_id, slotTime: appt.slot_time });
+    getIO()
+      .to(`doctor:${appt.doctor_id}`)
+      .emit("slot-freed", { doctorId: appt.doctor_id, slotTime: appt.slot_time });
 
     // Cancel delayed reminders
     await cancelAppointmentReminders(id);
@@ -510,7 +534,9 @@ export async function completeAppointment(req: AuthRequest, res: Response, next:
     if (result.rows.length === 0) {
       await client.query("ROLLBACK");
       inTransaction = false;
-      return res.status(404).json({ error: "Appointment not found, not yours, or not in a completable state" });
+      return res
+        .status(404)
+        .json({ error: "Appointment not found, not yours, or not in a completable state" });
     }
 
     const appt = result.rows[0];
@@ -587,7 +613,9 @@ export async function markNoShow(req: AuthRequest, res: Response, next: NextFunc
     if (result.rows.length === 0) {
       await client.query("ROLLBACK");
       inTransaction = false;
-      return res.status(404).json({ error: "Appointment not found, not yours, or not in a confirmed state" });
+      return res
+        .status(404)
+        .json({ error: "Appointment not found, not yours, or not in a confirmed state" });
     }
 
     const appt = result.rows[0];
@@ -629,7 +657,9 @@ export async function markNoShow(req: AuthRequest, res: Response, next: NextFunc
     await cacheDelPattern(`medibook:doctors:list:*`);
 
     // Emit live slot-freed socket event to doctor room
-    getIO().to(`doctor:${appt.doctor_id}`).emit("slot-freed", { doctorId: appt.doctor_id, slotTime: appt.slot_time });
+    getIO()
+      .to(`doctor:${appt.doctor_id}`)
+      .emit("slot-freed", { doctorId: appt.doctor_id, slotTime: appt.slot_time });
 
     // Cancel reminders
     await cancelAppointmentReminders(id);
@@ -684,7 +714,9 @@ export async function rescheduleAppointment(req: AuthRequest, res: Response, nex
 
     const apptRes = await client.query(apptQuery, apptValues);
     if (apptRes.rows.length === 0) {
-      return res.status(404).json({ error: "Active appointment not found, not yours, or cannot be rescheduled" });
+      return res
+        .status(404)
+        .json({ error: "Active appointment not found, not yours, or cannot be rescheduled" });
     }
     const oldAppt = apptRes.rows[0];
     const doctorId = oldAppt.doctor_id;
@@ -764,7 +796,9 @@ export async function rescheduleAppointment(req: AuthRequest, res: Response, nex
     if (slotConflict.rows.length > 0) {
       await client.query("ROLLBACK");
       inTransaction = false;
-      return res.status(409).json({ error: "That new slot was just booked by someone else. Please pick another." });
+      return res
+        .status(409)
+        .json({ error: "That new slot was just booked by someone else. Please pick another." });
     }
 
     // Cancel old appointment in same transaction
@@ -803,7 +837,9 @@ export async function rescheduleAppointment(req: AuthRequest, res: Response, nex
     );
 
     // Fetch patient info inside transaction
-    const patientQuery = await client.query("SELECT name, email FROM users WHERE id = $1", [patientId]);
+    const patientQuery = await client.query("SELECT name, email FROM users WHERE id = $1", [
+      patientId,
+    ]);
     const patientName = patientQuery.rows[0]?.name || "Patient";
     const patientEmail = patientQuery.rows[0]?.email;
 
@@ -910,7 +946,9 @@ export async function rescheduleAppointment(req: AuthRequest, res: Response, nex
       await client.query("ROLLBACK");
     }
     if (err.code === "23505") {
-      return res.status(409).json({ error: "That new slot was just booked by someone else. Please pick another." });
+      return res
+        .status(409)
+        .json({ error: "That new slot was just booked by someone else. Please pick another." });
     }
     next(err);
   } finally {

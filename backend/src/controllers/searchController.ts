@@ -8,7 +8,18 @@ import { nowInClinicTimezone } from "../utils/datetime";
 // GET /search/symptom?q=chest%20pain&lat=22.57&lng=88.36&minFee=100&maxFee=1000&minRating=4.0&maxDistance=20&availableToday=true&sort=distance
 export async function symptomSearch(req: Request, res: Response, next: NextFunction) {
   try {
-    const { q, lat, lng, specialty: overrideSpecialty, minFee, maxFee, minRating, maxDistance, availableToday, sort } = req.query;
+    const {
+      q,
+      lat,
+      lng,
+      specialty: overrideSpecialty,
+      minFee,
+      maxFee,
+      minRating,
+      maxDistance,
+      availableToday,
+      sort,
+    } = req.query;
 
     if (!q || typeof q !== "string") {
       return res.status(400).json({ error: "q (symptom) is required" });
@@ -67,7 +78,9 @@ export async function symptomSearch(req: Request, res: Response, next: NextFunct
     }));
 
     const selectedSpecialty = (overrideSpecialty as string) || topMatches[0].specialty;
-    const primaryMatchedSymptom = topMatches.find((m) => m.specialty === selectedSpecialty)?.matchedSymptom || topMatches[0].matchedSymptom;
+    const primaryMatchedSymptom =
+      topMatches.find((m) => m.specialty === selectedSpecialty)?.matchedSymptom ||
+      topMatches[0].matchedSymptom;
 
     // Step 2: Fetch verified doctors of the selected specialty
     const doctorsResult = await pool.query(
@@ -97,7 +110,12 @@ export async function symptomSearch(req: Request, res: Response, next: NextFunct
         distanceKm:
           doc.clinic_lat && doc.clinic_lng
             ? Number(
-                haversineDistance(patientLat, patientLng, Number(doc.clinic_lat), Number(doc.clinic_lng)).toFixed(2)
+                haversineDistance(
+                  patientLat,
+                  patientLng,
+                  Number(doc.clinic_lat),
+                  Number(doc.clinic_lng)
+                ).toFixed(2)
               )
             : null,
       }));
@@ -123,7 +141,9 @@ export async function symptomSearch(req: Request, res: Response, next: NextFunct
       const now = nowInClinicTimezone();
       const pad = (n: number) => String(n).padStart(2, "0");
       const todayStr = `${now.year}-${pad(now.month)}-${pad(now.day)}`;
-      doctors = doctors.filter((d) => d.next_available_slot && d.next_available_slot.startsWith(todayStr));
+      doctors = doctors.filter(
+        (d) => d.next_available_slot && d.next_available_slot.startsWith(todayStr)
+      );
     }
 
     // Step 6: Apply sorting
@@ -140,7 +160,9 @@ export async function symptomSearch(req: Request, res: Response, next: NextFunct
     } else if (lat && lng) {
       doctors.sort((a, b) => (a.distanceKm ?? Infinity) - (b.distanceKm ?? Infinity));
     } else {
-      doctors.sort((a, b) => b.avg_rating - a.avg_rating || b.experience_years - a.experience_years);
+      doctors.sort(
+        (a, b) => b.avg_rating - a.avg_rating || b.experience_years - a.experience_years
+      );
     }
 
     const payload = {

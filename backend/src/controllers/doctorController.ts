@@ -130,7 +130,9 @@ export async function getDoctors(req: AuthRequest, res: Response, next: NextFunc
       const now = nowInClinicTimezone();
       const pad = (n: number) => String(n).padStart(2, "0");
       const todayStr = `${now.year}-${pad(now.month)}-${pad(now.day)}`;
-      docList = docList.filter((d) => d.next_available_slot && d.next_available_slot.startsWith(todayStr));
+      docList = docList.filter(
+        (d) => d.next_available_slot && d.next_available_slot.startsWith(todayStr)
+      );
     }
 
     const finalTotal = availableToday === "true" ? docList.length : total;
@@ -287,16 +289,30 @@ export async function updateMyProfile(req: AuthRequest, res: Response, next: Nex
       return res.status(400).json({ error: parsed.error.issues[0].message });
     }
     const {
-      specialty, qualifications, experienceYears, clinicName,
-      clinicAddress, clinicLat, clinicLng, consultationFee,
-      licenseNumber, photoUrl,
+      specialty,
+      qualifications,
+      experienceYears,
+      clinicName,
+      clinicAddress,
+      clinicLat,
+      clinicLng,
+      consultationFee,
+      licenseNumber,
+      photoUrl,
     } = parsed.data;
 
     const values = [
-      specialty ?? null, qualifications ?? null, experienceYears ?? null,
-      clinicName ?? null, clinicAddress ?? null, clinicLat ?? null,
-      clinicLng ?? null, consultationFee ?? null, licenseNumber ?? null,
-      photoUrl ?? null, userId,
+      specialty ?? null,
+      qualifications ?? null,
+      experienceYears ?? null,
+      clinicName ?? null,
+      clinicAddress ?? null,
+      clinicLat ?? null,
+      clinicLng ?? null,
+      consultationFee ?? null,
+      licenseNumber ?? null,
+      photoUrl ?? null,
+      userId,
     ];
 
     const result = await pool.query(
@@ -618,10 +634,10 @@ export async function removeDoctorLeave(req: AuthRequest, res: Response, next: N
     if (docRes.rows.length === 0) return res.status(404).json({ error: "Doctor not found" });
     const doctorId = docRes.rows[0].id;
 
-    await pool.query(
-      "DELETE FROM doctor_leaves WHERE doctor_id = $1 AND leave_date = $2",
-      [doctorId, date]
-    );
+    await pool.query("DELETE FROM doctor_leaves WHERE doctor_id = $1 AND leave_date = $2", [
+      doctorId,
+      date,
+    ]);
 
     await cacheDel(`medibook:doctor:${doctorId}`);
     await cacheDel(`medibook:slots:${doctorId}`);

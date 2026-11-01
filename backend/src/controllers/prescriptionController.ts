@@ -48,7 +48,9 @@ export async function createPrescription(req: AuthRequest, res: Response, next: 
     const appt = apptResult.rows[0];
 
     if (appt.status !== "COMPLETED") {
-      return res.status(400).json({ error: "Prescriptions can only be created for COMPLETED appointments" });
+      return res
+        .status(400)
+        .json({ error: "Prescriptions can only be created for COMPLETED appointments" });
     }
 
     const client = await pool.connect();
@@ -103,7 +105,9 @@ export async function createPrescription(req: AuthRequest, res: Response, next: 
       }
 
       // Fetch patient email for prescription notification
-      const patRes = await client.query(`SELECT email, name FROM users WHERE id = $1`, [appt.patient_id]);
+      const patRes = await client.query(`SELECT email, name FROM users WHERE id = $1`, [
+        appt.patient_id,
+      ]);
       const patientEmail = patRes.rows[0]?.email;
       const patientName = patRes.rows[0]?.name || "Patient";
 
@@ -150,7 +154,11 @@ export async function createPrescription(req: AuthRequest, res: Response, next: 
           actorRole: "DOCTOR",
           action: existing.rows.length > 0 ? "PRESCRIPTION_UPDATED" : "PRESCRIPTION_CREATED",
           targetId: appointmentId,
-          details: { diagnosis, medicinesCount: medicines.length, isUpdate: existing.rows.length > 0 },
+          details: {
+            diagnosis,
+            medicinesCount: medicines.length,
+            isUpdate: existing.rows.length > 0,
+          },
         },
       });
 
@@ -218,7 +226,11 @@ export async function getPrescriptionVersions(req: AuthRequest, res: Response, n
 }
 
 // GET /prescriptions/appointment/:appointmentId
-export async function getPrescriptionByAppointment(req: AuthRequest, res: Response, next: NextFunction) {
+export async function getPrescriptionByAppointment(
+  req: AuthRequest,
+  res: Response,
+  next: NextFunction
+) {
   try {
     const { appointmentId } = req.params;
     const { id: userId, role } = req.user!;

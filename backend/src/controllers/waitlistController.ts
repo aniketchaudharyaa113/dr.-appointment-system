@@ -22,7 +22,9 @@ export async function joinWaitlist(req: AuthRequest, res: Response, next: NextFu
     res.status(201).json(entry);
   } catch (err: any) {
     if (err.code === "23505") {
-      return res.status(409).json({ error: "You are already on the waitlist for this doctor and date." });
+      return res
+        .status(409)
+        .json({ error: "You are already on the waitlist for this doctor and date." });
     }
     next(err);
   }
