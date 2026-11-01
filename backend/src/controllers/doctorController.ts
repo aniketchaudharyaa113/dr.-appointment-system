@@ -4,7 +4,15 @@ import pool from "../db/pool";
 import { AuthRequest } from "../types";
 import { SPECIALTIES } from "../constants";
 import { nowInClinicTimezone, parseSlot } from "../utils/datetime";
-import { cacheGet, cacheSet, cacheDel, cacheDelPattern } from "../cache/redis";
+import {
+  cacheGet,
+  cacheSet,
+  cacheDel,
+  cacheDelPattern,
+  getCacheVersion,
+  cacheSetWithVersion,
+  normalizeDoctorQueryKey,
+} from "../cache/redis";
 import { getIO } from "../sockets/slotEvents";
 import { insertOutboxEvent } from "../queue/outboxRelay";
 import { cancelAppointmentReminders } from "../services/reminderService";
@@ -33,7 +41,8 @@ export async function getDoctors(req: AuthRequest, res: Response, next: NextFunc
     const limit = Math.min(100, Math.max(1, Number(req.query.limit) || 20));
     const offset = (page - 1) * limit;
 
-    const cacheKey = `medibook:doctors:list:${specialty || ""}:${city || ""}:${maxFee || ""}:${page}:${limit}`;
+    const version = await getCacheVersion("doctors:list");
+    const cacheKey = normalizeDoctorQueryKey(req.query, version);
     const cached = await cacheGet<any>(cacheKey);
     if (cached) {
       return res.json(cached);
@@ -98,7 +107,7 @@ export async function getDoctors(req: AuthRequest, res: Response, next: NextFunc
         hasMore: offset + result.rows.length < total,
       },
     };
-    await cacheSet(cacheKey, responsePayload, 120); // 2 min cache
+    await cacheSetWithVersion("doctors:list", version, cacheKey, responsePayload, 120); // 2 min cache
     res.json(responsePayload);
   } catch (err) {
     next(err);
