@@ -13,7 +13,10 @@
     "migrate:down": "node-pg-migrate down"
   },
   "dependencies": {
+    "@bull-board/api": "^9.11.0",
+    "@bull-board/express": "^9.11.0",
     "bcryptjs": "^3.0.3",
+    "bullmq": "^6.5.3",
     "cookie-parser": "^1.4.7",
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
@@ -23,6 +26,7 @@
     "ioredis": "^6.0.0",
     "jsonwebtoken": "^9.0.2",
     "node-pg-migrate": "^9.0.0",
+    "nodemailer": "^10.3.1",
     "pg": "^8.11.5",
     "rate-limit-redis": "^6.0.2",
     "socket.io": "^4.7.5",
@@ -37,6 +41,7 @@
     "@types/ioredis": "^4.28.10",
     "@types/jsonwebtoken": "^9.0.6",
     "@types/node": "^22.20.5",
+    "@types/nodemailer": "^8.0.2",
     "@types/pg": "^8.11.5",
     "@types/supertest": "^7.2.1",
     "socket.io-client": "^4.8.4",
