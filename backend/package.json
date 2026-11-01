@@ -17,6 +17,8 @@
   "dependencies": {
     "@bull-board/api": "^9.11.0",
     "@bull-board/express": "^9.11.0",
+    "@socket.io/redis-adapter": "^8.3.0",
+    "@socket.io/redis-emitter": "^5.1.0",
     "bcryptjs": "^3.0.3",
     "bullmq": "^6.5.3",
     "cookie-parser": "^1.4.7",

@@ -12,9 +12,13 @@ import {
   ReminderPayload,
 } from "./queue/messageQueue";
 import { sendEmail } from "./services/emailService";
-import { getIO } from "./sockets/slotEvents";
+import { getRedisEmitter } from "./sockets/slotEvents";
+import { startOutboxRelay, stopOutboxRelay } from "./queue/outboxRelay";
 
-console.log("[Worker] Initializing MediBook background queue workers...");
+console.log("[Worker] Initializing MediBook background queue workers and outbox relay...");
+
+// Start polling transactional outbox
+startOutboxRelay(1000);
 
 const workers: Worker[] = [];
 
@@ -31,13 +35,11 @@ const notificationsWorker = new Worker<NotificationPayload>(
     );
 
     try {
-      const io = getIO();
-      if (io) {
-        io.to(`user:${p.userId}`).emit("notification", res.rows[0]);
-        io.to(`user:${p.userId}`).emit(`notification:${p.userId}`, res.rows[0]);
-      }
-    } catch {
-      // In standalone worker process, socket may be delivered via redis-emitter (Phase 4)
+      const emitter = getRedisEmitter();
+      emitter.to(`user:${p.userId}`).emit("notification", res.rows[0]);
+      emitter.to(`user:${p.userId}`).emit(`notification:${p.userId}`, res.rows[0]);
+    } catch (err: any) {
+      console.warn("[Worker] Failed to broadcast notification via Redis emitter:", err?.message || err);
     }
 
     return { processed: true, notificationId: res.rows[0]?.id };
@@ -184,7 +186,8 @@ console.log("[Worker] All 4 BullMQ workers active and listening for jobs.");
 
 // Graceful shutdown
 export async function stopWorkers(): Promise<void> {
-  console.log("[Worker] Closing all BullMQ workers...");
+  console.log("[Worker] Stopping outbox relay and closing all BullMQ workers...");
+  stopOutboxRelay();
   await Promise.all(workers.map((w) => w.close()));
   console.log("[Worker] All workers closed cleanly.");
 }

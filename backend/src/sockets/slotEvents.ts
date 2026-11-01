@@ -1,13 +1,61 @@
 import { Server, Socket } from "socket.io";
 import { Server as HttpServer } from "http";
 import jwt from "jsonwebtoken";
+import { createAdapter } from "@socket.io/redis-adapter";
+import { Emitter } from "@socket.io/redis-emitter";
+import Redis from "ioredis";
 
-let io: Server;
+let io: Server | null = null;
+let adapterPub: Redis | null = null;
+let adapterSub: Redis | null = null;
 
-export function initSocket(httpServer: HttpServer) {
+let emitterClient: Redis | null = null;
+let redisEmitter: Emitter | null = null;
+
+export function getRedisEmitter(): Emitter {
+  if (!redisEmitter) {
+    const url = process.env.REDIS_URL || "redis://localhost:6379";
+    emitterClient = new Redis(url, {
+      maxRetriesPerRequest: null,
+      enableReadyCheck: false,
+      retryStrategy(times) {
+        if (times > 5) return null;
+        return Math.min(times * 100, 1000);
+      },
+    });
+    emitterClient.on("error", () => {});
+    redisEmitter = new Emitter(emitterClient);
+  }
+  return redisEmitter;
+}
+
+export function initSocket(httpServer: HttpServer, customRedisUrl?: string) {
   io = new Server(httpServer, {
     cors: { origin: process.env.CLIENT_URL || "*" },
   });
+
+  const redisUrl = customRedisUrl || process.env.REDIS_URL;
+  if (redisUrl) {
+    try {
+      adapterPub = new Redis(redisUrl, {
+        maxRetriesPerRequest: null,
+        enableReadyCheck: false,
+        retryStrategy(times) {
+          if (times > 5) return null;
+          return Math.min(times * 100, 1000);
+        },
+      });
+      adapterSub = adapterPub.duplicate();
+
+      adapterPub.on("error", () => {});
+      adapterSub.on("error", () => {});
+
+      io.adapter(createAdapter(adapterPub, adapterSub));
+      console.log("[Socket.IO] Redis adapter attached successfully.");
+    } catch (err: any) {
+      console.warn("[Socket.IO] Redis adapter init failed, using default in-memory adapter:", err?.message || err);
+    }
+  }
 
   // Verify JWT in the handshake middleware
   io.use((socket: Socket, next) => {
@@ -61,4 +109,24 @@ export function initSocket(httpServer: HttpServer) {
 export function getIO(): Server {
   if (!io) throw new Error("Socket.io not initialized yet");
   return io;
+}
+
+export async function closeSocket(): Promise<void> {
+  if (io) {
+    io.close();
+    io = null;
+  }
+  if (adapterPub) {
+    await adapterPub.quit();
+    adapterPub = null;
+  }
+  if (adapterSub) {
+    await adapterSub.quit();
+    adapterSub = null;
+  }
+  if (emitterClient) {
+    await emitterClient.quit();
+    emitterClient = null;
+    redisEmitter = null;
+  }
 }
