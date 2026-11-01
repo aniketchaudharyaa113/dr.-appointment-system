@@ -3,6 +3,7 @@
 
 import bcrypt from "bcryptjs";
 import pool from "./pool";
+import { logger } from "../lib/logger";
 
 const symptomMap: [string, string][] = [
   ["chest pain", "Cardiologist"],
@@ -53,9 +54,9 @@ async function seed() {
           [symptom, specialty]
         );
       }
-      console.log(`Seeded ${symptomMap.length} symptom -> specialty mappings`);
+      logger.info(`Seeded ${symptomMap.length} symptom -> specialty mappings`);
     } else {
-      console.log("symptom_specialty_map already has data, skipping");
+      logger.info("symptom_specialty_map already has data, skipping");
     }
 
     // Create a default admin if none exists
@@ -66,7 +67,7 @@ async function seed() {
         "INSERT INTO users (email, password, name, role) VALUES ($1, $2, $3, 'ADMIN')",
         ["admin@medibook.com", hashed, "Admin"]
       );
-      console.log("Created default admin: admin@medibook.com / admin123 (change this password!)");
+      logger.info("Created default admin: admin@medibook.com / admin123 (change this password!)");
     }
 
     // Create demo patient if none exists
@@ -77,7 +78,7 @@ async function seed() {
         "INSERT INTO users (email, password, name, phone, role) VALUES ($1, $2, $3, $4, 'PATIENT')",
         ["patient@medibook.com", patientHash, "Demo Patient", "9876543210"]
       );
-      console.log("Created demo patient: patient@medibook.com / patient123");
+      logger.info("Created demo patient: patient@medibook.com / patient123");
     }
 
     // Seed sample verified doctors if doctors table is empty
@@ -161,7 +162,7 @@ async function seed() {
           );
         }
       }
-      console.log(`Seeded ${demoDoctors.length} verified starter doctors with weekly availability`);
+      logger.info(`Seeded ${demoDoctors.length} verified starter doctors with weekly availability`);
     }
 
     await client.query("COMMIT");

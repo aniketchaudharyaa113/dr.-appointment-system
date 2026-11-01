@@ -1,5 +1,6 @@
 import Redis from "ioredis";
 import dotenv from "dotenv";
+import { logger } from "../lib/logger";
 
 dotenv.config();
 
@@ -86,7 +87,7 @@ try {
 
   redisClient.on("connect", () => {
     redisAvailable = true;
-    console.log("[Cache] Redis connected successfully on", REDIS_URL);
+    logger.info({ redisUrl: REDIS_URL }, "[Cache] Redis connected successfully");
   });
 
   redisClient.on("error", () => {
@@ -96,9 +97,9 @@ try {
   redisClient.connect().catch(() => {
     redisAvailable = false;
     if (isDev) {
-      console.log("[Cache] Redis unavailable, using local development in-memory cache.");
+      logger.info("[Cache] Redis unavailable, using local development in-memory cache.");
     } else {
-      console.log("[Cache] Redis unavailable. Operating in gracefully degraded mode directly against DB.");
+      logger.info("[Cache] Redis unavailable. Operating in gracefully degraded mode directly against DB.");
     }
   });
 } catch {

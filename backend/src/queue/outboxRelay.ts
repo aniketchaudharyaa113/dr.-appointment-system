@@ -1,5 +1,6 @@
 import pool from "../db/pool";
 import { enqueueJob } from "./messageQueue";
+import { logger } from "../lib/logger";
 
 export interface OutboxEventInput {
   aggregateType: string;
@@ -92,7 +93,7 @@ export function startOutboxRelay(intervalMs: number = 1000) {
     }
   }, intervalMs);
 
-  console.log(`[OutboxRelay] Transactional outbox relay started (polling every ${intervalMs}ms).`);
+  logger.info({ intervalMs }, `[OutboxRelay] Transactional outbox relay started`);
 }
 
 export function stopOutboxRelay() {

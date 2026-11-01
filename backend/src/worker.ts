@@ -14,8 +14,9 @@ import {
 import { sendEmail } from "./services/emailService";
 import { getRedisEmitter } from "./sockets/slotEvents";
 import { startOutboxRelay, stopOutboxRelay } from "./queue/outboxRelay";
+import { logger } from "./lib/logger";
 
-console.log("[Worker] Initializing MediBook background queue workers and outbox relay...");
+logger.info("[Worker] Initializing MediBook background queue workers and outbox relay...");
 
 // Start polling transactional outbox
 startOutboxRelay(1000);
@@ -95,7 +96,7 @@ const emailWorker = new Worker<EmailPayload>(
       templateData: email.templateData,
     });
 
-    console.log(`[Worker:Email] Email dispatched to ${to} (${email.subject})`);
+    logger.info({ to, subject: email.subject }, `[Worker:Email] Email dispatched`);
     return { sent: true, to };
   },
   {
@@ -123,7 +124,7 @@ const remindersWorker = new Worker<ReminderPayload>(
     );
 
     if (aptRes.rows.length === 0) {
-      console.log(`[Worker:Reminder] Appointment ${reminder.appointmentId} cancelled or completed, skipping reminder.`);
+      logger.info({ appointmentId: reminder.appointmentId }, `[Worker:Reminder] Appointment cancelled or completed, skipping reminder.`);
       return { skipped: true };
     }
 
@@ -170,26 +171,26 @@ workers.push(remindersWorker);
 // DLQ and Error Handling for all workers
 workers.forEach((worker) => {
   worker.on("failed", (job, err) => {
-    console.error(`[Worker:${worker.name}] Job ${job?.id} failed on attempt ${job?.attemptsMade}:`, err.message);
+    logger.warn({ queue: worker.name, jobId: job?.id, attempt: job?.attemptsMade, error: err.message }, `[Worker:${worker.name}] Job failed`);
     const maxAttempts = job?.opts?.attempts || 3;
     if (job && job.attemptsMade >= maxAttempts) {
-      console.error(`[Worker:DLQ] Job ${job.id} in queue "${worker.name}" permanently failed and moved to Dead Letter Queue.`);
+      logger.error({ queue: worker.name, jobId: job.id }, `[Worker:DLQ] Job permanently failed and moved to Dead Letter Queue.`);
     }
   });
 
   worker.on("error", (err) => {
-    console.error(`[Worker:${worker.name}] Worker connection error:`, err);
+    logger.error({ queue: worker.name, err }, `[Worker:${worker.name}] Worker connection error`);
   });
 });
 
-console.log("[Worker] All 4 BullMQ workers active and listening for jobs.");
+logger.info("[Worker] All 4 BullMQ workers active and listening for jobs.");
 
 // Graceful shutdown
 export async function stopWorkers(): Promise<void> {
-  console.log("[Worker] Stopping outbox relay and closing all BullMQ workers...");
+  logger.info("[Worker] Stopping outbox relay and closing all BullMQ workers...");
   stopOutboxRelay();
   await Promise.all(workers.map((w) => w.close()));
-  console.log("[Worker] All workers closed cleanly.");
+  logger.info("[Worker] All workers closed cleanly.");
 }
 
 async function handleSignal() {

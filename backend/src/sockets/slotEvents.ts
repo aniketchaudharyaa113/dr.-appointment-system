@@ -4,6 +4,7 @@ import jwt from "jsonwebtoken";
 import { createAdapter } from "@socket.io/redis-adapter";
 import { Emitter } from "@socket.io/redis-emitter";
 import Redis from "ioredis";
+import { logger } from "../lib/logger";
 
 let io: Server | null = null;
 let adapterPub: Redis | null = null;
@@ -51,9 +52,9 @@ export function initSocket(httpServer: HttpServer, customRedisUrl?: string) {
       adapterSub.on("error", () => {});
 
       io.adapter(createAdapter(adapterPub, adapterSub));
-      console.log("[Socket.IO] Redis adapter attached successfully.");
+      logger.info("[Socket.IO] Redis adapter attached successfully.");
     } catch (err: any) {
-      console.warn("[Socket.IO] Redis adapter init failed, using default in-memory adapter:", err?.message || err);
+      logger.warn({ err: err?.message || err }, "[Socket.IO] Redis adapter init failed, using default in-memory adapter");
     }
   }
 

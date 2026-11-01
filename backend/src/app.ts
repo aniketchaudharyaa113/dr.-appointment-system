@@ -22,6 +22,7 @@ import pool from "./db/pool";
 
 import helmet from "helmet";
 import cookieParser from "cookie-parser";
+import { httpLogger } from "./lib/logger";
 
 dotenv.config();
 
@@ -37,6 +38,7 @@ const app = express();
 const httpServer = http.createServer(app);
 
 app.use(helmet());
+app.use(httpLogger);
 
 const allowedOrigins = process.env.CLIENT_URL
   ? process.env.CLIENT_URL.split(",").map((s) => s.trim())

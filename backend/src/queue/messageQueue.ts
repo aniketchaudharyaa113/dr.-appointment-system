@@ -1,5 +1,6 @@
 import { Queue, JobsOptions } from "bullmq";
 import Redis from "ioredis";
+import { logger } from "../lib/logger";
 
 export const QUEUE_NAMES = {
   NOTIFICATIONS: "notifications",
@@ -111,7 +112,7 @@ export function getAllQueues(): Queue[] {
 
 export function initMessageQueue() {
   getQueues();
-  console.log("[BullMQ] Queues initialized: notifications, audit, email, reminders.");
+  logger.info("[BullMQ] Queues initialized: notifications, audit, email, reminders.");
 }
 
 export async function closeMessageQueue(): Promise<void> {
