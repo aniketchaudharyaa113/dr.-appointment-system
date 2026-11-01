@@ -200,18 +200,16 @@ export async function getPrescriptionVersions(req: AuthRequest, res: Response, n
       [prescriptionId]
     );
 
-    await insertOutboxEvent(pool, {
-      aggregateType: "PRESCRIPTION",
-      aggregateId: prescriptionId,
-      eventType: "AUDIT",
-      payload: {
-        actorId: userId,
-        actorRole: role,
-        action: "PRESCRIPTION_VERSIONS_VIEWED",
-        targetId: prescriptionId,
-        details: { count: versions.rows.length, viewedAt: new Date().toISOString() },
-      },
-    });
+    await pool.query(
+      `INSERT INTO audit_logs (actor_id, actor_role, action, target_id, details)
+       VALUES ($1, $2, 'PRESCRIPTION_VERSIONS_VIEWED', $3, $4)`,
+      [
+        userId,
+        role,
+        prescriptionId,
+        JSON.stringify({ count: versions.rows.length, viewedAt: new Date().toISOString() }),
+      ]
+    );
 
     res.json(versions.rows);
   } catch (err) {
@@ -256,22 +254,20 @@ export async function getPrescriptionByAppointment(req: AuthRequest, res: Respon
     const prescription = result.rows[0];
 
     // Audit prescription read access
-    await insertOutboxEvent(pool, {
-      aggregateType: "PRESCRIPTION",
-      aggregateId: prescription.id,
-      eventType: "AUDIT",
-      payload: {
-        actorId: userId,
-        actorRole: role,
-        action: "PRESCRIPTION_VIEWED",
-        targetId: prescription.id,
-        details: {
+    await pool.query(
+      `INSERT INTO audit_logs (actor_id, actor_role, action, target_id, details)
+       VALUES ($1, $2, 'PRESCRIPTION_VIEWED', $3, $4)`,
+      [
+        userId,
+        role,
+        prescription.id,
+        JSON.stringify({
           appointmentId,
           bookingRef: prescription.booking_ref,
           viewedAt: new Date().toISOString(),
-        },
-      },
-    });
+        }),
+      ]
+    );
 
     res.json(prescription);
   } catch (err) {
@@ -298,18 +294,15 @@ export async function getMyPrescriptions(req: AuthRequest, res: Response, next: 
     );
 
     if (result.rows.length > 0) {
-      await insertOutboxEvent(pool, {
-        aggregateType: "PRESCRIPTION",
-        aggregateId: userId,
-        eventType: "AUDIT",
-        payload: {
-          actorId: userId,
-          actorRole: "PATIENT",
-          action: "PRESCRIPTION_LIST_VIEWED",
-          targetId: userId,
-          details: { count: result.rows.length, viewedAt: new Date().toISOString() },
-        },
-      });
+      await pool.query(
+        `INSERT INTO audit_logs (actor_id, actor_role, action, target_id, details)
+         VALUES ($1, 'PATIENT', 'PRESCRIPTION_LIST_VIEWED', $2, $3)`,
+        [
+          userId,
+          userId,
+          JSON.stringify({ count: result.rows.length, viewedAt: new Date().toISOString() }),
+        ]
+      );
     }
 
     res.json(result.rows);
