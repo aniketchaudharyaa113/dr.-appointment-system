@@ -71,10 +71,13 @@ export async function verifyDoctor(req: AuthRequest, res: Response, next: NextFu
   }
 }
 
-// GET /admin/appointments - with optional status & search filtering
+// GET /admin/appointments - with optional status & search filtering and pagination
 export async function getAllAppointments(req: AuthRequest, res: Response, next: NextFunction) {
   try {
     const { q, status } = req.query;
+    const page = Math.max(1, Number(req.query.page) || 1);
+    const limit = Math.min(100, Math.max(1, Number(req.query.limit) || 20));
+    const offset = (page - 1) * limit;
 
     const conditions: string[] = ["1=1"];
     const values: any[] = [];
@@ -92,6 +95,22 @@ export async function getAllAppointments(req: AuthRequest, res: Response, next: 
       );
     }
 
+    const countQuery = `
+      SELECT COUNT(*)::int AS total
+      FROM appointments a
+      JOIN users up ON up.id = a.patient_id
+      JOIN doctors d ON d.id = a.doctor_id
+      JOIN users ud ON ud.id = d.user_id
+      WHERE ${conditions.join(" AND ")}
+    `;
+    const countRes = await pool.query(countQuery, values);
+    const total = countRes.rows[0].total;
+
+    values.push(limit);
+    const limitIdx = values.length;
+    values.push(offset);
+    const offsetIdx = values.length;
+
     const query = `
       SELECT a.*, up.name AS patient_name, up.email AS patient_email,
              ud.name AS doctor_name, d.specialty, d.clinic_name
@@ -101,10 +120,20 @@ export async function getAllAppointments(req: AuthRequest, res: Response, next: 
       JOIN users ud ON ud.id = d.user_id
       WHERE ${conditions.join(" AND ")}
       ORDER BY a.slot_time DESC
+      LIMIT $${limitIdx} OFFSET $${offsetIdx}
     `;
 
     const result = await pool.query(query, values);
-    res.json(result.rows);
+    res.json({
+      data: result.rows,
+      pagination: {
+        total,
+        page,
+        limit,
+        totalPages: Math.ceil(total / limit),
+        hasMore: offset + result.rows.length < total,
+      },
+    });
   } catch (err) {
     next(err);
   }
@@ -140,17 +169,35 @@ export async function getStats(req: AuthRequest, res: Response, next: NextFuncti
   }
 }
 
-// GET /admin/audit-logs
+// GET /admin/audit-logs with pagination
 export async function getAuditLogs(req: AuthRequest, res: Response, next: NextFunction) {
   try {
+    const page = Math.max(1, Number(req.query.page) || 1);
+    const limit = Math.min(100, Math.max(1, Number(req.query.limit) || 20));
+    const offset = (page - 1) * limit;
+
+    const countRes = await pool.query(`SELECT COUNT(*)::int AS total FROM audit_logs`);
+    const total = countRes.rows[0].total;
+
     const result = await pool.query(
       `SELECT al.*, u.name AS actor_name, u.email AS actor_email
        FROM audit_logs al
        LEFT JOIN users u ON u.id = al.actor_id
        ORDER BY al.created_at DESC
-       LIMIT 50`
+       LIMIT $1 OFFSET $2`,
+      [limit, offset]
     );
-    res.json(result.rows);
+
+    res.json({
+      data: result.rows,
+      pagination: {
+        total,
+        page,
+        limit,
+        totalPages: Math.ceil(total / limit),
+        hasMore: offset + result.rows.length < total,
+      },
+    });
   } catch (err) {
     next(err);
   }

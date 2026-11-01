@@ -15,6 +15,9 @@ export default function DoctorSearch() {
   const maxFeeParam = searchParams.get("maxFee") || "";
 
   const [doctors, setDoctors] = useState([]);
+  const [page, setPage] = useState(1);
+  const [hasMore, setHasMore] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [matchedSpecialty, setMatchedSpecialty] = useState(null);
   const [matchedSymptom, setMatchedSymptom] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -66,12 +69,17 @@ export default function DoctorSearch() {
         } else {
           setMatchedSpecialty(null);
           setMatchedSymptom(null);
-          const params = {};
+          const params = { page: 1, limit: 12 };
           if (specialtyParam) params.specialty = specialtyParam;
           if (cityParam) params.city = cityParam;
           if (maxFeeParam) params.maxFee = maxFeeParam;
           const data = await api.getDoctors(params);
-          if (!cancelled) setDoctors(data || []);
+          if (!cancelled) {
+            const list = Array.isArray(data) ? data : (data?.data || []);
+            setDoctors(list);
+            setHasMore(data?.pagination?.hasMore || false);
+            setPage(1);
+          }
         }
       } catch (err) {
         if (!cancelled) setError(err.message);
@@ -93,6 +101,27 @@ export default function DoctorSearch() {
     if (filters.city) nextParams.city = filters.city;
     if (filters.maxFee) nextParams.maxFee = filters.maxFee;
     setSearchParams(nextParams);
+  }
+
+  async function loadMoreDoctors() {
+    if (loadingMore || !hasMore) return;
+    setLoadingMore(true);
+    try {
+      const nextPage = page + 1;
+      const params = { page: nextPage, limit: 12 };
+      if (specialtyParam) params.specialty = specialtyParam;
+      if (cityParam) params.city = cityParam;
+      if (maxFeeParam) params.maxFee = maxFeeParam;
+      const data = await api.getDoctors(params);
+      const list = Array.isArray(data) ? data : (data?.data || []);
+      setDoctors((prev) => [...prev, ...list]);
+      setPage(nextPage);
+      setHasMore(data?.pagination?.hasMore || false);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoadingMore(false);
+    }
   }
 
   function clearAll() {
@@ -199,6 +228,18 @@ export default function DoctorSearch() {
           <DoctorCard key={doc.id} doctor={doc} />
         ))}
       </div>
+
+      {hasMore && (
+        <div className="mt-8 text-center">
+          <button
+            onClick={loadMoreDoctors}
+            disabled={loadingMore}
+            className="btn-secondary px-6 py-2.5 text-xs font-semibold"
+          >
+            {loadingMore ? "Loading more doctors…" : "Load More Doctors ↓"}
+          </button>
+        </div>
+      )}
     </div>
   );
 }

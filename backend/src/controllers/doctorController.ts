@@ -28,9 +28,12 @@ const profileUpdateSchema = z.object({
 export async function getDoctors(req: AuthRequest, res: Response, next: NextFunction) {
   try {
     const { specialty, city, maxFee } = req.query;
+    const page = Math.max(1, Number(req.query.page) || 1);
+    const limit = Math.min(100, Math.max(1, Number(req.query.limit) || 20));
+    const offset = (page - 1) * limit;
 
-    const cacheKey = `medibook:doctors:list:${specialty || ""}:${city || ""}:${maxFee || ""}`;
-    const cached = await cacheGet<any[]>(cacheKey);
+    const cacheKey = `medibook:doctors:list:${specialty || ""}:${city || ""}:${maxFee || ""}:${page}:${limit}`;
+    const cached = await cacheGet<any>(cacheKey);
     if (cached) {
       return res.json(cached);
     }
@@ -55,6 +58,19 @@ export async function getDoctors(req: AuthRequest, res: Response, next: NextFunc
       conditions.push(`d.consultation_fee <= $${values.length}`);
     }
 
+    const countQuery = `
+      SELECT COUNT(DISTINCT d.id)::int AS total
+      FROM doctors d
+      WHERE ${conditions.join(" AND ")}
+    `;
+    const countRes = await pool.query(countQuery, values);
+    const total = countRes.rows[0].total;
+
+    values.push(limit);
+    const limitIdx = values.length;
+    values.push(offset);
+    const offsetIdx = values.length;
+
     const query = `
       SELECT d.id, d.specialty, d.qualifications, d.experience_years,
              d.clinic_name, d.clinic_address, d.consultation_fee, d.photo_url,
@@ -67,11 +83,22 @@ export async function getDoctors(req: AuthRequest, res: Response, next: NextFunc
       WHERE ${conditions.join(" AND ")}
       GROUP BY d.id, u.name
       ORDER BY d.experience_years DESC
+      LIMIT $${limitIdx} OFFSET $${offsetIdx}
     `;
 
     const result = await pool.query(query, values);
-    await cacheSet(cacheKey, result.rows, 120); // 2 min cache
-    res.json(result.rows);
+    const responsePayload = {
+      data: result.rows,
+      pagination: {
+        total,
+        page,
+        limit,
+        totalPages: Math.ceil(total / limit),
+        hasMore: offset + result.rows.length < total,
+      },
+    };
+    await cacheSet(cacheKey, responsePayload, 120); // 2 min cache
+    res.json(responsePayload);
   } catch (err) {
     next(err);
   }

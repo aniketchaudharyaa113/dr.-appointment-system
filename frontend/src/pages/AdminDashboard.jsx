@@ -99,32 +99,43 @@ function AllAppointmentsTab({ token }) {
   const [appointments, setAppointments] = useState([]);
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState("");
+  const [page, setPage] = useState(1);
+  const [pagination, setPagination] = useState(null);
   const [loading, setLoading] = useState(false);
 
-  function load() {
+  function load(p = 1) {
     setLoading(true);
-    const params = {};
+    const params = { page: p, limit: 15 };
     if (search.trim()) params.q = search.trim();
     if (status) params.status = status;
     api.getAllAppointments(params, token)
-      .then(setAppointments)
+      .then((res) => {
+        if (Array.isArray(res)) {
+          setAppointments(res);
+          setPagination(null);
+        } else {
+          setAppointments(res.data || []);
+          setPagination(res.pagination || null);
+        }
+        setPage(p);
+      })
       .finally(() => setLoading(false));
   }
 
   useEffect(() => {
-    load();
+    load(1);
   }, [token, status]);
 
   function handleSearchSubmit(e) {
     e.preventDefault();
-    load();
+    load(1);
   }
 
   async function handleAdminCancel(id, ref) {
     const reason = prompt(`Enter reason for administrative cancellation of ${ref}:`);
     if (reason === null) return;
     await api.cancelAppointment(id, token, reason || "Cancelled by Admin");
-    load();
+    load(page);
   }
 
   return (
@@ -209,6 +220,29 @@ function AllAppointmentsTab({ token }) {
             )}
           </tbody>
         </table>
+        {pagination && pagination.totalPages > 1 && (
+          <div className="flex items-center justify-between px-4 py-3 border-t border-line text-xs">
+            <span className="text-inkSoft">
+              Page {pagination.page} of {pagination.totalPages} ({pagination.total} total)
+            </span>
+            <div className="flex gap-2">
+              <button
+                disabled={page <= 1}
+                onClick={() => load(page - 1)}
+                className="btn-secondary !py-1 !px-3 text-xs disabled:opacity-40"
+              >
+                Previous
+              </button>
+              <button
+                disabled={!pagination.hasMore}
+                onClick={() => load(page + 1)}
+                className="btn-secondary !py-1 !px-3 text-xs disabled:opacity-40"
+              >
+                Next
+              </button>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -216,15 +250,31 @@ function AllAppointmentsTab({ token }) {
 
 function AuditLogsTab({ token }) {
   const [logs, setLogs] = useState([]);
+  const [page, setPage] = useState(1);
+  const [pagination, setPagination] = useState(null);
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    api.getAuditLogs(token)
-      .then(setLogs)
+  function load(p = 1) {
+    setLoading(true);
+    api.getAuditLogs(token, { page: p, limit: 15 })
+      .then((res) => {
+        if (Array.isArray(res)) {
+          setLogs(res);
+          setPagination(null);
+        } else {
+          setLogs(res.data || []);
+          setPagination(res.pagination || null);
+        }
+        setPage(p);
+      })
       .finally(() => setLoading(false));
+  }
+
+  useEffect(() => {
+    load(1);
   }, [token]);
 
-  if (loading) return <p className="text-inkSoft">Loading audit logs…</p>;
+  if (loading && logs.length === 0) return <p className="text-inkSoft">Loading audit logs…</p>;
 
   return (
     <div className="card bg-white border border-line overflow-x-auto">
@@ -264,9 +314,33 @@ function AuditLogsTab({ token }) {
           )}
         </tbody>
       </table>
+      {pagination && pagination.totalPages > 1 && (
+        <div className="flex items-center justify-between px-4 py-3 border-t border-line text-xs">
+          <span className="text-inkSoft">
+            Page {pagination.page} of {pagination.totalPages} ({pagination.total} total)
+          </span>
+          <div className="flex gap-2">
+            <button
+              disabled={page <= 1}
+              onClick={() => load(page - 1)}
+              className="btn-secondary !py-1 !px-3 text-xs disabled:opacity-40"
+            >
+              Previous
+            </button>
+            <button
+              disabled={!pagination.hasMore}
+              onClick={() => load(page + 1)}
+              className="btn-secondary !py-1 !px-3 text-xs disabled:opacity-40"
+            >
+              Next
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
+
 
 export default function AdminDashboard() {
   const { token } = useAuth();

@@ -70,6 +70,9 @@ function ReviewForm({ appt, token, onDone }) {
 export default function PatientDashboard() {
   const { token } = useAuth();
   const [appointments, setAppointments] = useState([]);
+  const [page, setPage] = useState(1);
+  const [hasMore, setHasMore] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [loading, setLoading] = useState(true);
   const [reviewing, setReviewing] = useState(null);
   const [activePrescription, setActivePrescription] = useState(null);
@@ -77,7 +80,31 @@ export default function PatientDashboard() {
 
   function load() {
     setLoading(true);
-    api.getMyAppointments(token).then(setAppointments).finally(() => setLoading(false));
+    api.getMyAppointments(token, { page: 1, limit: 10 })
+      .then((res) => {
+        const list = Array.isArray(res) ? res : (res?.data || []);
+        setAppointments(list);
+        setHasMore(res?.pagination?.hasMore || false);
+        setPage(1);
+      })
+      .finally(() => setLoading(false));
+  }
+
+  async function loadMore() {
+    if (loadingMore || !hasMore) return;
+    setLoadingMore(true);
+    try {
+      const nextPage = page + 1;
+      const res = await api.getMyAppointments(token, { page: nextPage, limit: 10 });
+      const list = Array.isArray(res) ? res : (res?.data || []);
+      setAppointments((prev) => [...prev, ...list]);
+      setPage(nextPage);
+      setHasMore(res?.pagination?.hasMore || false);
+    } catch (err) {
+      alert(err.message);
+    } finally {
+      setLoadingMore(false);
+    }
   }
 
   useEffect(load, [token]);
@@ -201,6 +228,18 @@ export default function PatientDashboard() {
           </div>
         ))}
       </div>
+
+      {hasMore && (
+        <div className="mt-6 text-center">
+          <button
+            onClick={loadMore}
+            disabled={loadingMore}
+            className="btn-secondary px-6 py-2.5 text-xs font-semibold"
+          >
+            {loadingMore ? "Loading more appointments…" : "Load More Appointments ↓"}
+          </button>
+        </div>
+      )}
 
       {activePrescription && (
         <PrescriptionModal

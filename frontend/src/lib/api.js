@@ -52,7 +52,10 @@ export const api = {
 
   createAppointment: (payload, token) =>
     request("/appointments", { method: "POST", body: payload, token }),
-  getMyAppointments: (token) => request("/appointments/mine", { token }),
+  getMyAppointments: (token, params = {}) => {
+    const qs = new URLSearchParams(params).toString();
+    return request(`/appointments/mine${qs ? `?${qs}` : ""}`, { token });
+  },
   cancelAppointment: (id, token, reason) =>
     request(`/appointments/${id}/cancel`, { method: "PATCH", body: { reason }, token }),
   completeAppointment: (id, notes, token) =>
@@ -68,7 +71,10 @@ export const api = {
     request(`/prescriptions/appointment/${appointmentId}`, { token }),
 
   // Notifications
-  getMyNotifications: (token) => request("/notifications", { token }),
+  getMyNotifications: (token, params = {}) => {
+    const qs = new URLSearchParams(params).toString();
+    return request(`/notifications${qs ? `?${qs}` : ""}`, { token });
+  },
   markNotificationAsRead: (id, token) =>
     request(`/notifications/${id}/read`, { method: "PATCH", token }),
   markAllNotificationsAsRead: (token) =>
@@ -86,5 +92,9 @@ export const api = {
     return request(`/admin/appointments${qs ? `?${qs}` : ""}`, { token });
   },
   getStats: (token) => request("/admin/stats", { token }),
-  getAuditLogs: (token) => request("/admin/audit-logs", { token }),
+  getAuditLogs: (token, params = {}) => {
+    const qs = new URLSearchParams(params).toString();
+    return request(`/admin/audit-logs${qs ? `?${qs}` : ""}`, { token });
+  },
 };
+

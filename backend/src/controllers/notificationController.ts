@@ -2,17 +2,26 @@ import { Response, NextFunction } from "express";
 import pool from "../db/pool";
 import { AuthRequest } from "../types";
 
-// GET /notifications - returns user's notifications + unread count
+// GET /notifications - returns user's notifications + unread count with pagination
 export async function getMyNotifications(req: AuthRequest, res: Response, next: NextFunction) {
   try {
     const userId = req.user!.id;
+    const page = Math.max(1, Number(req.query.page) || 1);
+    const limit = Math.min(100, Math.max(1, Number(req.query.limit) || 20));
+    const offset = (page - 1) * limit;
+
+    const countRes = await pool.query(
+      `SELECT COUNT(*)::int AS total FROM notifications WHERE user_id = $1`,
+      [userId]
+    );
+    const total = countRes.rows[0].total;
 
     const result = await pool.query(
       `SELECT * FROM notifications
        WHERE user_id = $1
        ORDER BY created_at DESC
-       LIMIT 30`,
-      [userId]
+       LIMIT $2 OFFSET $3`,
+      [userId, limit, offset]
     );
 
     const unreadCount = await pool.query(
@@ -23,7 +32,15 @@ export async function getMyNotifications(req: AuthRequest, res: Response, next: 
 
     res.json({
       notifications: result.rows,
+      data: result.rows,
       unreadCount: unreadCount.rows[0].count,
+      pagination: {
+        total,
+        page,
+        limit,
+        totalPages: Math.ceil(total / limit),
+        hasMore: offset + result.rows.length < total,
+      },
     });
   } catch (err) {
     next(err);

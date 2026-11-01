@@ -222,8 +222,36 @@ export async function getMyAppointments(req: AuthRequest, res: Response, next: N
       return res.status(403).json({ error: "Admins should use /admin/appointments" });
     }
 
+    const page = Math.max(1, Number(req.query.page) || 1);
+    const limit = Math.min(100, Math.max(1, Number(req.query.limit) || 20));
+    const offset = (page - 1) * limit;
+
+    let countQuery: string;
+    let countValues: any[];
+    if (role === "PATIENT") {
+      countQuery = `SELECT COUNT(*)::int AS total FROM appointments WHERE patient_id = $1`;
+      countValues = [userId];
+    } else {
+      countQuery = `SELECT COUNT(*)::int AS total FROM appointments a JOIN doctors d ON d.id = a.doctor_id WHERE d.user_id = $1`;
+      countValues = [userId];
+    }
+    const countRes = await pool.query(countQuery, countValues);
+    const total = countRes.rows[0].total;
+
+    query += ` LIMIT $2 OFFSET $3`;
+    values.push(limit, offset);
+
     const result = await pool.query(query, values);
-    res.json(result.rows);
+    res.json({
+      data: result.rows,
+      pagination: {
+        total,
+        page,
+        limit,
+        totalPages: Math.ceil(total / limit),
+        hasMore: offset + result.rows.length < total,
+      },
+    });
   } catch (err) {
     next(err);
   }
