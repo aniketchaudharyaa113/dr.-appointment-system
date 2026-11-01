@@ -68,6 +68,14 @@ services:
       redis:
         condition: service_healthy
 
+  mailpit:
+    image: axllent/mailpit:latest
+    container_name: medibook-mailpit
+    restart: unless-stopped
+    ports:
+      - "8025:8025"
+    environment:
+      MP_MAX_MESSAGES: 5000
 
   nginx:
     build:
