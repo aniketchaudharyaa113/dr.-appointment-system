@@ -30,7 +30,7 @@ function ReviewForm({ appt, token, onDone }) {
     setSubmitting(true);
     setMsg("");
     try {
-      await api.createReview({ doctorId: appt.doctor_id, rating, comment }, token);
+      await api.createReview({ appointmentId: appt.id, doctorId: appt.doctor_id, rating, comment }, token);
       setMsg("Thanks for the review!");
       onDone?.();
     } catch (err) {
@@ -182,10 +182,16 @@ export default function PatientDashboard() {
                 </button>
               )}
 
-              {appt.status === "COMPLETED" && reviewing !== appt.id && (
+              {appt.status === "COMPLETED" && !appt.review_id && reviewing !== appt.id && (
                 <button onClick={() => setReviewing(appt.id)} className="btn-secondary !py-1.5 text-xs flex items-center gap-1">
                   <Star className="w-3.5 h-3.5 text-amber-500" /> Leave a review
                 </button>
+              )}
+
+              {appt.status === "COMPLETED" && appt.review_id && (
+                <span className="text-xs text-amber-600 font-medium flex items-center gap-1 bg-amber-50 px-2.5 py-1 rounded-full border border-amber-200">
+                  <Star className="w-3.5 h-3.5 fill-amber-500 text-amber-500" /> Rated {appt.review_rating}★
+                </span>
               )}
             </div>
 

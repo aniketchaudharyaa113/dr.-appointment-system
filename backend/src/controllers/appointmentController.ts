@@ -193,11 +193,13 @@ export async function getMyAppointments(req: AuthRequest, res: Response, next: N
       query = `
         SELECT a.*, u.name AS doctor_name, d.specialty, d.clinic_name,
                d.clinic_address, d.clinic_lat, d.clinic_lng,
-               p.id AS prescription_id
+               p.id AS prescription_id,
+               r.id AS review_id, r.rating AS review_rating
         FROM appointments a
         JOIN doctors d ON d.id = a.doctor_id
         JOIN users u ON u.id = d.user_id
         LEFT JOIN prescriptions p ON p.appointment_id = a.id
+        LEFT JOIN reviews r ON r.appointment_id = a.id
         WHERE a.patient_id = $1
         ORDER BY a.slot_time DESC
       `;
@@ -205,11 +207,13 @@ export async function getMyAppointments(req: AuthRequest, res: Response, next: N
     } else if (role === "DOCTOR") {
       query = `
         SELECT a.*, u.name AS patient_name, u.phone AS patient_phone, u.email AS patient_email,
-               p.id AS prescription_id
+               p.id AS prescription_id,
+               r.id AS review_id, r.rating AS review_rating
         FROM appointments a
         JOIN doctors d ON d.id = a.doctor_id
         JOIN users u ON u.id = a.patient_id
         LEFT JOIN prescriptions p ON p.appointment_id = a.id
+        LEFT JOIN reviews r ON r.appointment_id = a.id
         WHERE d.user_id = $1
         ORDER BY a.slot_time DESC
       `;
