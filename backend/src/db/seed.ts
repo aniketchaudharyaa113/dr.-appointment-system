@@ -39,8 +39,10 @@ const symptomMap: [string, string][] = [
 
 async function seed() {
   const client = await pool.connect();
+  let inTransaction = false;
   try {
     await client.query("BEGIN");
+    inTransaction = true;
 
     // Only seed if the table is empty, so re-running this is safe
     const existing = await client.query("SELECT COUNT(*) FROM symptom_specialty_map");
@@ -163,8 +165,11 @@ async function seed() {
     }
 
     await client.query("COMMIT");
+    inTransaction = false;
   } catch (err) {
-    await client.query("ROLLBACK");
+    if (inTransaction) {
+      await client.query("ROLLBACK");
+    }
     console.error("Seed failed:", err);
   } finally {
     client.release();

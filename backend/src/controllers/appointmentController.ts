@@ -12,6 +12,7 @@ import { enqueueJob } from "../queue/messageQueue";
 // if Postgres rejects it as a duplicate.
 export async function createAppointment(req: AuthRequest, res: Response, next: NextFunction) {
   const client = await pool.connect();
+  let inTransaction = false;
   try {
     const patientId = req.user!.id;
     const { doctorId, slotTime } = req.body;
@@ -89,6 +90,7 @@ export async function createAppointment(req: AuthRequest, res: Response, next: N
     }
 
     await client.query("BEGIN");
+    inTransaction = true;
 
     // Atomically issue the next daily token number for this doctor.
     const counterResult = await client.query(
@@ -113,6 +115,7 @@ export async function createAppointment(req: AuthRequest, res: Response, next: N
     );
 
     await client.query("COMMIT");
+    inTransaction = false;
 
     const appointment = {
       ...result.rows[0],
@@ -166,7 +169,9 @@ export async function createAppointment(req: AuthRequest, res: Response, next: N
 
     res.status(201).json(appointment);
   } catch (err: any) {
-    await client.query("ROLLBACK");
+    if (inTransaction) {
+      await client.query("ROLLBACK");
+    }
     if (err.code === "23505") {
       return res.status(409).json({ error: "That slot was just booked by someone else. Please pick another." });
     }

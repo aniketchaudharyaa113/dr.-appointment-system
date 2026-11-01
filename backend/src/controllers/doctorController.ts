@@ -257,6 +257,7 @@ export async function updateMyProfile(req: AuthRequest, res: Response, next: Nex
 // PATCH /doctors/me/availability
 export async function setAvailability(req: AuthRequest, res: Response, next: NextFunction) {
   const client = await pool.connect();
+  let inTransaction = false;
   try {
     const userId = req.user!.id;
     const { slots } = req.body;
@@ -268,6 +269,7 @@ export async function setAvailability(req: AuthRequest, res: Response, next: Nex
     const doctorId = doctorResult.rows[0].id;
 
     await client.query("BEGIN");
+    inTransaction = true;
     await client.query("DELETE FROM availability WHERE doctor_id = $1", [doctorId]);
 
     for (const slot of slots || []) {
@@ -279,13 +281,16 @@ export async function setAvailability(req: AuthRequest, res: Response, next: Nex
     }
 
     await client.query("COMMIT");
+    inTransaction = false;
 
     await cacheDel(`medibook:doctor:${doctorId}`);
     await cacheDel(`medibook:slots:${doctorId}`);
 
     res.json({ message: "Availability updated" });
   } catch (err) {
-    await client.query("ROLLBACK");
+    if (inTransaction) {
+      await client.query("ROLLBACK");
+    }
     next(err);
   } finally {
     client.release();
