@@ -57,6 +57,8 @@ export const api = {
     request(`/appointments/${id}/cancel`, { method: "PATCH", body: { reason }, token }),
   completeAppointment: (id, notes, token) =>
     request(`/appointments/${id}/complete`, { method: "PATCH", body: { notes }, token }),
+  rescheduleAppointment: (id, newSlotTime, token) =>
+    request(`/appointments/${id}/reschedule`, { method: "PATCH", body: { newSlotTime }, token }),
 
   // Prescriptions
   createPrescription: (payload, token) =>

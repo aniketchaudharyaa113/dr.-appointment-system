@@ -368,3 +368,235 @@ export async function completeAppointment(req: AuthRequest, res: Response, next:
     next(err);
   }
 }
+
+// PATCH /appointments/:id/reschedule - atomic cancel old slot + rebook new slot in ONE transaction
+export async function rescheduleAppointment(req: AuthRequest, res: Response, next: NextFunction) {
+  const client = await pool.connect();
+  let inTransaction = false;
+  try {
+    const { id } = req.params;
+    const { id: userId, role } = req.user!;
+    const { newSlotTime } = req.body;
+
+    if (!newSlotTime) {
+      return res.status(400).json({ error: "newSlotTime is required (YYYY-MM-DDTHH:MM:SS)" });
+    }
+
+    const slot = parseSlot(newSlotTime);
+    if (!slot) {
+      return res.status(400).json({ error: "newSlotTime must look like YYYY-MM-DDTHH:MM:SS" });
+    }
+    if (slotKey(slot) <= slotKey(nowInClinicTimezone())) {
+      return res.status(400).json({ error: "newSlotTime must be in the future" });
+    }
+
+    // 1. Fetch current appointment
+    let apptQuery: string;
+    let apptValues: any[];
+    if (role === "PATIENT") {
+      apptQuery = `SELECT * FROM appointments WHERE id = $1 AND patient_id = $2 AND status IN ('PENDING', 'CONFIRMED')`;
+      apptValues = [id, userId];
+    } else if (role === "DOCTOR") {
+      apptQuery = `SELECT a.* FROM appointments a JOIN doctors d ON d.id = a.doctor_id WHERE a.id = $1 AND d.user_id = $2 AND a.status IN ('PENDING', 'CONFIRMED')`;
+      apptValues = [id, userId];
+    } else if (role === "ADMIN") {
+      apptQuery = `SELECT * FROM appointments WHERE id = $1 AND status IN ('PENDING', 'CONFIRMED')`;
+      apptValues = [id];
+    } else {
+      return res.status(403).json({ error: "Unauthorized" });
+    }
+
+    const apptRes = await client.query(apptQuery, apptValues);
+    if (apptRes.rows.length === 0) {
+      return res.status(404).json({ error: "Active appointment not found, not yours, or cannot be rescheduled" });
+    }
+    const oldAppt = apptRes.rows[0];
+    const doctorId = oldAppt.doctor_id;
+    const patientId = oldAppt.patient_id;
+
+    // 2. Doctor must exist and be verified
+    const doctorResult = await client.query(
+      `SELECT d.id, d.user_id, d.clinic_name, d.clinic_address, u.name AS doctor_name, u.email AS doctor_email
+       FROM doctors d
+       JOIN users u ON u.id = d.user_id
+       WHERE d.id = $1 AND d.is_verified = true`,
+      [doctorId]
+    );
+    if (doctorResult.rows.length === 0) {
+      return res.status(404).json({ error: "Doctor not found or not verified" });
+    }
+    const doctor = doctorResult.rows[0];
+
+    // 3. Check doctor leaves on new date
+    const pad = (n: number) => String(n).padStart(2, "0");
+    const bookingDate = `${slot.year}-${pad(slot.month)}-${pad(slot.day)}`;
+    const leaveCheck = await client.query(
+      `SELECT id, reason FROM doctor_leaves WHERE doctor_id = $1 AND leave_date = $2`,
+      [doctorId, bookingDate]
+    );
+    if (leaveCheck.rows.length > 0) {
+      return res.status(400).json({
+        error: `Doctor is unavailable on this date (${leaveCheck.rows[0].reason || "Doctor on leave"})`,
+      });
+    }
+
+    // 4. Availability window check
+    const availabilityResult = await client.query(
+      `SELECT id, start_time, end_time, slot_duration_minutes FROM availability
+       WHERE doctor_id = $1 AND day_of_week = $2
+         AND start_time <= $3 AND end_time > $3`,
+      [doctorId, slot.dayOfWeek, slot.hhmmss]
+    );
+    if (availabilityResult.rows.length === 0) {
+      return res.status(400).json({ error: "That time is outside the doctor's available hours" });
+    }
+
+    // 5. Grid alignment & window bounds check
+    const avail = availabilityResult.rows[0];
+    const timeToMinutes = (t: string) => {
+      const [h, m] = t.split(":").map(Number);
+      return h * 60 + m;
+    };
+    const slotMins = timeToMinutes(slot.hhmmss);
+    const startMins = timeToMinutes(avail.start_time);
+    const endMins = timeToMinutes(avail.end_time);
+    const duration = avail.slot_duration_minutes || 15;
+
+    if ((slotMins - startMins) % duration !== 0) {
+      return res.status(400).json({
+        error: `Slot time is not aligned to the doctor's ${duration}-minute schedule grid from start time (${avail.start_time.slice(0, 5)})`,
+      });
+    }
+
+    if (slotMins + duration > endMins) {
+      return res.status(400).json({
+        error: `Slot duration (${duration} mins) exceeds available window end (${avail.end_time.slice(0, 5)})`,
+      });
+    }
+
+    const storedNewSlotTime = `${bookingDate} ${slot.hhmmss}`;
+
+    // 6. BEGIN atomic transaction
+    await client.query("BEGIN");
+    inTransaction = true;
+
+    // Check if new slot is already booked by another active appointment
+    const slotConflict = await client.query(
+      `SELECT id FROM appointments WHERE doctor_id = $1 AND slot_time = $2 AND status IN ('PENDING', 'CONFIRMED') FOR UPDATE`,
+      [doctorId, storedNewSlotTime]
+    );
+    if (slotConflict.rows.length > 0) {
+      await client.query("ROLLBACK");
+      inTransaction = false;
+      return res.status(409).json({ error: "That new slot was just booked by someone else. Please pick another." });
+    }
+
+    // Cancel old appointment in same transaction
+    await client.query(
+      `UPDATE appointments
+       SET status = 'CANCELLED',
+           notes = COALESCE(notes || ' | ', '') || 'Rescheduled to ' || $2
+       WHERE id = $1`,
+      [id, storedNewSlotTime]
+    );
+
+    // Atomically increment daily counter for doctor on new bookingDate
+    const counterResult = await client.query(
+      `INSERT INTO doctor_daily_counters (doctor_id, booking_date, last_seq)
+       VALUES ($1, $2, 1)
+       ON CONFLICT (doctor_id, booking_date)
+       DO UPDATE SET last_seq = doctor_daily_counters.last_seq + 1
+       RETURNING last_seq`,
+      [doctorId, bookingDate]
+    );
+    const seq = counterResult.rows[0].last_seq;
+    const newBookingRef = `MB-${bookingDate.replace(/-/g, "")}-${String(seq).padStart(3, "0")}`;
+
+    // Insert new appointment
+    const newApptResult = await client.query(
+      `INSERT INTO appointments (patient_id, doctor_id, slot_time, status, booking_ref, notes)
+       VALUES ($1, $2, $3, 'CONFIRMED', $4, $5)
+       RETURNING *`,
+      [
+        patientId,
+        doctorId,
+        storedNewSlotTime,
+        newBookingRef,
+        `Rescheduled from ${oldAppt.booking_ref}`,
+      ]
+    );
+
+    await client.query("COMMIT");
+    inTransaction = false;
+
+    const newAppointment = {
+      ...newApptResult.rows[0],
+      clinic_name: doctor.clinic_name,
+      clinic_address: doctor.clinic_address,
+      doctor_name: doctor.doctor_name,
+      rescheduled_from: oldAppt.booking_ref,
+    };
+
+    // Invalidate caches
+    await cacheDel(`medibook:slots:${doctorId}`);
+    await cacheDelPattern(`medibook:admin:*`);
+
+    // Emit real-time events: old slot freed, new slot booked
+    getIO().emit("slot-freed", { doctorId, slotTime: oldAppt.slot_time });
+    getIO().emit("slot-booked", { doctorId, slotTime: storedNewSlotTime });
+
+    // Fetch patient info
+    const patientQuery = await pool.query("SELECT name, email FROM users WHERE id = $1", [patientId]);
+    const patientName = patientQuery.rows[0]?.name || "Patient";
+    const patientEmail = patientQuery.rows[0]?.email;
+
+    // Notifications + Audit via Queue
+    await enqueueJob("NOTIFICATION", {
+      userId: patientId,
+      type: "APPOINTMENT_RESCHEDULED",
+      title: "Appointment Rescheduled",
+      message: `Your appointment with ${doctor.doctor_name} has been rescheduled to ${bookingDate} at ${slot.hhmmss.slice(0, 5)}. New Ref: ${newBookingRef}`,
+      link: "/my-appointments",
+    });
+
+    await enqueueJob("NOTIFICATION", {
+      userId: doctor.user_id,
+      type: "APPOINTMENT_RESCHEDULED",
+      title: "Appointment Rescheduled",
+      message: `${patientName} rescheduled from ${String(oldAppt.slot_time).slice(0, 16)} to ${storedNewSlotTime} (${newBookingRef}).`,
+      link: "/doctor/dashboard",
+    });
+
+    await enqueueJob("EMAIL_DISPATCH", {
+      recipient: patientEmail,
+      subject: `Appointment Rescheduled - ${newBookingRef}`,
+      details: { doctorName: doctor.doctor_name, bookingRef: newBookingRef, slotTime: storedNewSlotTime },
+    });
+
+    await enqueueJob("AUDIT", {
+      actorId: userId,
+      actorRole: role,
+      action: "APPOINTMENT_RESCHEDULED",
+      targetId: newAppointment.id,
+      details: {
+        oldAppointmentId: id,
+        oldBookingRef: oldAppt.booking_ref,
+        oldSlotTime: oldAppt.slot_time,
+        newBookingRef,
+        newSlotTime: storedNewSlotTime,
+      },
+    });
+
+    res.json(newAppointment);
+  } catch (err: any) {
+    if (inTransaction) {
+      await client.query("ROLLBACK");
+    }
+    if (err.code === "23505") {
+      return res.status(409).json({ error: "That new slot was just booked by someone else. Please pick another." });
+    }
+    next(err);
+  } finally {
+    client.release();
+  }
+}
