@@ -47,21 +47,54 @@ export async function createPrescription(req: AuthRequest, res: Response, next: 
 
     const appt = apptResult.rows[0];
 
-    const result = await pool.query(
-      `INSERT INTO prescriptions (appointment_id, doctor_id, patient_id, diagnosis, medicines, notes)
-       VALUES ($1, $2, $3, $4, $5, $6)
-       ON CONFLICT (appointment_id)
-       DO UPDATE SET diagnosis = $4, medicines = $5, notes = $6, created_at = now()
-       RETURNING *`,
-      [
-        appointmentId,
-        appt.doctor_id,
-        appt.patient_id,
-        diagnosis,
-        JSON.stringify(medicines),
-        notes || null,
-      ]
+    if (appt.status !== "COMPLETED") {
+      return res.status(400).json({ error: "Prescriptions can only be created for COMPLETED appointments" });
+    }
+
+    // Check if prescription already exists for this appointment
+    const existing = await pool.query(
+      `SELECT id, diagnosis, medicines, notes FROM prescriptions WHERE appointment_id = $1`,
+      [appointmentId]
     );
+
+    let result;
+    if (existing.rows.length > 0) {
+      const prev = existing.rows[0];
+      const versionCountRes = await pool.query(
+        `SELECT COUNT(*) as count FROM prescription_versions WHERE prescription_id = $1`,
+        [prev.id]
+      );
+      const nextVersion = Number(versionCountRes.rows[0].count) + 1;
+
+      // Save previous version before overwriting
+      await pool.query(
+        `INSERT INTO prescription_versions (prescription_id, diagnosis, medicines, notes, version, saved_at)
+         VALUES ($1, $2, $3, $4, $5, now())`,
+        [prev.id, prev.diagnosis, JSON.stringify(prev.medicines), prev.notes, nextVersion]
+      );
+
+      result = await pool.query(
+        `UPDATE prescriptions
+         SET diagnosis = $1, medicines = $2, notes = $3, created_at = now()
+         WHERE id = $4
+         RETURNING *`,
+        [diagnosis, JSON.stringify(medicines), notes || null, prev.id]
+      );
+    } else {
+      result = await pool.query(
+        `INSERT INTO prescriptions (appointment_id, doctor_id, patient_id, diagnosis, medicines, notes)
+         VALUES ($1, $2, $3, $4, $5, $6)
+         RETURNING *`,
+        [
+          appointmentId,
+          appt.doctor_id,
+          appt.patient_id,
+          diagnosis,
+          JSON.stringify(medicines),
+          notes || null,
+        ]
+      );
+    }
 
     // Asynchronously notify patient via Queue
     await enqueueJob("NOTIFICATION", {
@@ -75,12 +108,47 @@ export async function createPrescription(req: AuthRequest, res: Response, next: 
     await enqueueJob("AUDIT", {
       actorId: userId,
       actorRole: "DOCTOR",
-      action: "PRESCRIPTION_CREATED",
+      action: existing.rows.length > 0 ? "PRESCRIPTION_UPDATED" : "PRESCRIPTION_CREATED",
       targetId: appointmentId,
-      details: { diagnosis, medicinesCount: medicines.length },
+      details: { diagnosis, medicinesCount: medicines.length, isUpdate: existing.rows.length > 0 },
     });
 
-    res.status(201).json(result.rows[0]);
+    res.status(existing.rows.length > 0 ? 200 : 201).json(result.rows[0]);
+  } catch (err) {
+    next(err);
+  }
+}
+
+// GET /prescriptions/:prescriptionId/versions
+export async function getPrescriptionVersions(req: AuthRequest, res: Response, next: NextFunction) {
+  try {
+    const { prescriptionId } = req.params;
+    const { id: userId, role } = req.user!;
+
+    const pRes = await pool.query(
+      `SELECT p.id, p.patient_id, d.user_id as doctor_user_id
+       FROM prescriptions p
+       JOIN doctors d ON d.id = p.doctor_id
+       WHERE p.id = $1`,
+      [prescriptionId]
+    );
+    if (pRes.rows.length === 0) {
+      return res.status(404).json({ error: "Prescription not found" });
+    }
+    const p = pRes.rows[0];
+    if (role === "PATIENT" && p.patient_id !== userId) {
+      return res.status(403).json({ error: "Access denied" });
+    }
+    if (role === "DOCTOR" && p.doctor_user_id !== userId) {
+      return res.status(403).json({ error: "Access denied" });
+    }
+
+    const versions = await pool.query(
+      `SELECT * FROM prescription_versions WHERE prescription_id = $1 ORDER BY version DESC`,
+      [prescriptionId]
+    );
+
+    res.json(versions.rows);
   } catch (err) {
     next(err);
   }

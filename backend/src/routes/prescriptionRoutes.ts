@@ -3,6 +3,7 @@ import {
   createPrescription,
   getPrescriptionByAppointment,
   getMyPrescriptions,
+  getPrescriptionVersions,
 } from "../controllers/prescriptionController";
 import { verifyToken, requireRole } from "../middleware/authMiddleware";
 
@@ -13,5 +14,6 @@ router.use(verifyToken);
 router.post("/", requireRole("DOCTOR"), createPrescription);
 router.get("/mine", requireRole("PATIENT"), getMyPrescriptions);
 router.get("/appointment/:appointmentId", getPrescriptionByAppointment);
+router.get("/:prescriptionId/versions", getPrescriptionVersions);
 
 export default router;
