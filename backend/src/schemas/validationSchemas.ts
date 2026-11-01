@@ -51,6 +51,16 @@ export const doctorQuerySchema = paginationQuerySchema.extend({
 });
 
 export const updateAvailabilitySchema = z.object({
+  slots: z
+    .array(
+      z.object({
+        dayOfWeek: z.number().int().min(0).max(6),
+        startTime: z.string(),
+        endTime: z.string(),
+        slotDurationMinutes: z.number().int().positive().optional(),
+      })
+    )
+    .optional(),
   windowStart: z.string().optional(),
   windowEnd: z.string().optional(),
   window_start: z.string().optional(),
