@@ -47,6 +47,12 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:5000/health/ready || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
 
   backend-2:
     build:
@@ -64,11 +70,17 @@ services:
       NODE_ENV: production
     depends_on:
       backend-1:
-        condition: service_started
+        condition: service_healthy
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:5000/health/ready || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
 
   worker:
     build:
@@ -108,8 +120,10 @@ services:
     ports:
       - "80:80"
     depends_on:
-      - backend-1
-      - backend-2
+      backend-1:
+        condition: service_healthy
+      backend-2:
+        condition: service_healthy
 
 volumes:
   postgres_data:

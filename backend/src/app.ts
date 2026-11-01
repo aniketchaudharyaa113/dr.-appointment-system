@@ -16,7 +16,7 @@ import waitlistRoutes from "./routes/waitlistRoutes";
 
 import { notFound, errorHandler } from "./middleware/errorMiddleware";
 import { initSocket } from "./sockets/slotEvents";
-import { initMessageQueue } from "./queue/messageQueue";
+import { initMessageQueue, getAllQueues } from "./queue/messageQueue";
 import { isRedisConnected } from "./cache/redis";
 import pool from "./db/pool";
 
@@ -110,6 +110,48 @@ app.get("/", (req, res) => {
         "/admin/audit-logs",
       ],
     },
+  });
+});
+
+app.get("/health/live", (req, res) => {
+  res.status(200).json({
+    status: "ok",
+    timestamp: new Date().toISOString(),
+  });
+});
+
+app.get("/health/ready", async (req, res) => {
+  let dbStatus = "ok";
+  let redisStatus = "ok";
+  let queueStatus = "ok";
+
+  try {
+    await pool.query("SELECT 1");
+  } catch {
+    dbStatus = "error";
+  }
+
+  if (!isRedisConnected()) {
+    redisStatus = process.env.NODE_ENV === "production" ? "error" : "fallback_memory";
+  }
+
+  try {
+    const queues = getAllQueues();
+    if (!queues || queues.length === 0) {
+      queueStatus = "error";
+    }
+  } catch {
+    queueStatus = "error";
+  }
+
+  const isReady = dbStatus === "ok" && (redisStatus === "ok" || redisStatus === "fallback_memory") && queueStatus === "ok";
+
+  res.status(isReady ? 200 : 503).json({
+    status: isReady ? "ready" : "unhealthy",
+    database: dbStatus,
+    redis: redisStatus,
+    queue: queueStatus,
+    timestamp: new Date().toISOString(),
   });
 });
 
