@@ -959,7 +959,7 @@ export async function holdSlot(req: AuthRequest, res: Response, next: NextFuncti
 
     if (redis && isRedisConnected()) {
       // SET hold:{doctor}:{slot} {userId} NX EX 300
-      const acquired = await redis.set(holdKey, holdVal, "NX", "EX", 300);
+      const acquired = await redis.set(holdKey, holdVal, "EX", 300, "NX");
       if (!acquired) {
         const currentHolder = await redis.get(holdKey);
         if (currentHolder && currentHolder.startsWith(`${userId}:`)) {
