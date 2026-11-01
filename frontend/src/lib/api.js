@@ -35,6 +35,10 @@ export const api = {
     request("/doctors/me", { method: "PATCH", body: payload, token }),
   setAvailability: (slots, token) =>
     request("/doctors/me/availability", { method: "PATCH", body: { slots }, token }),
+  addDoctorLeave: (leaveDate, reason, token) =>
+    request("/doctors/me/leaves", { method: "POST", body: { leaveDate, reason }, token }),
+  removeDoctorLeave: (date, token) =>
+    request(`/doctors/me/leaves/${date}`, { method: "DELETE", token }),
   getMyEarnings: (token) => request("/doctors/me/earnings", { token }),
 
   symptomSearch: (q, lat, lng) => {
@@ -49,17 +53,36 @@ export const api = {
   createAppointment: (payload, token) =>
     request("/appointments", { method: "POST", body: payload, token }),
   getMyAppointments: (token) => request("/appointments/mine", { token }),
-  cancelAppointment: (id, token) =>
-    request(`/appointments/${id}/cancel`, { method: "PATCH", token }),
+  cancelAppointment: (id, token, reason) =>
+    request(`/appointments/${id}/cancel`, { method: "PATCH", body: { reason }, token }),
   completeAppointment: (id, notes, token) =>
     request(`/appointments/${id}/complete`, { method: "PATCH", body: { notes }, token }),
+
+  // Prescriptions
+  createPrescription: (payload, token) =>
+    request("/prescriptions", { method: "POST", body: payload, token }),
+  getMyPrescriptions: (token) => request("/prescriptions/mine", { token }),
+  getPrescriptionByAppointment: (appointmentId, token) =>
+    request(`/prescriptions/appointment/${appointmentId}`, { token }),
+
+  // Notifications
+  getMyNotifications: (token) => request("/notifications", { token }),
+  markNotificationAsRead: (id, token) =>
+    request(`/notifications/${id}/read`, { method: "PATCH", token }),
+  markAllNotificationsAsRead: (token) =>
+    request("/notifications/read-all", { method: "PATCH", token }),
 
   createReview: (payload, token) =>
     request("/reviews", { method: "POST", body: payload, token }),
 
+  // Admin
   getPendingDoctors: (token) => request("/admin/doctors/pending", { token }),
   verifyDoctor: (id, approve, token) =>
     request(`/admin/doctors/${id}/verify`, { method: "PATCH", body: { approve }, token }),
-  getAllAppointments: (token) => request("/admin/appointments", { token }),
+  getAllAppointments: (params = {}, token) => {
+    const qs = new URLSearchParams(params).toString();
+    return request(`/admin/appointments${qs ? `?${qs}` : ""}`, { token });
+  },
   getStats: (token) => request("/admin/stats", { token }),
+  getAuditLogs: (token) => request("/admin/audit-logs", { token }),
 };

@@ -34,21 +34,16 @@ Default admin login (created by the seed script): `admin@medibook.com` / `admin1
 - **appointments** — the booking itself. `UNIQUE (doctor_id, slot_time)` guarantees the same doctor can never have two appointments at the same time, even under concurrent requests. `booking_ref` is a human-readable reference like `MB-20260803-004` (MediBook, appointment date, that doctor's 4th booking that day) — generated atomically alongside the booking, see `doctor_daily_counters` below.
 - **doctor_daily_counters** — tracks the last token number issued per doctor per day. `createAppointment` increments this with an atomic `ON CONFLICT ... DO UPDATE`, inside the same transaction as the appointment insert, so two concurrent bookings for the same doctor on the same day can never be issued the same reference number, and a failed booking never wastes a number (the whole transaction rolls back together).
 - **reviews** — a rating linked to a doctor and patient, only allowed after a completed appointment (enforced in the controller).
+- **prescriptions** — digital medical prescriptions with diagnosis, medication schedule (JSONB), and clinical advice.
+- **notifications** — real-time in-app alerts for booking confirmations, cancellations, and status changes.
+- **audit_logs** — immutable security and administrative audit trail.
+- **doctor_leaves** — scheduled doctor blackout / leave dates.
 - **symptom_specialty_map** — a static lookup table, not AI. Seeded once with common symptom-to-specialty pairs.
 
-## If you already have a database from before
+## System Architecture Enhancements
+- **Redis Caching Tier** (`src/cache/redis.ts`): Caches doctor profiles, slot availability, symptom lookups, and admin stats with instant write-through invalidation and in-memory fallback.
+- **Asynchronous Message Queue** (`src/queue/messageQueue.ts`): Producer-consumer model for background notifications, email dispatches, and audit trail records.
 
-Run this against your existing DB to add the new table/column without losing data:
-```sql
-ALTER TABLE appointments ADD COLUMN IF NOT EXISTS booking_ref VARCHAR(20) UNIQUE;
-
-CREATE TABLE IF NOT EXISTS doctor_daily_counters (
-  doctor_id UUID NOT NULL REFERENCES doctors(id) ON DELETE CASCADE,
-  booking_date DATE NOT NULL,
-  last_seq INT NOT NULL DEFAULT 0,
-  PRIMARY KEY (doctor_id, booking_date)
-);
-```
 Existing appointments booked before this change will have `booking_ref = NULL` — that's fine, they're historical records, only new bookings get a reference.
 
 ## Routes — what each one does

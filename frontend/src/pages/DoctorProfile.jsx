@@ -97,13 +97,22 @@ export default function DoctorProfile() {
 
   const dates = useMemo(() => upcomingDates(), []);
 
+  const isSelectedDateOnLeave = useMemo(() => {
+    if (!doctor || !selectedDate || !doctor.leaves) return false;
+    const y = selectedDate.getFullYear();
+    const m = String(selectedDate.getMonth() + 1).padStart(2, "0");
+    const d = String(selectedDate.getDate()).padStart(2, "0");
+    const dateStr = `${y}-${m}-${d}`;
+    return doctor.leaves.some((l) => String(l).slice(0, 10) === dateStr);
+  }, [doctor, selectedDate]);
+
   const slotsForSelectedDate = useMemo(() => {
-    if (!doctor || !selectedDate) return [];
+    if (!doctor || !selectedDate || isSelectedDateOnLeave) return [];
     const dayOfWeek = selectedDate.getDay();
     const avail = doctor.availability?.find((a) => a.day_of_week === dayOfWeek);
     if (!avail) return [];
     return generateSlotsForDay(avail.start_time, avail.end_time, avail.slot_duration_minutes || 15);
-  }, [doctor, selectedDate]);
+  }, [doctor, selectedDate, isSelectedDateOnLeave]);
 
   // Builds the exact wall-clock string the patient chose - e.g. picking
   // 9:00 AM produces "2026-08-02T09:00:00", literally. This deliberately
@@ -200,7 +209,11 @@ export default function DoctorProfile() {
         {selectedDate && (
           <div className="mt-5">
             {slotsForSelectedDate.length === 0 ? (
-              <p className="text-sm text-inkSoft">Doctor isn't available on this day.</p>
+              <p className="text-sm text-inkSoft">
+                {isSelectedDateOnLeave
+                  ? "Doctor is on scheduled leave / unavailable on this date."
+                  : "Doctor isn't available on this day."}
+              </p>
             ) : (
               <div className="grid grid-cols-3 gap-2 sm:grid-cols-4">
                 {slotsForSelectedDate.map((hhmm) => {

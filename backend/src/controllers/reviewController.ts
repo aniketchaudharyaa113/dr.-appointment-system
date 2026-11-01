@@ -2,6 +2,8 @@ import { Response, NextFunction } from "express";
 import { z } from "zod";
 import pool from "../db/pool";
 import { AuthRequest } from "../types";
+import { cacheDelPattern } from "../cache/redis";
+import { enqueueJob } from "../queue/messageQueue";
 
 const reviewSchema = z.object({
   doctorId: z.string().uuid("doctorId must be a valid id"),
@@ -35,6 +37,26 @@ export async function createReview(req: AuthRequest, res: Response, next: NextFu
        VALUES ($1, $2, $3, $4) RETURNING *`,
       [doctorId, patientId, rating, comment || null]
     );
+
+    // Invalidate doctor cache and list caches
+    await cacheDelPattern(`medibook:doctor:${doctorId}*`);
+    await cacheDelPattern("medibook:doctors:list:*");
+
+    // Fetch doctor user id and patient name
+    const [docUser, patientUser] = await Promise.all([
+      pool.query("SELECT user_id FROM doctors WHERE id = $1", [doctorId]),
+      pool.query("SELECT name FROM users WHERE id = $1", [patientId]),
+    ]);
+
+    if (docUser.rows.length > 0) {
+      await enqueueJob("NOTIFICATION", {
+        userId: docUser.rows[0].user_id,
+        type: "NEW_REVIEW",
+        title: "New Patient Review",
+        message: `${patientUser.rows[0]?.name || "A patient"} left you a ${rating}★ review: "${comment || "No comment"}"`,
+        link: "/doctor/dashboard",
+      });
+    }
 
     res.status(201).json(result.rows[0]);
   } catch (err) {

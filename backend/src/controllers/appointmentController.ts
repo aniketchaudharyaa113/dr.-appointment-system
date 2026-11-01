@@ -3,6 +3,8 @@ import pool from "../db/pool";
 import { AuthRequest } from "../types";
 import { getIO } from "../sockets/slotEvents";
 import { parseSlot, slotKey, nowInClinicTimezone } from "../utils/datetime";
+import { cacheDel, cacheDelPattern } from "../cache/redis";
+import { enqueueJob } from "../queue/messageQueue";
 
 // POST /appointments - book a slot
 // The UNIQUE(doctor_id, slot_time) constraint in the DB is what actually
@@ -26,11 +28,12 @@ export async function createAppointment(req: AuthRequest, res: Response, next: N
       return res.status(400).json({ error: "slotTime must be in the future" });
     }
 
-    // Doctor must exist and be verified - without this, an unverified or
-    // made-up doctorId either 500s on the FK constraint or silently books
-    // a doctor patients were never supposed to be able to find.
+    // Doctor must exist and be verified
     const doctorResult = await client.query(
-      `SELECT id, clinic_name, clinic_address FROM doctors WHERE id = $1 AND is_verified = true`,
+      `SELECT d.id, d.user_id, d.clinic_name, d.clinic_address, u.name AS doctor_name, u.email AS doctor_email
+       FROM doctors d
+       JOIN users u ON u.id = d.user_id
+       WHERE d.id = $1 AND d.is_verified = true`,
       [doctorId]
     );
     if (doctorResult.rows.length === 0) {
@@ -38,9 +41,21 @@ export async function createAppointment(req: AuthRequest, res: Response, next: N
     }
     const doctor = doctorResult.rows[0];
 
-    // The slot must fall inside a window the doctor actually offers -
-    // otherwise the "availability" schedule is purely decorative and a
-    // patient can book any arbitrary timestamp.
+    // Check doctor leaves / blackout dates
+    const pad = (n: number) => String(n).padStart(2, "0");
+    const bookingDate = `${slot.year}-${pad(slot.month)}-${pad(slot.day)}`;
+
+    const leaveCheck = await client.query(
+      `SELECT id, reason FROM doctor_leaves WHERE doctor_id = $1 AND leave_date = $2`,
+      [doctorId, bookingDate]
+    );
+    if (leaveCheck.rows.length > 0) {
+      return res.status(400).json({
+        error: `Doctor is unavailable on this date (${leaveCheck.rows[0].reason || "Doctor on leave"})`,
+      });
+    }
+
+    // The slot must fall inside a window the doctor actually offers
     const availabilityResult = await client.query(
       `SELECT id FROM availability
        WHERE doctor_id = $1 AND day_of_week = $2
@@ -54,11 +69,6 @@ export async function createAppointment(req: AuthRequest, res: Response, next: N
     await client.query("BEGIN");
 
     // Atomically issue the next daily token number for this doctor.
-    // ON CONFLICT ... DO UPDATE row-locks, so two concurrent bookings for
-    // the same doctor on the same day can never receive the same number -
-    // if this weren't atomic, two patients could both be told "token #4".
-    const pad = (n: number) => String(n).padStart(2, "0");
-    const bookingDate = `${slot.year}-${pad(slot.month)}-${pad(slot.day)}`;
     const counterResult = await client.query(
       `INSERT INTO doctor_daily_counters (doctor_id, booking_date, last_seq)
        VALUES ($1, $2, 1)
@@ -70,8 +80,7 @@ export async function createAppointment(req: AuthRequest, res: Response, next: N
     const seq = counterResult.rows[0].last_seq;
     const bookingRef = `MB-${bookingDate.replace(/-/g, "")}-${String(seq).padStart(3, "0")}`;
 
-    // Store the exact wall-clock string the patient chose - no Date object,
-    // no timezone math, so what goes in is exactly what comes back out.
+    // Store the exact wall-clock string the patient chose
     const storedSlotTime = `${bookingDate} ${slot.hhmmss}`;
 
     const result = await client.query(
@@ -87,18 +96,55 @@ export async function createAppointment(req: AuthRequest, res: Response, next: N
       ...result.rows[0],
       clinic_name: doctor.clinic_name,
       clinic_address: doctor.clinic_address,
+      doctor_name: doctor.doctor_name,
     };
 
-    // Tell every other patient looking at this doctor's page right now
-    // that this slot is gone, without them needing to refresh.
+    // Invalidate caches
+    await cacheDel(`medibook:slots:${doctorId}`);
+    await cacheDelPattern(`medibook:admin:*`);
+
+    // Real-time broadcast
     getIO().emit("slot-booked", { doctorId, slotTime: storedSlotTime });
+
+    // Fetch patient name for notifications
+    const patientQuery = await pool.query("SELECT name, email FROM users WHERE id = $1", [patientId]);
+    const patientName = patientQuery.rows[0]?.name || "Patient";
+    const patientEmail = patientQuery.rows[0]?.email;
+
+    // Asynchronously dispatch notifications and audit via Message Queue
+    await enqueueJob("NOTIFICATION", {
+      userId: patientId,
+      type: "BOOKING_CONFIRMED",
+      title: "Appointment Confirmed",
+      message: `Your appointment with ${doctor.doctor_name} is confirmed for ${bookingDate} at ${slot.hhmmss.slice(0, 5)}. Booking Ref: ${bookingRef}`,
+      link: "/my-appointments",
+    });
+
+    await enqueueJob("NOTIFICATION", {
+      userId: doctor.user_id,
+      type: "NEW_APPOINTMENT",
+      title: "New Booking Received",
+      message: `${patientName} booked a slot for ${bookingDate} at ${slot.hhmmss.slice(0, 5)} (${bookingRef}).`,
+      link: "/doctor/dashboard",
+    });
+
+    await enqueueJob("EMAIL_DISPATCH", {
+      recipient: patientEmail,
+      subject: `Appointment Confirmation - ${bookingRef}`,
+      details: { doctorName: doctor.doctor_name, bookingRef, slotTime: storedSlotTime },
+    });
+
+    await enqueueJob("AUDIT", {
+      actorId: patientId,
+      actorRole: "PATIENT",
+      action: "APPOINTMENT_BOOKED",
+      targetId: appointment.id,
+      details: { doctorId, bookingRef, slotTime: storedSlotTime },
+    });
 
     res.status(201).json(appointment);
   } catch (err: any) {
     await client.query("ROLLBACK");
-    // Postgres error code 23505 = unique_violation -> someone else grabbed
-    // this exact slot a moment earlier. errorMiddleware also handles this
-    // globally, but we catch it here too in case you want custom messaging.
     if (err.code === "23505") {
       return res.status(409).json({ error: "That slot was just booked by someone else. Please pick another." });
     }
@@ -119,20 +165,24 @@ export async function getMyAppointments(req: AuthRequest, res: Response, next: N
     if (role === "PATIENT") {
       query = `
         SELECT a.*, u.name AS doctor_name, d.specialty, d.clinic_name,
-               d.clinic_address, d.clinic_lat, d.clinic_lng
+               d.clinic_address, d.clinic_lat, d.clinic_lng,
+               p.id AS prescription_id
         FROM appointments a
         JOIN doctors d ON d.id = a.doctor_id
         JOIN users u ON u.id = d.user_id
+        LEFT JOIN prescriptions p ON p.appointment_id = a.id
         WHERE a.patient_id = $1
         ORDER BY a.slot_time DESC
       `;
       values = [userId];
     } else if (role === "DOCTOR") {
       query = `
-        SELECT a.*, u.name AS patient_name, u.phone AS patient_phone
+        SELECT a.*, u.name AS patient_name, u.phone AS patient_phone, u.email AS patient_email,
+               p.id AS prescription_id
         FROM appointments a
         JOIN doctors d ON d.id = a.doctor_id
         JOIN users u ON u.id = a.patient_id
+        LEFT JOIN prescriptions p ON p.appointment_id = a.id
         WHERE d.user_id = $1
         ORDER BY a.slot_time DESC
       `;
@@ -153,28 +203,85 @@ export async function cancelAppointment(req: AuthRequest, res: Response, next: N
   try {
     const { id } = req.params;
     const { id: userId, role } = req.user!;
+    const { reason } = req.body || {};
 
-    // Patients can only cancel their own; doctors can only cancel their own
-    // patients'; admins can cancel any appointment (e.g. if a doctor becomes
-    // unreachable and the platform needs to step in on their behalf).
-    let ownershipClause = "TRUE";
-    if (role === "PATIENT") ownershipClause = "patient_id = $2";
-    else if (role === "DOCTOR") ownershipClause = "doctor_id = (SELECT id FROM doctors WHERE user_id = $2)";
+    let query: string;
+    let values: any[];
 
-    const result = await pool.query(
-      `UPDATE appointments SET status = 'CANCELLED'
-       WHERE id = $1 AND ${ownershipClause}
-         AND status NOT IN ('CANCELLED', 'COMPLETED')
-       RETURNING *`,
-      [id, userId]
-    );
+    if (role === "PATIENT") {
+      query = `
+        UPDATE appointments SET status = 'CANCELLED'
+        WHERE id = $1 AND patient_id = $2
+          AND status NOT IN ('CANCELLED', 'COMPLETED')
+        RETURNING *
+      `;
+      values = [id, userId];
+    } else if (role === "DOCTOR") {
+      query = `
+        UPDATE appointments SET status = 'CANCELLED'
+        WHERE id = $1 AND doctor_id = (SELECT id FROM doctors WHERE user_id = $2)
+          AND status NOT IN ('CANCELLED', 'COMPLETED')
+        RETURNING *
+      `;
+      values = [id, userId];
+    } else if (role === "ADMIN") {
+      query = `
+        UPDATE appointments SET status = 'CANCELLED'
+        WHERE id = $1 AND status NOT IN ('CANCELLED', 'COMPLETED')
+        RETURNING *
+      `;
+      values = [id];
+    } else {
+      return res.status(403).json({ error: "Unauthorized" });
+    }
+
+    const result = await pool.query(query, values);
 
     if (result.rows.length === 0) {
       return res.status(404).json({ error: "Appointment not found, not yours, or already cancelled/completed" });
     }
 
     const appt = result.rows[0];
+
+    // Invalidate caches
+    await cacheDel(`medibook:slots:${appt.doctor_id}`);
+    await cacheDelPattern(`medibook:admin:*`);
+
+    // Emit live slot-freed socket event
     getIO().emit("slot-freed", { doctorId: appt.doctor_id, slotTime: appt.slot_time });
+
+    // Fetch doctor user id for notifications
+    const docQuery = await pool.query("SELECT user_id FROM doctors WHERE id = $1", [appt.doctor_id]);
+    const doctorUserId = docQuery.rows[0]?.user_id;
+
+    // Asynchronously notify via queue
+    if (role === "PATIENT") {
+      if (doctorUserId) {
+        await enqueueJob("NOTIFICATION", {
+          userId: doctorUserId,
+          type: "APPOINTMENT_CANCELLED",
+          title: "Appointment Cancelled",
+          message: `Appointment ${appt.booking_ref} was cancelled by the patient.`,
+          link: "/doctor/dashboard",
+        });
+      }
+    } else {
+      await enqueueJob("NOTIFICATION", {
+        userId: appt.patient_id,
+        type: "APPOINTMENT_CANCELLED",
+        title: "Appointment Cancelled",
+        message: `Your appointment ${appt.booking_ref} has been cancelled${reason ? `: ${reason}` : "."}`,
+        link: "/my-appointments",
+      });
+    }
+
+    await enqueueJob("AUDIT", {
+      actorId: userId,
+      actorRole: role,
+      action: "APPOINTMENT_CANCELLED",
+      targetId: id,
+      details: { bookingRef: appt.booking_ref, reason: reason || "No reason specified" },
+    });
 
     res.json(appt);
   } catch (err) {
@@ -201,7 +308,31 @@ export async function completeAppointment(req: AuthRequest, res: Response, next:
       return res.status(404).json({ error: "Appointment not found, not yours, or not in a completable state" });
     }
 
-    res.json(result.rows[0]);
+    const appt = result.rows[0];
+
+    // Invalidate caches
+    await cacheDel(`medibook:slots:${appt.doctor_id}`);
+    await cacheDelPattern(`medibook:doctor:${appt.doctor_id}*`);
+    await cacheDelPattern(`medibook:admin:*`);
+
+    // Notify patient
+    await enqueueJob("NOTIFICATION", {
+      userId: appt.patient_id,
+      type: "APPOINTMENT_COMPLETED",
+      title: "Appointment Completed",
+      message: `Your visit (${appt.booking_ref}) is marked completed. How was your experience? Leave a review!`,
+      link: "/my-appointments",
+    });
+
+    await enqueueJob("AUDIT", {
+      actorId: userId,
+      actorRole: "DOCTOR",
+      action: "APPOINTMENT_COMPLETED",
+      targetId: id,
+      details: { bookingRef: appt.booking_ref },
+    });
+
+    res.json(appt);
   } catch (err) {
     next(err);
   }

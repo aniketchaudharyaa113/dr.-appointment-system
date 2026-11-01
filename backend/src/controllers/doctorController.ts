@@ -4,6 +4,7 @@ import pool from "../db/pool";
 import { AuthRequest } from "../types";
 import { SPECIALTIES } from "../constants";
 import { nowInClinicTimezone } from "../utils/datetime";
+import { cacheGet, cacheSet, cacheDel, cacheDelPattern } from "../cache/redis";
 
 const emptyToUndefined = (val: unknown) => (val === "" ? undefined : val);
 
@@ -25,6 +26,12 @@ const profileUpdateSchema = z.object({
 export async function getDoctors(req: AuthRequest, res: Response, next: NextFunction) {
   try {
     const { specialty, city, maxFee } = req.query;
+
+    const cacheKey = `medibook:doctors:list:${specialty || ""}:${city || ""}:${maxFee || ""}`;
+    const cached = await cacheGet<any[]>(cacheKey);
+    if (cached) {
+      return res.json(cached);
+    }
 
     const conditions: string[] = ["d.is_verified = true"];
     const values: any[] = [];
@@ -49,26 +56,35 @@ export async function getDoctors(req: AuthRequest, res: Response, next: NextFunc
     const query = `
       SELECT d.id, d.specialty, d.qualifications, d.experience_years,
              d.clinic_name, d.clinic_address, d.consultation_fee, d.photo_url,
-             u.name
+             u.name,
+             ROUND(COALESCE(AVG(r.rating), 0), 1)::float AS avg_rating,
+             COUNT(r.id)::int AS review_count
       FROM doctors d
       JOIN users u ON u.id = d.user_id
+      LEFT JOIN reviews r ON r.doctor_id = d.id
       WHERE ${conditions.join(" AND ")}
+      GROUP BY d.id, u.name
       ORDER BY d.experience_years DESC
     `;
 
     const result = await pool.query(query, values);
+    await cacheSet(cacheKey, result.rows, 120); // 2 min cache
     res.json(result.rows);
   } catch (err) {
     next(err);
   }
 }
 
-// GET /doctors/:id - full profile including availability + reviews
-// Public route - only exposes verified doctors, same as the list endpoint.
-// (An unverified doctor's own profile is fetched via GET /doctors/me instead.)
+// GET /doctors/:id - full profile including availability, leaves + reviews
 export async function getDoctorById(req: AuthRequest, res: Response, next: NextFunction) {
   try {
     const { id } = req.params;
+
+    const cacheKey = `medibook:doctor:${id}`;
+    const cached = await cacheGet<any>(cacheKey);
+    if (cached) {
+      return res.json(cached);
+    }
 
     const doctorResult = await pool.query(
       `SELECT d.*, u.name
@@ -86,6 +102,13 @@ export async function getDoctorById(req: AuthRequest, res: Response, next: NextF
       [id]
     );
 
+    const leaves = await pool.query(
+      `SELECT leave_date, reason FROM doctor_leaves
+       WHERE doctor_id = $1 AND leave_date >= CURRENT_DATE
+       ORDER BY leave_date`,
+      [id]
+    );
+
     const reviews = await pool.query(
       `SELECT r.rating, r.comment, r.created_at, u.name AS patient_name
        FROM reviews r JOIN users u ON u.id = r.patient_id
@@ -93,18 +116,21 @@ export async function getDoctorById(req: AuthRequest, res: Response, next: NextF
       [id]
     );
 
-    res.json({
+    const payload = {
       ...doctorResult.rows[0],
       availability: availability.rows,
+      leaves: leaves.rows.map((l) => l.leave_date),
       reviews: reviews.rows,
-    });
+    };
+
+    await cacheSet(cacheKey, payload, 300); // 5 min cache
+    res.json(payload);
   } catch (err) {
     next(err);
   }
 }
 
-// GET /doctors/me - the logged-in doctor's own profile, regardless of verification status
-// (unlike GET /doctors/:id, which only returns verified doctors)
+// GET /doctors/me - the logged-in doctor's own profile
 export async function getMyProfile(req: AuthRequest, res: Response, next: NextFunction) {
   try {
     const userId = req.user!.id;
@@ -119,24 +145,42 @@ export async function getMyProfile(req: AuthRequest, res: Response, next: NextFu
       return res.status(404).json({ error: "Doctor profile not found" });
     }
 
+    const docId = doctorResult.rows[0].id;
+
     const availability = await pool.query(
       `SELECT day_of_week, start_time, end_time, slot_duration_minutes
        FROM availability WHERE doctor_id = $1 ORDER BY day_of_week`,
-      [doctorResult.rows[0].id]
+      [docId]
     );
 
-    res.json({ ...doctorResult.rows[0], availability: availability.rows });
+    const leaves = await pool.query(
+      `SELECT id, leave_date, reason FROM doctor_leaves
+       WHERE doctor_id = $1 AND leave_date >= CURRENT_DATE
+       ORDER BY leave_date`,
+      [docId]
+    );
+
+    res.json({
+      ...doctorResult.rows[0],
+      availability: availability.rows,
+      leaves: leaves.rows,
+    });
   } catch (err) {
     next(err);
   }
 }
 
-// GET /doctors/:id/booked-slots - public. Lets the frontend grey out
-// already-taken slots on page load instead of only discovering them
-// via a live socket event or a failed booking attempt.
+// GET /doctors/:id/booked-slots
 export async function getBookedSlots(req: AuthRequest, res: Response, next: NextFunction) {
   try {
     const { id } = req.params;
+    const cacheKey = `medibook:slots:${id}`;
+
+    const cached = await cacheGet<string[]>(cacheKey);
+    if (cached) {
+      return res.json(cached);
+    }
+
     const pad = (n: number) => String(n).padStart(2, "0");
     const now = nowInClinicTimezone();
     const nowAsNaiveTimestamp = `${now.year}-${pad(now.month)}-${pad(now.day)} ${now.hhmmss}`;
@@ -150,13 +194,15 @@ export async function getBookedSlots(req: AuthRequest, res: Response, next: Next
       [id, nowAsNaiveTimestamp]
     );
 
-    res.json(result.rows.map((r) => r.slot_time));
+    const slots = result.rows.map((r) => r.slot_time);
+    await cacheSet(cacheKey, slots, 60); // 1 min cache
+    res.json(slots);
   } catch (err) {
     next(err);
   }
 }
 
-// PATCH /doctors/me - the logged-in doctor fills out/updates their own profile
+// PATCH /doctors/me - update profile
 export async function updateMyProfile(req: AuthRequest, res: Response, next: NextFunction) {
   try {
     const userId = req.user!.id;
@@ -170,8 +216,6 @@ export async function updateMyProfile(req: AuthRequest, res: Response, next: Nex
       licenseNumber, photoUrl,
     } = parsed.data;
 
-    // pg rejects `undefined` params outright (it only accepts null for "no value"),
-    // so any field the frontend didn't send needs to be normalized here first.
     const values = [
       specialty ?? null, qualifications ?? null, experienceYears ?? null,
       clinicName ?? null, clinicAddress ?? null, clinicLat ?? null,
@@ -200,18 +244,22 @@ export async function updateMyProfile(req: AuthRequest, res: Response, next: Nex
       return res.status(404).json({ error: "Doctor profile not found" });
     }
 
+    const docId = result.rows[0].id;
+    await cacheDel(`medibook:doctor:${docId}`);
+    await cacheDelPattern("medibook:doctors:list:*");
+
     res.json(result.rows[0]);
   } catch (err) {
     next(err);
   }
 }
 
-// PATCH /doctors/me/availability - replace the doctor's weekly schedule
+// PATCH /doctors/me/availability
 export async function setAvailability(req: AuthRequest, res: Response, next: NextFunction) {
   const client = await pool.connect();
   try {
     const userId = req.user!.id;
-    const { slots } = req.body; // [{ dayOfWeek, startTime, endTime, slotDurationMinutes }]
+    const { slots } = req.body;
 
     const doctorResult = await client.query("SELECT id FROM doctors WHERE user_id = $1", [userId]);
     if (doctorResult.rows.length === 0) {
@@ -222,7 +270,7 @@ export async function setAvailability(req: AuthRequest, res: Response, next: Nex
     await client.query("BEGIN");
     await client.query("DELETE FROM availability WHERE doctor_id = $1", [doctorId]);
 
-    for (const slot of slots) {
+    for (const slot of slots || []) {
       await client.query(
         `INSERT INTO availability (doctor_id, day_of_week, start_time, end_time, slot_duration_minutes)
          VALUES ($1, $2, $3, $4, $5)`,
@@ -231,6 +279,10 @@ export async function setAvailability(req: AuthRequest, res: Response, next: Nex
     }
 
     await client.query("COMMIT");
+
+    await cacheDel(`medibook:doctor:${doctorId}`);
+    await cacheDel(`medibook:slots:${doctorId}`);
+
     res.json({ message: "Availability updated" });
   } catch (err) {
     await client.query("ROLLBACK");
@@ -240,7 +292,62 @@ export async function setAvailability(req: AuthRequest, res: Response, next: Nex
   }
 }
 
-// GET /doctors/me/earnings - sum of completed appointment fees
+// POST /doctors/me/leaves - add blackout date
+export async function addDoctorLeave(req: AuthRequest, res: Response, next: NextFunction) {
+  try {
+    const userId = req.user!.id;
+    const { leaveDate, reason } = req.body;
+
+    if (!leaveDate) {
+      return res.status(400).json({ error: "leaveDate is required (YYYY-MM-DD)" });
+    }
+
+    const docRes = await pool.query("SELECT id FROM doctors WHERE user_id = $1", [userId]);
+    if (docRes.rows.length === 0) return res.status(404).json({ error: "Doctor not found" });
+    const doctorId = docRes.rows[0].id;
+
+    const result = await pool.query(
+      `INSERT INTO doctor_leaves (doctor_id, leave_date, reason)
+       VALUES ($1, $2, $3)
+       ON CONFLICT (doctor_id, leave_date) DO UPDATE SET reason = $3
+       RETURNING *`,
+      [doctorId, leaveDate, reason || "On Leave"]
+    );
+
+    await cacheDel(`medibook:doctor:${doctorId}`);
+    await cacheDel(`medibook:slots:${doctorId}`);
+
+    res.status(201).json(result.rows[0]);
+  } catch (err) {
+    next(err);
+  }
+}
+
+// DELETE /doctors/me/leaves/:date
+export async function removeDoctorLeave(req: AuthRequest, res: Response, next: NextFunction) {
+  try {
+    const userId = req.user!.id;
+    const { date } = req.params;
+
+    const docRes = await pool.query("SELECT id FROM doctors WHERE user_id = $1", [userId]);
+    if (docRes.rows.length === 0) return res.status(404).json({ error: "Doctor not found" });
+    const doctorId = docRes.rows[0].id;
+
+    await pool.query(
+      "DELETE FROM doctor_leaves WHERE doctor_id = $1 AND leave_date = $2",
+      [doctorId, date]
+    );
+
+    await cacheDel(`medibook:doctor:${doctorId}`);
+    await cacheDel(`medibook:slots:${doctorId}`);
+
+    res.json({ message: "Leave date removed" });
+  } catch (err) {
+    next(err);
+  }
+}
+
+// GET /doctors/me/earnings
 export async function getMyEarnings(req: AuthRequest, res: Response, next: NextFunction) {
   try {
     const userId = req.user!.id;

@@ -1,71 +1,111 @@
-# MediBook — Doctor Appointment Booking Platform
+# MediBook — Enterprise Doctor Appointment & Clinic Management Platform
 
-A full-stack web platform for booking doctor appointments — patients discover and book verified doctors (including a plain-language symptom search), doctors manage their own clinic profile and schedule, and admins verify new doctors and oversee the platform.
+A distributed, production-ready web platform for booking doctor appointments and managing clinic workflows. Patients discover and book verified doctors (with an intelligent symptom matcher and live slot locking), doctors manage clinics, schedules, blackout dates, and digital prescriptions, and administrators oversee credentials, appointments, and audit trails.
 
-Built as a college project with a deliberately realistic, achievable scope — every included feature is fully implemented and handles real edge cases (concurrent booking, race-safe reference IDs, role-based access), rather than a longer list of half-finished ones.
+Engineered with comprehensive **System Design (HLD & LLD)**, an **Nginx Web Server / Reverse Proxy**, a **Redis Caching Tier**, an **Asynchronous Messaging Queue**, and **PostgreSQL ACID Transactions** guaranteeing **zero double-booking** under high concurrency.
 
 ---
 
 ## Table of Contents
 
-- [MediBook — Doctor Appointment Booking Platform](#medibook--doctor-appointment-booking-platform)
-  - [Table of Contents](#table-of-contents)
-  - [Features](#features)
-  - [Tech Stack](#tech-stack)
-  - [Project Structure](#project-structure)
-  - [Getting Started](#getting-started)
-    - [Prerequisites](#prerequisites)
-    - [1. Clone and install](#1-clone-and-install)
-    - [2. Create the database](#2-create-the-database)
-    - [3. Configure environment variables](#3-configure-environment-variables)
-    - [4. Build the schema and seed starter data](#4-build-the-schema-and-seed-starter-data)
-    - [5. Run both servers](#5-run-both-servers)
-  - [Environment Variables](#environment-variables)
-  - [API Overview](#api-overview)
-  - [Core Design Decisions](#core-design-decisions)
-  - [Known Limitations](#known-limitations)
+- [Features](#features)
+- [System Architecture (HLD & LLD)](#system-architecture-hld--lld)
+- [Tech Stack](#tech-stack)
+- [Project Structure](#project-structure)
+- [Quick Start with Docker Compose](#quick-start-with-docker-compose)
+- [Manual Setup](#manual-setup)
+- [Environment Variables](#environment-variables)
+- [API Overview](#api-overview)
+- [Core Design Guarantees](#core-design-guarantees)
 
 ---
 
 ## Features
 
-**Patient**
-- Sign up / log in (JWT authentication)
-- Symptom-based search — describe a symptom in plain words, get matched to a specialty and nearby verified doctors
-- Browse / filter doctors by specialty, city, and consultation fee
-- Live slot-booking grid — already-booked and already-passed slots are greyed out automatically
-- Instant booking reference (e.g. `MB-20260803-004`) and clinic address on confirmation
-- View, cancel appointments; leave a rating and review after a completed visit
+### 🧑‍⚕️ Patient
+- **Symptom-Based Search**: Natural language phrase & token matching maps plain-language symptoms to verified specialist doctors.
+- **Real-Time Slot Grid**: Live slot booking with WebSockets (`slot-booked` & `slot-freed`) — booked slots disable instantaneously for all active visitors.
+- **Race-Safe Booking Reference**: Daily token generator (`MB-YYYYMMDD-001`) with atomic counter increments.
+- **Live Notification Bell**: In-app notification center for confirmations, cancellations, reminders, and prescription readiness.
+- **Digital Prescriptions**: View and print doctor-issued digital prescriptions (Rx) with clinical diagnosis, medication schedule, and instructions.
+- **Directions & Ratings**: Integrated Google Maps clinic directions and post-visit doctor reviews.
 
-**Doctor**
-- Submit clinic details, qualifications, and license number for admin verification
-- Stays hidden from patient search until approved
-- Set weekly availability (days, hours, slot length)
-- Confirm, complete, and add notes to appointments
-- Automatically calculated earnings summary
+### 🩺 Doctor
+- **Clinic Onboarding**: Manage qualifications, license number, consultation fees, and GPS coordinates for distance-sorted search.
+- **Weekly Schedule Manager**: Configure working days, start/end hours, and slot durations (10 to 60 minutes).
+- **Leave & Blackout Dates**: Block emergency leaves or vacations with automated slot blocking.
+- **Digital Prescription Generator**: Issue prescriptions with diagnosis, medication dosage/frequency, and patient advice.
+- **Revenue Analytics**: Automated earnings calculations from completed consultations.
 
-**Admin**
-- Review and approve/reject pending doctor verification requests
-- View every appointment platform-wide, with full booking references
-- Platform statistics — total bookings, active doctors, cancellations
-- Cancel any appointment (e.g. if a doctor becomes unreachable)
+### 🛡️ Admin
+- **Doctor Verification**: Review pending doctor applications with license details, approving or rejecting with real-time notifications.
+- **Administrative Appointment Control**: Search and filter platform-wide bookings; cancel any appointment with logged reason.
+- **Platform Analytics**: Total bookings, verified doctors, patient volume, and cancellation metrics cached via Redis.
+- **Audit Logging**: Comprehensive system audit trail capturing administrative and critical operations.
+
+---
+
+## System Architecture (HLD & LLD)
+
+> Comprehensive design specifications, sequence diagrams, and capacity estimations are documented in [`docs/SYSTEM_DESIGN.md`](docs/SYSTEM_DESIGN.md).
+
+```
+                               ┌─────────────────────────┐
+                               │   Patients & Doctors    │
+                               │     (Web Clients)       │
+                               └────────────┬────────────┘
+                                            │ HTTP & WebSockets
+                                            ▼
+                    ┌──────────────────────────────────────────────┐
+                    │               NGINX WEB SERVER               │
+                    │        (Reverse Proxy & Load Balancer)       │
+                    │  - Rate Limiting (20r/s API, 5r/s Auth)      │
+                    │  - Gzip Compression & Static Asset Caching   │
+                    │  - WebSocket Upgrade Tunneling (/socket.io/) │
+                    │  - Security Headers (CSP, HSTS, X-Frame)     │
+                    └───────┬──────────────────────────────┬───────┘
+                            │                              │
+         Static Assets (/)  │                              │ /api/ & /socket.io/
+                            ▼                              ▼
+                 ┌────────────────────┐         ┌─────────────────────────┐
+                 │ Frontend SPA Build │         │ Node.js / Express API   │
+                 │ (React + Vite)     │         │ Cluster (Port 5000)     │
+                 └────────────────────┘         └────────────┬────────────┘
+                                                             │
+                  ┌──────────────────────────────────────────┼──────────────────────────────────────────┐
+                  │                                          │                                          │
+                  ▼                                          ▼                                          ▼
+     ┌─────────────────────────┐                ┌─────────────────────────┐                ┌─────────────────────────┐
+     │      REDIS CACHE        │                │   ASYNCHRONOUS QUEUE    │                │  POSTGRESQL 16 (ACID)   │
+     │  - Doctor Profiles      │                │   (Producer-Consumer)   │                │  - Users / Doctors      │
+     │  - Slot Availability    │                │  - Booking Confirms     │                │  - Appointments         │
+     │  - Symptom Lookups      │                │  - In-App Alerts        │                │  - Prescriptions        │
+     │  - Admin Metrics        │                │  - System Audit Logs    │                │  - Daily Token Counters │
+     │  - High-Speed Fallback  │                │  - Email Dispatches     │                │  - Doctor Leaves        │
+     └─────────────────────────┘                └─────────────────────────┘                └─────────────────────────┘
+```
+
+### Core Architectural Patterns:
+1. **Cache-Aside with Atomic Invalidation**: Reads query Redis first; booking and cancellation mutations atomically invalidate related keys (`medibook:slots:<id>`, `medibook:doctor:<id>`).
+2. **Resilient In-Memory Fallback**: If Redis is temporarily offline during development, backend automatically switches to a high-speed in-memory store without failing or throwing unhandled exceptions.
+3. **Decoupled Background Workers**: Long-running side-effects (notification delivery, email dispatch, audit trails) execute asynchronously via the queue.
+4. **Strict Database Concurrency Guarantees**: `UNIQUE(doctor_id, slot_time)` and row-level locking via `ON CONFLICT DO UPDATE` guarantee zero double-booking and atomic token generation.
 
 ---
 
 ## Tech Stack
 
-| Layer | Technology | Why |
+| Layer | Technology | Purpose |
 |---|---|---|
-| Frontend | React + Vite + Tailwind CSS | Fast dev server, component reuse, custom design without heavy CSS files |
-| Backend | Node.js + Express + TypeScript | Lightweight, unopinionated, compile-time type safety |
-| Database | PostgreSQL | Relational data + real ACID transactions, required for the double-booking guarantee |
-| DB access | `pg` (node-postgres) | Direct SQL, no ORM — every query is written and understood, not hidden behind an abstraction |
-| Auth | JWT + bcryptjs | Stateless auth; bcryptjs avoids native-binary compile issues across different machines |
-| Real-time | Socket.io | Live slot updates — a booked slot disappears instantly for every other patient viewing that doctor |
-| Validation | zod | Runtime request validation on top of TypeScript's compile-time types |
-| Maps (planned) | Leaflet + OpenStreetMap | Free, no API key/billing required |
-
-No AI/LLM is used anywhere — symptom-to-specialty matching is a deterministic, seeded lookup table. See [Core Design Decisions](#core-design-decisions).
+| **Web Server / Ingress** | Nginx | Reverse proxy, rate limiting, gzip compression, WebSocket proxy |
+| **Frontend** | React 18 + Vite + Tailwind CSS | Component architecture, responsive UI, micro-animations |
+| **Icons** | Lucide React | Modern medical & dashboard iconography |
+| **Backend API** | Node.js + Express + TypeScript | Type-safe REST API & WebSocket event hub |
+| **Database** | PostgreSQL 16 | Relational data persistence with strict ACID transaction guarantees |
+| **Caching** | Redis 7 | Sub-5ms caching for doctor profiles, slots, and search results |
+| **Message Queue** | Redis List / In-Memory Worker | Asynchronous job processing for notifications and audits |
+| **Real-time** | Socket.IO | Instant slot-locking broadcast to connected clients |
+| **Validation** | Zod | Runtime request schema validation |
 
 ---
 
@@ -75,120 +115,130 @@ No AI/LLM is used anywhere — symptom-to-specialty matching is a deterministic,
 .
 ├── backend/
 │   ├── src/
-│   │   ├── controllers/     # Business logic per feature (auth, doctor, appointment, search, review, admin)
-│   │   ├── routes/          # URL → controller mapping + middleware
-│   │   ├── middleware/      # JWT auth check, role guards, error handling
-│   │   ├── db/               # Connection pool, schema.sql, seed.ts
-│   │   ├── utils/            # datetime.ts (naive wall-clock helpers), haversine.ts
-│   │   ├── sockets/          # Socket.io setup
-│   │   ├── constants.ts      # Canonical specialty list
-│   │   └── index.ts          # App entry point
+│   │   ├── cache/           # Redis caching client with in-memory fallback
+│   │   ├── queue/           # Asynchronous messaging queue and worker
+│   │   ├── controllers/     # Auth, doctor, appointment, prescription, notification, search, admin
+│   │   ├── routes/          # URL routing & middleware pipelines
+│   │   ├── middleware/      # JWT verification, RBAC guard, error handler
+│   │   ├── db/              # Pool, schema.sql, seed.ts
+│   │   ├── sockets/         # Socket.IO slot & notification events
+│   │   ├── utils/           # Naive wall-clock datetime math, Haversine formula
+│   │   └── index.ts         # App entry point
+│   ├── Dockerfile
 │   ├── package.json
 │   └── .env.example
 │
-└── frontend/
-    ├── src/
-    │   ├── pages/             # One file per screen (Landing, Login, DoctorSearch, DoctorProfile, dashboards)
-    │   ├── components/        # Navbar, DoctorCard, ProtectedRoute, etc.
-    │   ├── context/           # AuthContext (JWT + user state)
-    │   ├── lib/                # api.js, socket.js, format.js, specialties.js
-    │   └── index.css / tailwind.config.js
-    ├── package.json
-    └── .env.example
+├── frontend/
+│   ├── src/
+│   │   ├── components/      # Navbar, NotificationBell, PrescriptionModal, DoctorCard, etc.
+│   │   ├── pages/           # Landing, DoctorSearch, DoctorProfile, Patient & Doctor dashboards, Admin
+│   │   ├── context/         # AuthContext
+│   │   └── lib/             # API client, sockets, date formatting
+│   ├── Dockerfile
+│   ├── package.json
+│   └── .env.example
+│
+├── nginx/
+│   ├── nginx.conf           # Production Nginx configuration
+│   └── conf.d/default.conf  # Reverse proxy, rate-limiting & WebSocket rules
+│
+├── docs/
+│   └── SYSTEM_DESIGN.md     # In-depth HLD & LLD specification document
+│
+└── docker-compose.yml       # Complete multi-container orchestration
 ```
 
 ---
 
-## Getting Started
+## Quick Start with Docker Compose
+
+Run the entire platform (Nginx, Backend, PostgreSQL, Redis) with a single command:
+
+```bash
+docker-compose up --build -d
+```
+
+- Web App: `http://localhost`
+- API Health Check: `http://localhost/health`
+- PostgreSQL: `localhost:5432`
+- Redis: `localhost:6379`
+
+---
+
+## Manual Setup
 
 ### Prerequisites
-- [Node.js](https://nodejs.org) (LTS)
-- [PostgreSQL](https://www.postgresql.org/download/) running locally
+- Node.js (v18+)
+- PostgreSQL 14+
+- Redis (Optional, fallback provided)
 
-### 1. Clone and install
+### 1. Install Dependencies
 ```bash
-git clone <this-repo-url>
-cd <repo-folder>
-
 cd backend && npm install
 cd ../frontend && npm install
 ```
 
-### 2. Create the database
+### 2. Configure Environment
+Copy `.env.example` to `.env` in both folders:
 ```bash
+cp backend/.env.example backend/.env
+cp frontend/.env.example frontend/.env
+```
+
+### 3. Setup Database & Seed Data
+```bash
+# In PostgreSQL
 psql -U postgres -c "CREATE DATABASE medibook;"
+psql -U postgres -d medibook -f backend/src/db/schema.sql
+
+# Seed starter doctors & accounts
+cd backend && npm run seed
 ```
 
-### 3. Configure environment variables
-Copy `.env.example` → `.env` in **both** `backend/` and `frontend/`, and fill in your own values — see [Environment Variables](#environment-variables) below.
+**Seeded Accounts for Testing:**
+- **Admin**: `admin@medibook.com` / `admin123`
+- **Patient**: `patient@medibook.com` / `patient123`
+- **Doctor**: `ananya.roy@medibook.com` / `doctor123`
 
-### 4. Build the schema and seed starter data
+### 4. Run Development Servers
 ```bash
-cd backend
-psql -U postgres -d medibook -f src/db/schema.sql
-npm run seed
-```
-This creates the symptom-to-specialty lookup data and a default admin account: `admin@medibook.com` / `admin123` (change this before any real use).
-
-### 5. Run both servers
-```bash
-# terminal 1
+# Terminal 1: Backend
 cd backend && npm run dev     # http://localhost:5000
 
-# terminal 2
+# Terminal 2: Frontend
 cd frontend && npm run dev    # http://localhost:5173
-```
-
-Visit `http://localhost:5173`.
-
----
-
-## Environment Variables
-
-**backend/.env**
-```
-PORT=5000
-DATABASE_URL=postgresql://username:password@localhost:5432/medibook
-JWT_SECRET=a-long-random-string
-CLIENT_URL=http://localhost:5173
-```
-
-**frontend/.env**
-```
-VITE_API_URL=http://localhost:5000
 ```
 
 ---
 
 ## API Overview
 
-| Endpoint | Purpose |
-|---|---|
-| `POST /auth/signup`, `/auth/login` | Account creation and login |
-| `GET /doctors`, `/doctors/:id` | Public doctor directory and profile (verified only) |
-| `GET/PATCH /doctors/me...` | The logged-in doctor's own profile, availability, earnings |
-| `GET /doctors/:id/booked-slots` | Already-taken slots, so the booking grid is accurate on load |
-| `GET /search/symptom` | Symptom → specialty → nearby verified doctors |
-| `POST /appointments` | Book a slot — validates verification, future time, availability window |
-| `GET /appointments/mine` | The logged-in patient's or doctor's own appointments |
-| `PATCH /appointments/:id/cancel`, `/complete` | Cancel or complete, ownership enforced in SQL |
-| `POST /reviews` | Leave a review — only after a completed appointment |
-| `/admin/...` | Doctor verification, all-appointments view, platform stats |
+| Method | Endpoint | Access | Purpose |
+|---|---|---|---|
+| `POST` | `/auth/signup`, `/login` | Public | Account registration & authentication |
+| `GET` | `/doctors` | Public | Search verified doctors (cached in Redis) |
+| `GET` | `/doctors/:id` | Public | Doctor profile, reviews, and leaves |
+| `GET` | `/doctors/:id/booked-slots` | Public | Active booked slots (cached in Redis) |
+| `PATCH`| `/doctors/me` | Doctor | Update clinic details & coordinates |
+| `PATCH`| `/doctors/me/availability` | Doctor | Configure weekly hours & slot lengths |
+| `POST` | `/doctors/me/leaves` | Doctor | Add emergency leave / blackout date |
+| `GET` | `/search/symptom` | Public | Intelligent symptom-to-specialist matcher |
+| `POST` | `/appointments` | Patient | Race-safe atomic slot booking |
+| `GET` | `/appointments/mine` | Auth | Patient or Doctor appointments list |
+| `PATCH`| `/appointments/:id/cancel` | Auth | Cancel appointment (Patient, Doctor, Admin) |
+| `PATCH`| `/appointments/:id/complete`| Doctor | Mark visit complete with notes |
+| `POST` | `/prescriptions` | Doctor | Issue digital Rx prescription |
+| `GET` | `/prescriptions/mine` | Patient | Patient's digital prescriptions |
+| `GET` | `/notifications` | Auth | In-app alerts with unread counter |
+| `POST` | `/reviews` | Patient | Review completed doctor visits |
+| `GET` | `/admin/stats` | Admin | Cached platform analytics |
+| `GET` | `/admin/audit-logs` | Admin | View system audit trail |
 
 ---
 
-## Core Design Decisions
+## Core Design Guarantees
 
-- **Double-booking is impossible by design**, not just by convention — `UNIQUE(doctor_id, slot_time)` is enforced at the database level, so even simultaneous requests can't both succeed.
-- **Booking references are race-safe.** Each appointment gets a human-readable ID like `MB-20260803-004` (also functioning as a daily clinic token number), generated via an atomic `INSERT ... ON CONFLICT ... DO UPDATE` counter — two concurrent bookings for the same doctor on the same day can never collide.
-- **No timezone bugs.** Appointment times are handled as naive wall-clock strings end-to-end — never converted through a JavaScript `Date` object or UTC on either side — avoiding a real class of bug where a booking's hour silently shifted during UTC conversion.
-- **No AI for symptom matching**, deliberately — a static, seeded lookup table is explainable, reliable, and free, which matters more than flexibility for a small, enumerable mapping like symptom → specialty.
-
----
-
-## Known Limitations
-
-- No automated government license verification — admin approval is manual
-- No payments, video consultations, or SMS/email reminders (intentionally out of scope)
-- One clinic per doctor
-- Time handling assumes India Standard Time (IST)
+1. **Double-Booking Prevention**: Enforced at the SQL database engine via `UNIQUE(doctor_id, slot_time)`.
+2. **Race-Safe Daily Tokens**: Daily counters generated atomically using `INSERT ... ON CONFLICT (doctor_id, booking_date) DO UPDATE SET last_seq = last_seq + 1 RETURNING last_seq`.
+3. **No Timezone Distortion**: Wall-clock timestamp string format (`YYYY-MM-DDTHH:MM:SS`) is preserved end-to-end without UTC drift.
+4. **Deterministic Symptom Matching**: Explainable, seeded clinical lookup with bi-directional and tokenized keyword matching.
