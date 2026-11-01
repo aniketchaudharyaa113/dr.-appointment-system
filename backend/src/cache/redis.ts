@@ -4,8 +4,9 @@ import dotenv from "dotenv";
 dotenv.config();
 
 const REDIS_URL = process.env.REDIS_URL || "redis://localhost:6379";
+const isDev = process.env.NODE_ENV === "development";
 
-// In-memory fallback cache when Redis is not available
+// In-memory fallback cache ONLY when NODE_ENV === 'development'
 class MemoryCache {
   private store = new Map<string, { value: string; expiry: number | null }>();
 
@@ -48,7 +49,7 @@ try {
     maxRetriesPerRequest: 1,
     retryStrategy: (times) => {
       if (times > 3) {
-        return null; // Stop retrying after 3 attempts in standalone dev
+        return null;
       }
       return Math.min(times * 100, 1000);
     },
@@ -60,15 +61,18 @@ try {
     console.log("[Cache] Redis connected successfully on", REDIS_URL);
   });
 
-  redisClient.on("error", (err) => {
+  redisClient.on("error", () => {
     redisAvailable = false;
-    // Don't spam console if Redis is offline during local dev
   });
 
   // Attempt non-blocking connection
   redisClient.connect().catch(() => {
     redisAvailable = false;
-    console.log("[Cache] Redis unavailable, using high-speed in-memory cache fallback.");
+    if (isDev) {
+      console.log("[Cache] Redis unavailable, using local development in-memory cache.");
+    } else {
+      console.log("[Cache] Redis unavailable. Operating in gracefully degraded mode directly against DB.");
+    }
   });
 } catch {
   redisAvailable = false;
@@ -87,55 +91,75 @@ export function getRedisClient(): Redis | null {
   return redisClient;
 }
 
-
 export async function cacheGet<T>(key: string): Promise<T | null> {
-  try {
-    if (redisAvailable && redisClient) {
+  if (redisAvailable && redisClient) {
+    try {
       const raw = await redisClient.get(key);
       if (raw) return JSON.parse(raw) as T;
+      return null;
+    } catch (err: any) {
+      console.warn(`[Cache] Redis read failure on "${key}": ${err?.message || err}. Serving from DB.`);
     }
-  } catch (err) {
-    // Fall back to memory cache on Redis error
+  } else if (!isDev) {
+    // Multi-instance / production mode: degrade to DB, avoid serving stale per-instance memory
+    return null;
   }
-  const memRaw = memoryCache.get(key);
-  return memRaw ? (JSON.parse(memRaw) as T) : null;
+
+  if (isDev) {
+    const memRaw = memoryCache.get(key);
+    return memRaw ? (JSON.parse(memRaw) as T) : null;
+  }
+
+  return null;
 }
 
 export async function cacheSet(key: string, value: any, ttlSeconds: number = 300): Promise<void> {
   const serialized = JSON.stringify(value);
-  try {
-    if (redisAvailable && redisClient) {
+  if (redisAvailable && redisClient) {
+    try {
       if (ttlSeconds > 0) {
         await redisClient.set(key, serialized, "EX", ttlSeconds);
       } else {
         await redisClient.set(key, serialized);
       }
+      return;
+    } catch (err: any) {
+      console.warn(`[Cache] Redis write failure on "${key}": ${err?.message || err}.`);
     }
-  } catch (err) {
-    // Redis error, fallback to memory
   }
-  memoryCache.set(key, serialized, ttlSeconds);
+
+  if (isDev) {
+    memoryCache.set(key, serialized, ttlSeconds);
+  }
 }
 
 export async function cacheDel(key: string): Promise<void> {
-  try {
-    if (redisAvailable && redisClient) {
+  if (redisAvailable && redisClient) {
+    try {
       await redisClient.del(key);
+    } catch (err: any) {
+      console.warn(`[Cache] Redis del failure on "${key}": ${err?.message || err}.`);
     }
-  } catch {}
-  memoryCache.del(key);
+  }
+  if (isDev) {
+    memoryCache.del(key);
+  }
 }
 
 export async function cacheDelPattern(pattern: string): Promise<void> {
-  try {
-    if (redisAvailable && redisClient) {
+  if (redisAvailable && redisClient) {
+    try {
       const keys = await redisClient.keys(pattern);
       if (keys.length > 0) {
         await redisClient.del(...keys);
       }
+    } catch (err: any) {
+      console.warn(`[Cache] Redis delPattern failure on "${pattern}": ${err?.message || err}.`);
     }
-  } catch {}
-  memoryCache.delPattern(pattern);
+  }
+  if (isDev) {
+    memoryCache.delPattern(pattern);
+  }
 }
 
 export default {
