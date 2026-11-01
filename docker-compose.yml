@@ -48,6 +48,27 @@ services:
       redis:
         condition: service_healthy
 
+  worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: medibook-worker
+    restart: unless-stopped
+    command: node dist/worker.js
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgrespassword}@postgres:5432/${POSTGRES_DB:-medibook}
+      JWT_SECRET: ${JWT_SECRET:-medibook-production-jwt-secret-key-32chars-min}
+      REDIS_URL: redis://redis:6379
+      NODE_ENV: production
+      SMTP_HOST: mailpit
+      SMTP_PORT: 1025
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+
   nginx:
     build:
       context: .
