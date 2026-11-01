@@ -18,12 +18,39 @@ import { initMessageQueue } from "./queue/messageQueue";
 import { isRedisConnected } from "./cache/redis";
 import pool from "./db/pool";
 
+import helmet from "helmet";
+
 dotenv.config();
+
+if (process.env.NODE_ENV === "production" && !process.env.CLIENT_URL) {
+  throw new Error("Fatal: CLIENT_URL environment variable must be configured in production");
+}
 
 const app = express();
 const httpServer = http.createServer(app);
 
-app.use(cors({ origin: process.env.CLIENT_URL || "*" }));
+app.use(helmet());
+
+const allowedOrigins = process.env.CLIENT_URL
+  ? process.env.CLIENT_URL.split(",").map((s) => s.trim())
+  : [];
+
+app.use(
+  cors({
+    origin: (origin, callback) => {
+      // allow requests with no origin (e.g. mobile apps, curl, or same-origin)
+      if (!origin) return callback(null, true);
+      if (process.env.NODE_ENV !== "production") {
+        return callback(null, true);
+      }
+      if (allowedOrigins.includes(origin)) {
+        return callback(null, true);
+      }
+      return callback(new Error(`CORS blocked: origin ${origin} not allowed`));
+    },
+    credentials: true,
+  })
+);
 app.use(express.json());
 
 app.get("/", (req, res) => {
