@@ -2,8 +2,8 @@ const BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:5000";
 
 // Every request goes through here, so token attachment and error
 // shaping only has to be written once.
-async function request(path, { method = "GET", body, token } = {}) {
-  const headers = { "Content-Type": "application/json" };
+async function request(path, { method = "GET", body, token, headers: customHeaders } = {}) {
+  const headers = { "Content-Type": "application/json", ...customHeaders };
   const currentToken = token || localStorage.getItem("medibook_token");
   if (currentToken) headers.Authorization = `Bearer ${currentToken}`;
 
@@ -85,8 +85,13 @@ export const api = {
     request("/appointments/release-hold", { method: "POST", body: payload, token }),
   getHeldSlots: (doctorId, token) =>
     request(`/doctors/${doctorId}/held-slots`, { token }),
-  createAppointment: (payload, token) =>
-    request("/appointments", { method: "POST", body: payload, token }),
+  createAppointment: (payload, token, idempotencyKey = (typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).substring(2))) =>
+    request("/appointments", {
+      method: "POST",
+      body: payload,
+      token,
+      headers: { "Idempotency-Key": idempotencyKey },
+    }),
   getMyAppointments: (token, params = {}) => {
     const qs = new URLSearchParams(params).toString();
     return request(`/appointments/mine${qs ? `?${qs}` : ""}`, { token });

@@ -21,6 +21,8 @@ import {
   releaseHoldSchema,
 } from "../schemas/validationSchemas";
 
+import { idempotency } from "../middleware/idempotency";
+
 const router = Router();
 
 router.post(
@@ -41,6 +43,7 @@ router.post(
   "/",
   verifyToken,
   requireRole("PATIENT"),
+  idempotency(),
   validate({ body: createAppointmentSchema }),
   createAppointment
 );
