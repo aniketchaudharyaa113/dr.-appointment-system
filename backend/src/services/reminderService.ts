@@ -5,7 +5,7 @@ export async function scheduleAppointmentReminders(
   client: { query: Function },
   appointment: { id: string; slot_time: string; patient_id: string; doctor_id: string }
 ): Promise<void> {
-  const slotDate = new Date(appointment.slot_time);
+  const slotDate = new Date(String(appointment.slot_time).replace(" ", "T"));
   const slotMs = slotDate.getTime();
   const now = Date.now();
 
