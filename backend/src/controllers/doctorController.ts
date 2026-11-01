@@ -394,9 +394,9 @@ export async function setAvailability(req: AuthRequest, res: Response, next: Nex
     await cacheDel(`medibook:slots:${doctorId}`);
     await cacheDelPattern(`medibook:admin:*`);
 
-    // Emit socket events, queue notifications and audits
+    // Emit socket events to doctor room, queue notifications and audits
     for (const appt of affectedAppointments) {
-      getIO().emit("slot-freed", { doctorId, slotTime: appt.slot_time });
+      getIO().to(`doctor:${doctorId}`).emit("slot-freed", { doctorId, slotTime: appt.slot_time });
 
       await enqueueJob("NOTIFICATION", {
         userId: appt.patient_id,
@@ -499,9 +499,9 @@ export async function addDoctorLeave(req: AuthRequest, res: Response, next: Next
     await cacheDel(`medibook:slots:${doctorId}`);
     await cacheDelPattern(`medibook:admin:*`);
 
-    // Emit socket events, notify patients, write audit entries
+    // Emit socket events to doctor room, notify patients, write audit entries
     for (const appt of affectedAppointments) {
-      getIO().emit("slot-freed", { doctorId, slotTime: appt.slot_time });
+      getIO().to(`doctor:${doctorId}`).emit("slot-freed", { doctorId, slotTime: appt.slot_time });
 
       await enqueueJob("NOTIFICATION", {
         userId: appt.patient_id,

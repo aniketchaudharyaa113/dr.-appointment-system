@@ -128,8 +128,8 @@ export async function createAppointment(req: AuthRequest, res: Response, next: N
     await cacheDel(`medibook:slots:${doctorId}`);
     await cacheDelPattern(`medibook:admin:*`);
 
-    // Real-time broadcast
-    getIO().emit("slot-booked", { doctorId, slotTime: storedSlotTime });
+    // Real-time broadcast to doctor room
+    getIO().to(`doctor:${doctorId}`).emit("slot-booked", { doctorId, slotTime: storedSlotTime });
 
     // Fetch patient name for notifications
     const patientQuery = await pool.query("SELECT name, email FROM users WHERE id = $1", [patientId]);
@@ -306,8 +306,8 @@ export async function cancelAppointment(req: AuthRequest, res: Response, next: N
     await cacheDel(`medibook:slots:${appt.doctor_id}`);
     await cacheDelPattern(`medibook:admin:*`);
 
-    // Emit live slot-freed socket event
-    getIO().emit("slot-freed", { doctorId: appt.doctor_id, slotTime: appt.slot_time });
+    // Emit live slot-freed socket event to doctor room
+    getIO().to(`doctor:${appt.doctor_id}`).emit("slot-freed", { doctorId: appt.doctor_id, slotTime: appt.slot_time });
 
     // Fetch doctor user id for notifications
     const docQuery = await pool.query("SELECT user_id FROM doctors WHERE id = $1", [appt.doctor_id]);
@@ -569,9 +569,9 @@ export async function rescheduleAppointment(req: AuthRequest, res: Response, nex
     await cacheDel(`medibook:slots:${doctorId}`);
     await cacheDelPattern(`medibook:admin:*`);
 
-    // Emit real-time events: old slot freed, new slot booked
-    getIO().emit("slot-freed", { doctorId, slotTime: oldAppt.slot_time });
-    getIO().emit("slot-booked", { doctorId, slotTime: storedNewSlotTime });
+    // Emit real-time events to doctor room: old slot freed, new slot booked
+    getIO().to(`doctor:${doctorId}`).emit("slot-freed", { doctorId, slotTime: oldAppt.slot_time });
+    getIO().to(`doctor:${doctorId}`).emit("slot-booked", { doctorId, slotTime: storedNewSlotTime });
 
     // Fetch patient info
     const patientQuery = await pool.query("SELECT name, email FROM users WHERE id = $1", [patientId]);

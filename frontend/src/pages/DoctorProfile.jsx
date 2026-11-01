@@ -72,9 +72,12 @@ export default function DoctorProfile() {
   }, [id]);
 
   // Live updates: when anyone books or cancels a slot for this doctor,
-  // reflect it immediately without the page needing a refresh.
+  // Live updates: join doctor's room to receive scoped slot events
   useEffect(() => {
+    if (!id) return;
     const socket = getSocket();
+    socket.emit("watch-doctor", id);
+
     function onBooked(payload) {
       if (payload.doctorId !== id) return;
       setTakenSlots((prev) => new Set(prev).add(slotToKey(payload.slotTime)));
@@ -90,6 +93,7 @@ export default function DoctorProfile() {
     socket.on("slot-booked", onBooked);
     socket.on("slot-freed", onFreed);
     return () => {
+      socket.emit("unwatch-doctor", id);
       socket.off("slot-booked", onBooked);
       socket.off("slot-freed", onFreed);
     };

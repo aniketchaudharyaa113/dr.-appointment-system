@@ -102,10 +102,11 @@ async function processJob(job: QueueJob): Promise<void> {
            RETURNING *`,
           [p.userId, p.type, p.title, p.message, p.link || null]
         );
-        // If socket server is initialized, push real-time notification
+        // If socket server is initialized, push real-time notification to user's isolated room
         try {
           const io = getIO();
-          io.emit(`notification:${p.userId}`, res.rows[0]);
+          io.to(`user:${p.userId}`).emit("notification", res.rows[0]);
+          io.to(`user:${p.userId}`).emit(`notification:${p.userId}`, res.rows[0]);
         } catch {}
         break;
       }

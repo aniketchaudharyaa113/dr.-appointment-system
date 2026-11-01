@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useEffect, useState } from "react";
+import { reconnectSocket } from "../lib/socket";
 
 const AuthContext = createContext(null);
 
@@ -13,6 +14,7 @@ export function AuthProvider({ children }) {
     if (savedToken && savedUser) {
       setToken(savedToken);
       setUser(JSON.parse(savedUser));
+      reconnectSocket(savedToken);
     }
     setLoading(false);
   }, []);
@@ -22,6 +24,7 @@ export function AuthProvider({ children }) {
     localStorage.setItem("medibook_user", JSON.stringify(newUser));
     setToken(newToken);
     setUser(newUser);
+    reconnectSocket(newToken);
   }
 
   function logout() {
@@ -29,7 +32,9 @@ export function AuthProvider({ children }) {
     localStorage.removeItem("medibook_user");
     setToken(null);
     setUser(null);
+    reconnectSocket(null);
   }
+
 
   return (
     <AuthContext.Provider value={{ user, token, loading, login, logout }}>

@@ -30,16 +30,22 @@ export default function NotificationBell() {
   useEffect(() => {
     if (!user || !user.id) return;
     const socket = getSocket();
-    const eventName = `notification:${user.id}`;
+    const legacyEvent = `notification:${user.id}`;
 
     function onNewNotification(item) {
-      setNotifications((prev) => [item, ...prev.slice(0, 29)]);
+      setNotifications((prev) => {
+        // avoid duplicate if received from both events
+        if (prev.some((n) => n.id === item.id)) return prev;
+        return [item, ...prev.slice(0, 29)];
+      });
       setUnreadCount((c) => c + 1);
     }
 
-    socket.on(eventName, onNewNotification);
+    socket.on("notification", onNewNotification);
+    socket.on(legacyEvent, onNewNotification);
     return () => {
-      socket.off(eventName, onNewNotification);
+      socket.off("notification", onNewNotification);
+      socket.off(legacyEvent, onNewNotification);
     };
   }, [user]);
 
