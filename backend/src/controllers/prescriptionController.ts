@@ -148,6 +148,14 @@ export async function getPrescriptionVersions(req: AuthRequest, res: Response, n
       [prescriptionId]
     );
 
+    await enqueueJob("AUDIT", {
+      actorId: userId,
+      actorRole: role,
+      action: "PRESCRIPTION_VERSIONS_VIEWED",
+      targetId: prescriptionId,
+      details: { count: versions.rows.length, viewedAt: new Date().toISOString() },
+    });
+
     res.json(versions.rows);
   } catch (err) {
     next(err);
@@ -188,7 +196,22 @@ export async function getPrescriptionByAppointment(req: AuthRequest, res: Respon
       return res.status(404).json({ error: "Prescription not found or access denied" });
     }
 
-    res.json(result.rows[0]);
+    const prescription = result.rows[0];
+
+    // Audit prescription read access
+    await enqueueJob("AUDIT", {
+      actorId: userId,
+      actorRole: role,
+      action: "PRESCRIPTION_VIEWED",
+      targetId: prescription.id,
+      details: {
+        appointmentId,
+        bookingRef: prescription.booking_ref,
+        viewedAt: new Date().toISOString(),
+      },
+    });
+
+    res.json(prescription);
   } catch (err) {
     next(err);
   }
@@ -211,6 +234,16 @@ export async function getMyPrescriptions(req: AuthRequest, res: Response, next: 
        ORDER BY p.created_at DESC`,
       [userId]
     );
+
+    if (result.rows.length > 0) {
+      await enqueueJob("AUDIT", {
+        actorId: userId,
+        actorRole: "PATIENT",
+        action: "PRESCRIPTION_LIST_VIEWED",
+        targetId: userId,
+        details: { count: result.rows.length, viewedAt: new Date().toISOString() },
+      });
+    }
 
     res.json(result.rows);
   } catch (err) {
