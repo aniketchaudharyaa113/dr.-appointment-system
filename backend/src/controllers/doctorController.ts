@@ -133,14 +133,15 @@ export async function getDoctors(req: AuthRequest, res: Response, next: NextFunc
       docList = docList.filter((d) => d.next_available_slot && d.next_available_slot.startsWith(todayStr));
     }
 
+    const finalTotal = availableToday === "true" ? docList.length : total;
     const responsePayload = {
       data: docList,
       pagination: {
-        total: docList.length,
+        total: finalTotal,
         page,
         limit,
-        totalPages: Math.ceil(docList.length / limit),
-        hasMore: offset + docList.length < total,
+        totalPages: Math.ceil(finalTotal / limit),
+        hasMore: offset + docList.length < finalTotal,
       },
     };
     await cacheSetWithVersion("doctors:list", version, cacheKey, responsePayload, 120); // 2 min cache
