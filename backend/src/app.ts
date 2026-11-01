@@ -19,11 +19,16 @@ import { isRedisConnected } from "./cache/redis";
 import pool from "./db/pool";
 
 import helmet from "helmet";
+import cookieParser from "cookie-parser";
 
 dotenv.config();
 
 if (process.env.NODE_ENV === "production" && !process.env.CLIENT_URL) {
   throw new Error("Fatal: CLIENT_URL environment variable must be configured in production");
+}
+
+if (!process.env.JWT_SECRET || process.env.JWT_SECRET.length < 32) {
+  throw new Error("Fatal: JWT_SECRET environment variable is missing or shorter than 32 characters");
 }
 
 const app = express();
@@ -52,6 +57,7 @@ app.use(
   })
 );
 app.use(express.json());
+app.use(cookieParser());
 
 app.get("/", (req, res) => {
   res.json({

@@ -4,13 +4,40 @@ const BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:5000";
 // shaping only has to be written once.
 async function request(path, { method = "GET", body, token } = {}) {
   const headers = { "Content-Type": "application/json" };
-  if (token) headers.Authorization = `Bearer ${token}`;
+  const currentToken = token || localStorage.getItem("medibook_token");
+  if (currentToken) headers.Authorization = `Bearer ${currentToken}`;
 
-  const res = await fetch(`${BASE_URL}${path}`, {
+  let res = await fetch(`${BASE_URL}${path}`, {
     method,
     headers,
+    credentials: "include",
     body: body ? JSON.stringify(body) : undefined,
   });
+
+  // Attempt automatic token refresh on 401 if not already an auth route
+  if (res.status === 401 && !path.startsWith("/auth/")) {
+    try {
+      const refreshRes = await fetch(`${BASE_URL}/auth/refresh`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+      });
+      if (refreshRes.ok) {
+        const refreshData = await refreshRes.json();
+        if (refreshData.token) {
+          localStorage.setItem("medibook_token", refreshData.token);
+          headers.Authorization = `Bearer ${refreshData.token}`;
+          // Retry original request with new access token
+          res = await fetch(`${BASE_URL}${path}`, {
+            method,
+            headers,
+            credentials: "include",
+            body: body ? JSON.stringify(body) : undefined,
+          });
+        }
+      }
+    } catch {}
+  }
 
   const data = await res.json().catch(() => ({}));
 
@@ -23,6 +50,8 @@ async function request(path, { method = "GET", body, token } = {}) {
 export const api = {
   signup: (payload) => request("/auth/signup", { method: "POST", body: payload }),
   login: (payload) => request("/auth/login", { method: "POST", body: payload }),
+  refreshToken: () => request("/auth/refresh", { method: "POST" }),
+  logout: () => request("/auth/logout", { method: "POST" }),
 
   getDoctors: (params = {}) => {
     const qs = new URLSearchParams(params).toString();

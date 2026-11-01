@@ -28,6 +28,7 @@ export function AuthProvider({ children }) {
   }
 
   function logout() {
+    api.logout().catch(() => {});
     localStorage.removeItem("medibook_token");
     localStorage.removeItem("medibook_user");
     setToken(null);

@@ -7,5 +7,9 @@ export default defineConfig({
     testTimeout: 60000,
     hookTimeout: 60000,
     include: ["tests/**/*.test.ts"],
+    env: {
+      JWT_SECRET: "test-jwt-secret-key-32-characters-minimum",
+      NODE_ENV: "test",
+    },
   },
 });
