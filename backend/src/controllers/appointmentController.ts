@@ -57,13 +57,35 @@ export async function createAppointment(req: AuthRequest, res: Response, next: N
 
     // The slot must fall inside a window the doctor actually offers
     const availabilityResult = await client.query(
-      `SELECT id FROM availability
+      `SELECT id, start_time, end_time, slot_duration_minutes FROM availability
        WHERE doctor_id = $1 AND day_of_week = $2
          AND start_time <= $3 AND end_time > $3`,
       [doctorId, slot.dayOfWeek, slot.hhmmss]
     );
     if (availabilityResult.rows.length === 0) {
       return res.status(400).json({ error: "That time is outside the doctor's available hours" });
+    }
+
+    const avail = availabilityResult.rows[0];
+    const timeToMinutes = (t: string) => {
+      const [h, m] = t.split(":").map(Number);
+      return h * 60 + m;
+    };
+    const slotMins = timeToMinutes(slot.hhmmss);
+    const startMins = timeToMinutes(avail.start_time);
+    const endMins = timeToMinutes(avail.end_time);
+    const duration = avail.slot_duration_minutes || 15;
+
+    if ((slotMins - startMins) % duration !== 0) {
+      return res.status(400).json({
+        error: `Slot time is not aligned to the doctor's ${duration}-minute schedule grid from start time (${avail.start_time.slice(0, 5)})`,
+      });
+    }
+
+    if (slotMins + duration > endMins) {
+      return res.status(400).json({
+        error: `Slot duration (${duration} mins) exceeds available window end (${avail.end_time.slice(0, 5)})`,
+      });
     }
 
     await client.query("BEGIN");
