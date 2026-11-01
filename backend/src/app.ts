@@ -12,6 +12,7 @@ import adminRoutes from "./routes/adminRoutes";
 import queueRoutes from "./routes/queueRoutes";
 import prescriptionRoutes from "./routes/prescriptionRoutes";
 import notificationRoutes from "./routes/notificationRoutes";
+import waitlistRoutes from "./routes/waitlistRoutes";
 
 import { notFound, errorHandler } from "./middleware/errorMiddleware";
 import { initSocket } from "./sockets/slotEvents";
@@ -129,6 +130,7 @@ app.use("/doctors", doctorRoutes);
 app.use("/appointments", appointmentRoutes);
 app.use("/prescriptions", prescriptionRoutes);
 app.use("/notifications", notificationRoutes);
+app.use("/waitlist", waitlistRoutes);
 app.use("/search", searchRoutes);
 app.use("/reviews", reviewRoutes);
 app.use("/admin/queues", queueRoutes);

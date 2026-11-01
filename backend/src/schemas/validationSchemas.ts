@@ -36,6 +36,12 @@ export const releaseHoldSchema = z.object({
   holdToken: z.string().optional(),
 });
 
+export const joinWaitlistSchema = z.object({
+  doctorId: z.string().uuid("Invalid doctorId UUID"),
+  slotDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "slotDate must be YYYY-MM-DD"),
+  slotTime: z.string().optional(),
+});
+
 export const cancelAppointmentSchema = z.object({
   reason: z.string().optional(),
 });

@@ -85,6 +85,12 @@ export const api = {
     request("/appointments/release-hold", { method: "POST", body: payload, token }),
   getHeldSlots: (doctorId, token) =>
     request(`/doctors/${doctorId}/held-slots`, { token }),
+  joinWaitlist: (payload, token) =>
+    request("/waitlist", { method: "POST", body: payload, token }),
+  getMyWaitlists: (token) =>
+    request("/waitlist/mine", { token }),
+  leaveWaitlist: (id, token) =>
+    request(`/waitlist/${id}`, { method: "DELETE", token }),
   createAppointment: (payload, token, idempotencyKey = (typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).substring(2))) =>
     request("/appointments", {
       method: "POST",

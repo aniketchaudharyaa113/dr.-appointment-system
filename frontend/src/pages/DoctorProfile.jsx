@@ -118,10 +118,23 @@ export default function DoctorProfile() {
       });
     }
 
+    function onWaitlistOffered(payload) {
+      if (payload.doctorId !== id) return;
+      const hhmm = payload.slotTime.slice(11, 16);
+      setMyHold({
+        slotTime: payload.slotTime,
+        holdToken: payload.holdToken,
+        secondsLeft: payload.claimExpiresIn || 600,
+        hhmm,
+      });
+      setBookingMsg("A slot opened up from the waitlist for you! You have 10 minutes to confirm your booking.");
+    }
+
     socket.on("slot-booked", onBooked);
     socket.on("slot-freed", onFreed);
     socket.on("slot-held", onHeld);
     socket.on("slot-hold-released", onHoldReleased);
+    socket.on("waitlist-offered", onWaitlistOffered);
 
     return () => {
       socket.emit("unwatch-doctor", id);
@@ -129,6 +142,7 @@ export default function DoctorProfile() {
       socket.off("slot-freed", onFreed);
       socket.off("slot-held", onHeld);
       socket.off("slot-hold-released", onHoldReleased);
+      socket.off("waitlist-offered", onWaitlistOffered);
     };
   }, [id, user]);
 
@@ -230,6 +244,24 @@ export default function DoctorProfile() {
     }
   }
 
+  const [waitlistJoined, setWaitlistJoined] = useState(false);
+
+  async function handleJoinWaitlist() {
+    if (!user) return navigate("/login");
+    if (!selectedDate) return;
+    const y = selectedDate.getFullYear();
+    const m = String(selectedDate.getMonth() + 1).padStart(2, "0");
+    const d = String(selectedDate.getDate()).padStart(2, "0");
+    const slotDate = `${y}-${m}-${d}`;
+    try {
+      await api.joinWaitlist({ doctorId: id, slotDate }, token);
+      setWaitlistJoined(true);
+      setBookingMsg("You have joined the waitlist for this date! We'll notify you if a slot opens.");
+    } catch (e) {
+      setBookingMsg(e.message);
+    }
+  }
+
   async function handleCancelHold() {
     if (!myHold) return;
     try {
@@ -292,11 +324,20 @@ export default function DoctorProfile() {
         {selectedDate && (
           <div className="mt-5">
             {slotsForSelectedDate.length === 0 ? (
-              <p className="text-sm text-inkSoft">
-                {isSelectedDateOnLeave
-                  ? "Doctor is on scheduled leave / unavailable on this date."
-                  : "Doctor isn't available on this day."}
-              </p>
+              <div className="space-y-3">
+                <p className="text-sm text-inkSoft">
+                  {isSelectedDateOnLeave
+                    ? "Doctor is on scheduled leave / unavailable on this date."
+                    : "Doctor isn't available on this day."}
+                </p>
+                <button
+                  onClick={handleJoinWaitlist}
+                  disabled={waitlistJoined}
+                  className="rounded-button border border-sage-500 bg-white px-3 py-1.5 text-xs font-semibold text-sage-700 hover:bg-sage-50 disabled:opacity-50"
+                >
+                  {waitlistJoined ? "Waitlist Joined ✓" : "Join Waitlist for this Date"}
+                </button>
+              </div>
             ) : (
               <div className="grid grid-cols-3 gap-2 sm:grid-cols-4">
                 {slotsForSelectedDate.map((hhmm) => {

@@ -7,6 +7,7 @@ import crypto from "crypto";
 import { cacheDel, cacheDelPattern, getRedisClient, isRedisConnected } from "../cache/redis";
 import { insertOutboxEvent } from "../queue/outboxRelay";
 import { scheduleAppointmentReminders, cancelAppointmentReminders } from "../services/reminderService";
+import { offerSlotToNextWaitlistedPatient } from "../services/waitlistService";
 
 // POST /appointments - book a slot
 // The UNIQUE(doctor_id, slot_time) constraint in the DB is what actually
@@ -461,6 +462,13 @@ export async function cancelAppointment(req: AuthRequest, res: Response, next: N
 
     // Cancel delayed reminders
     await cancelAppointmentReminders(id);
+
+    // Offer freed slot to waitlisted patient if one exists
+    try {
+      await offerSlotToNextWaitlistedPatient(appt.doctor_id, appt.slot_time);
+    } catch (e) {
+      console.warn("[Waitlist] Failed offering slot on cancellation:", e);
+    }
 
     res.json(appt);
   } catch (err) {
