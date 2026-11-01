@@ -18,8 +18,8 @@ COPY package*.json ./
 RUN npm ci --only=production
 
 COPY --from=builder /app/dist ./dist
-COPY --from=builder /app/src/db ./src/db
+COPY --from=builder /app/migrations ./migrations
 
 EXPOSE 5000
 
-CMD ["node", "dist/index.js"]
+CMD ["sh", "-c", "npx node-pg-migrate up && node dist/index.js"]
