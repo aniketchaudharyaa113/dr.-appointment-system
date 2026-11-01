@@ -15,7 +15,6 @@ export const loginRateLimiter = rateLimit({
     return `${ip}:${email}`;
   },
   store: new RedisStore({
-    // @ts-expect-error sendCommand signature in rate-limit-redis
     sendCommand: async (...args: string[]) => {
       const client = getRedisClient();
       if (!client) {
