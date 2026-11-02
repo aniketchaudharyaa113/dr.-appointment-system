@@ -1,8 +1,8 @@
 # MediBook Rebuild Progress Checklist
 
-## Current Status: Phase 4 (Payments & Double-Entry Ledger) in progress
+## Current Status: Phase 5 (Consultation: Video + Chat) in progress
 - **Branch**: `rebuild/nest-next`
-- **Active Phase**: Phase 4 (Payments & Double-Entry Ledger)
+- **Active Phase**: Phase 5 (Consultation: Video + Chat)
 
 ---
 
@@ -17,6 +17,7 @@
 - [x] Create `docs/plans/phase-1.md`
 - [x] Create `docs/plans/phase-2.md`
 - [x] Create `docs/plans/phase-3.md`
+- [x] Create `docs/plans/phase-4.md`
 
 ---
 
@@ -62,15 +63,16 @@
 ---
 
 ## Phase 4: Payments (Razorpay & Double-Entry Ledger)
-- [ ] `PaymentProvider` interface with `RazorpayProvider`, `FakeProvider`, and `StripeProvider` stub
-- [ ] Integer paise representation for all monetary values
-- [ ] Appointment payment state machine (`HELD -> PENDING_PAYMENT -> CAPTURED -> SETTLED | REFUNDED`)
-- [ ] Webhook inbox table with raw HMAC-SHA256 signature verification & `UNIQUE(provider_event_id)`
-- [ ] Worker processor with `SELECT ... FOR UPDATE` row locks and double-entry ledger balancing
-- [ ] Late-payment protection with automated refund fallback
-- [ ] Automated payment reconciliation job for stuck transactions
-- [ ] Phase 4 tests: 10x webhook replay flood, out-of-order events, invalid signature rejection, late payment auto-refund, reconciliation recovery, ledger zero-sum balance
-- [ ] Phase 4 verification gate & commit
+- [x] `PaymentProvider` interface with `RazorpayProvider`, `FakeProvider`, and `StripeProvider` stub
+- [x] Integer paise representation for all monetary values
+- [x] Appointment payment state machine (`HELD -> PENDING_PAYMENT -> CAPTURED -> SETTLED | REFUNDED`)
+- [x] Webhook inbox table with raw HMAC-SHA256 signature verification & `UNIQUE(provider_event_id)`
+- [x] Worker processor with `SELECT ... FOR UPDATE` row locks and double-entry ledger balancing
+- [x] Late-payment protection with automated refund fallback
+- [x] Automated payment reconciliation job for stuck transactions
+- [x] Phase 4 tests: 10x webhook replay flood, out-of-order events, invalid signature rejection, late payment auto-refund, reconciliation recovery, ledger zero-sum balance (27 tests PASSED)
+- [x] Phase 4 verification gate & commit
+
 
 ---
 

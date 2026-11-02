@@ -3,8 +3,16 @@ import { PlatformModule } from './modules/platform/platform.module';
 import { IdentityModule } from './modules/identity/identity.module';
 import { AdminModule } from './modules/admin/admin.module';
 import { SchedulingModule } from './modules/scheduling/scheduling.module';
+import { PaymentsModule } from './modules/payments/payments.module';
 
 @Module({
-  imports: [PlatformModule, IdentityModule, AdminModule, SchedulingModule],
+  imports: [
+    PlatformModule,
+    IdentityModule,
+    AdminModule,
+    SchedulingModule,
+    PaymentsModule,
+  ],
 })
 export class AppModule {}
+
