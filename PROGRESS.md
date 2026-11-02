@@ -1,8 +1,8 @@
 # MediBook Rebuild Progress Checklist
 
-### Current Status: Phase 6 (Ambulance Dispatch) in progress
+#### Current Status: Phase 7 (AI Service & Gateway) in progress
 - **Branch**: `rebuild/nest-next`
-- **Active Phase**: Phase 6 (Ambulance Dispatch)
+- **Active Phase**: Phase 7 (AI Service & Gateway)
 
 ---
 
@@ -19,6 +19,7 @@
 - [x] Create `docs/plans/phase-3.md`
 - [x] Create `docs/plans/phase-4.md`
 - [x] Create `docs/plans/phase-5.md`
+- [x] Create `docs/plans/phase-6.md`
 
 ---
 
@@ -87,19 +88,19 @@
 - [x] Phase 5 tests: join-window enforcement, non-participant rejection, message ordering, signed-URL scope (43 tests PASSED)
 - [x] Phase 5 verification gate & commit
 
-
 ---
 
 ## Phase 6: Ambulance Dispatch
-- [ ] Emergency ambulance screen with one-tap location and click-to-call 112/108
-- [ ] Ambulance driver telemetry stream to Redis GEO with heartbeat TTL eviction
-- [ ] Dispatch state machine (`REQUESTED -> OFFERED -> ACCEPTED -> EN_ROUTE -> ARRIVED -> COMPLETED`)
-- [ ] 20-second offer countdown with automatic cascading reassignment to next nearest driver
-- [ ] Atomic single-winner claim mechanism (Redis Lua / PostgreSQL conditional update)
-- [ ] Live tracking map over WebSockets with dynamic Haversine ETA calculation
-- [ ] Driver simulation script (`scripts/simulate-drivers.ts` moving 20 drivers around Kolkata)
-- [ ] Phase 6 tests: concurrent accept single-winner race, timeout reassignment chain, stale driver eviction, socket isolation
-- [ ] Phase 6 verification gate & commit
+- [x] Emergency ambulance screen with one-tap location and click-to-call 112/108
+- [x] Ambulance driver telemetry stream to Redis GEO with heartbeat TTL eviction
+- [x] Dispatch state machine (`REQUESTED -> OFFERED -> ACCEPTED -> EN_ROUTE -> ARRIVED -> COMPLETED`)
+- [x] 20-second offer countdown with automatic cascading reassignment to next nearest driver
+- [x] Atomic single-winner claim mechanism (Redis Lua / PostgreSQL conditional update)
+- [x] Live tracking map over WebSockets with dynamic Haversine ETA calculation
+- [x] Driver simulation script (`scripts/simulate-drivers.ts` moving 20 drivers around Kolkata)
+- [x] Phase 6 tests: concurrent accept single-winner race, timeout reassignment chain, stale driver eviction, socket isolation (50 tests PASSED)
+- [x] Phase 6 verification gate & commit
+
 
 ---
 

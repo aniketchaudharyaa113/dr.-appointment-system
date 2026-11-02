@@ -5,6 +5,7 @@ import { AdminModule } from './modules/admin/admin.module';
 import { SchedulingModule } from './modules/scheduling/scheduling.module';
 import { PaymentsModule } from './modules/payments/payments.module';
 import { ConsultationModule } from './modules/consultation/consultation.module';
+import { AmbulanceModule } from './modules/ambulance/ambulance.module';
 
 @Module({
   imports: [
@@ -14,8 +15,10 @@ import { ConsultationModule } from './modules/consultation/consultation.module';
     SchedulingModule,
     PaymentsModule,
     ConsultationModule,
+    AmbulanceModule,
   ],
 })
 export class AppModule {}
+
 
 
