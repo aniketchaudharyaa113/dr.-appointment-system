@@ -1,8 +1,8 @@
 # MediBook Rebuild Progress Checklist
 
-## Current Status: Phase 3 (Scheduling Core) in progress
+## Current Status: Phase 4 (Payments & Double-Entry Ledger) in progress
 - **Branch**: `rebuild/nest-next`
-- **Active Phase**: Phase 3 (Scheduling Core)
+- **Active Phase**: Phase 4 (Payments & Double-Entry Ledger)
 
 ---
 
@@ -49,15 +49,15 @@
 ---
 
 ## Phase 3: Scheduling Core
-- [ ] Doctor availability models, slot generation grid, timezone rules (`Asia/Kolkata`)
-- [ ] Slot hold mechanism (Redis 10-minute hold leases with WebSocket events)
-- [ ] Atomic booking with partial unique index `(doctor_id, slot_time)`
-- [ ] Atomic daily reference generator (`MB-YYYYMMDD-NNN`)
-- [ ] Doctor leave management with dry-run conflict check & cascade cancellation
-- [ ] Waitlist management with automated 15-minute claim offer chain
-- [ ] pg_trgm symptom-to-specialty search and multi-facet doctor filtering
-- [ ] Phase 3 tests: 50-parallel booking race, cancel-then-rebook, slot-grid, leave cascade, hold expiry, idempotency replay, waitlist offer chain
-- [ ] Phase 3 verification gate & commit
+- [x] Doctor availability models, slot generation grid, timezone rules (`Asia/Kolkata`)
+- [x] Slot hold mechanism (Redis 10-minute hold leases with WebSocket events)
+- [x] Atomic booking with partial unique index `(doctor_id, slot_time)`
+- [x] Atomic daily reference generator (`MB-YYYYMMDD-NNN`)
+- [x] Doctor leave management with dry-run conflict check & cascade cancellation
+- [x] Waitlist management with automated 15-minute claim offer chain
+- [x] pg_trgm symptom-to-specialty search and multi-facet doctor filtering
+- [x] Phase 3 tests: 50-parallel booking race, cancel-then-rebook, slot-grid, leave cascade, hold expiry, idempotency replay, waitlist offer chain (19 tests PASSED)
+- [x] Phase 3 verification gate & commit
 
 ---
 
