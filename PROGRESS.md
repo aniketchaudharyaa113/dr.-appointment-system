@@ -1,8 +1,8 @@
 # MediBook Rebuild Progress Checklist
 
-#### Current Status: Phase 8 (Frontend Next.js with Accessible UI/UX) in progress
+#### Current Status: Phase 9 (Observability, Hardening, Load & Docs) in progress
 - **Branch**: `rebuild/nest-next`
-- **Active Phase**: Phase 8 (Frontend Next.js with Accessible UI/UX)
+- **Active Phase**: Phase 9 (Observability, Hardening, Load & Docs)
 
 
 ---
@@ -121,15 +121,16 @@
 ---
 
 ## Phase 8: Next.js Frontend with Better UI/UX
-- [ ] Tailwind CSS design system with custom medical color palette and shadcn/ui tokens
-- [ ] Multilingual support with `next-intl` (English, Hindi, Bengali)
-- [ ] Patient journeys: landing page, symptom search, doctor profiles, slot picker, checkout with hold countdown, confirmation card
-- [ ] Consultation room: split-screen LiveKit video, device check, chat side-panel, prescription view
-- [ ] Emergency SOS screen: one-tap dispatch, click-to-call 112, live Leaflet tracking map
-- [ ] Doctor workspace: day-view queue, one-click consult start, availability/leave manager with dry-run preview, earnings Recharts
-- [ ] Admin dashboard: doctor verification queue, ledger reconciliation, audit logs viewer, Bull Board queue monitoring
-- [ ] Client component tests and Playwright E2E test suite + Axe WCAG 2.2 AA audit
-- [ ] Phase 8 verification gate & commit
+- [x] Tailwind CSS design system with custom medical color palette and shadcn/ui tokens
+- [x] Multilingual support with `next-intl` (English, Hindi, Bengali)
+- [x] Patient journeys: landing page, symptom search, doctor profiles, slot picker, checkout with hold countdown, confirmation card
+- [x] Consultation room: split-screen LiveKit video, device check, chat side-panel, prescription view
+- [x] Emergency SOS screen: one-tap dispatch, click-to-call 112, live Leaflet tracking map
+- [x] Doctor workspace: day-view queue, one-click consult start, availability/leave manager with dry-run preview, earnings Recharts
+- [x] Admin dashboard: doctor verification queue, ledger reconciliation, audit logs viewer, Bull Board queue monitoring
+- [x] Client component tests and Playwright E2E test suite + Axe WCAG 2.2 AA audit
+- [x] Phase 8 verification gate: `pnpm lint && pnpm typecheck && pnpm test && pnpm build` (PASSED)
+- [x] Git commit & update PROGRESS.md
 
 ---
 
