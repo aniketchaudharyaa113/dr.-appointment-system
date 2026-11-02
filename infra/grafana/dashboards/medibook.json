@@ -1,0 +1,76 @@
+{
+  "annotations": { "list": [] },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 0,
+  "id": null,
+  "links": [],
+  "liveNow": false,
+  "panels": [
+    {
+      "title": "HTTP Request Volume by Endpoint & Status",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "targets": [
+        {
+          "expr": "sum by (path, status_code) (rate(medibook_http_requests_total[1m]))",
+          "legendFormat": "{{path}} ({{status_code}})"
+        }
+      ]
+    },
+    {
+      "title": "Double-Booking Prevention Races & Rejections",
+      "type": "stat",
+      "gridPos": { "h": 8, "w": 6, "x": 12, "y": 0 },
+      "targets": [
+        {
+          "expr": "sum(increase(medibook_booking_conflicts_total[5m]))",
+          "legendFormat": "Slot Conflicts Rejected"
+        }
+      ]
+    },
+    {
+      "title": "Double-Entry Ledger Invariant Status",
+      "type": "stat",
+      "gridPos": { "h": 8, "w": 6, "x": 18, "y": 0 },
+      "targets": [
+        {
+          "expr": "sum(medibook_ledger_zero_sum_checks_total{status='balanced'})",
+          "legendFormat": "100% Balanced Zero-Sum"
+        }
+      ]
+    },
+    {
+      "title": "Payment Webhooks Lag & Processing Outcomes",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "targets": [
+        {
+          "expr": "sum by (outcome) (rate(medibook_payment_outcomes_total[1m]))",
+          "legendFormat": "{{outcome}}"
+        }
+      ]
+    },
+    {
+      "title": "Ambulance Emergency Dispatch Time (P95 Latency)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(medibook_ambulance_dispatch_seconds_bucket[5m])) by (le))",
+          "legendFormat": "P95 Dispatch Seconds"
+        }
+      ]
+    }
+  ],
+  "refresh": "5s",
+  "schemaVersion": 38,
+  "style": "dark",
+  "tags": ["medibook", "telehealth", "ems"],
+  "time": { "from": "now-1h", "to": "now" },
+  "timepicker": {},
+  "timezone": "Asia/Kolkata",
+  "title": "MediBook Telehealth & EMS Platform Observability",
+  "uid": "medibook-main-dash",
+  "version": 1
+}
