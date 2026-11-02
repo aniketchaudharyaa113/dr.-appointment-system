@@ -1,0 +1,447 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  PATIENT
+  DOCTOR
+  ADMIN
+  DRIVER
+}
+
+enum DoctorVerificationStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum ConsultationMode {
+  IN_CLINIC
+  VIDEO
+  CHAT
+}
+
+enum AppointmentStatus {
+  HELD
+  PENDING_PAYMENT
+  CONFIRMED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+  NO_SHOW
+  REFUNDED
+}
+
+enum PaymentStatus {
+  INITIATED
+  PENDING
+  CAPTURED
+  FAILED
+  REFUNDED
+}
+
+enum RefundStatus {
+  PENDING
+  PROCESSED
+  FAILED
+}
+
+enum ConsultationSessionStatus {
+  SCHEDULED
+  WAITING
+  LIVE
+  ENDED
+}
+
+enum AmbulanceRequestStatus {
+  REQUESTED
+  OFFERED
+  ACCEPTED
+  EN_ROUTE
+  ARRIVED
+  COMPLETED
+  CANCELLED
+  EXPIRED
+}
+
+enum WaitlistStatus {
+  WAITING
+  OFFERED
+  CLAIMED
+  EXPIRED
+  CANCELLED
+}
+
+enum LedgerAccountType {
+  PATIENT_RECEIVABLE
+  ESCROW
+  DOCTOR_PAYABLE
+  PLATFORM_REVENUE
+}
+
+enum LedgerEntryType {
+  DEBIT
+  CREDIT
+}
+
+model User {
+  id           String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  email        String         @unique @db.VarChar(255)
+  passwordHash String         @map("password_hash") @db.VarChar(255)
+  name         String         @db.VarChar(255)
+  phone        String?        @db.VarChar(20)
+  role         UserRole       @default(PATIENT)
+  isActive     Boolean        @default(true) @map("is_active")
+  createdAt    DateTime       @default(now()) @map("created_at")
+  updatedAt    DateTime       @default(now()) @updatedAt @map("updated_at")
+
+  doctorProfile           Doctor?
+  driverProfile           AmbulanceDriverProfile?
+  refreshTokens           RefreshToken[]
+  patientAppointments     Appointment[]            @relation("PatientAppointments")
+  prescriptionsReceived   Prescription[]           @relation("PatientPrescriptions")
+  reviewsGiven            Review[]
+  waitlists               Waitlist[]
+  ambulanceRequests       AmbulanceRequest[]       @relation("PatientAmbulanceRequests")
+  auditLogs               AuditLog[]
+
+  @@map("users")
+}
+
+model RefreshToken {
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId     String   @map("user_id") @db.Uuid
+  tokenHash  String   @map("token_hash") @db.VarChar(255)
+  expiresAt  DateTime @map("expires_at")
+  isRevoked  Boolean  @default(false) @map("is_revoked")
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, isRevoked])
+  @@map("refresh_tokens")
+}
+
+model Doctor {
+  id                   String                   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId               String                   @unique @map("user_id") @db.Uuid
+  specialty            String                   @db.VarChar(100)
+  qualifications       String?                  @db.VarChar(255)
+  experienceYears      Int                      @default(0) @map("experience_years")
+  clinicName           String?                  @map("clinic_name") @db.VarChar(255)
+  clinicAddress        String?                  @map("clinic_address") @db.VarChar(255)
+  clinicLat            Decimal?                 @map("clinic_lat") @db.Decimal(9, 6)
+  clinicLng            Decimal?                 @map("clinic_lng") @db.Decimal(9, 6)
+  consultationFeePaise Int                      @default(0) @map("consultation_fee_paise")
+  licenseNumber        String?                  @map("license_number") @db.VarChar(100)
+  isVerified           Boolean                  @default(false) @map("is_verified")
+  verificationStatus   DoctorVerificationStatus @default(PENDING) @map("verification_status")
+  photoUrl             String?                  @map("photo_url") @db.VarChar(255)
+
+  user           User                    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  availability   Availability[]
+  leaves         DoctorLeave[]
+  dailyCounters  DoctorDailyCounter[]
+  appointments   Appointment[]           @relation("DoctorAppointments")
+  reviews        Review[]
+  prescriptions  Prescription[]          @relation("DoctorPrescriptions")
+  waitlists      Waitlist[]
+
+  @@index([specialty, isVerified])
+  @@map("doctors")
+}
+
+model Availability {
+  id                  String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  doctorId            String   @map("doctor_id") @db.Uuid
+  dayOfWeek           Int      @map("day_of_week") // 0=Sunday, 6=Saturday
+  startTime           String   @map("start_time") @db.VarChar(8) // HH:mm:ss
+  endTime             String   @map("end_time") @db.VarChar(8) // HH:mm:ss
+  slotDurationMinutes Int      @default(15) @map("slot_duration_minutes")
+
+  doctor Doctor @relation(fields: [doctorId], references: [id], onDelete: Cascade)
+
+  @@index([doctorId, dayOfWeek])
+  @@map("availability")
+}
+
+model DoctorLeave {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  doctorId  String   @map("doctor_id") @db.Uuid
+  startDate DateTime @map("start_date") @db.Date
+  endDate   DateTime @map("end_date") @db.Date
+  reason    String?  @db.VarChar(255)
+  createdAt DateTime @default(now()) @map("created_at")
+
+  doctor Doctor @relation(fields: [doctorId], references: [id], onDelete: Cascade)
+
+  @@index([doctorId, startDate, endDate])
+  @@map("doctor_leaves")
+}
+
+model DoctorDailyCounter {
+  doctorId    String   @map("doctor_id") @db.Uuid
+  bookingDate DateTime @map("booking_date") @db.Date
+  lastSeq     Int      @default(0) @map("last_seq")
+
+  doctor Doctor @relation(fields: [doctorId], references: [id], onDelete: Cascade)
+
+  @@id([doctorId, bookingDate])
+  @@map("doctor_daily_counters")
+}
+
+model Appointment {
+  id                 String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  bookingRef         String?           @unique @map("booking_ref") @db.VarChar(20)
+  patientId          String            @map("patient_id") @db.Uuid
+  doctorId           String            @map("doctor_id") @db.Uuid
+  slotTime           DateTime          @map("slot_time")
+  consultationMode   ConsultationMode  @default(VIDEO) @map("consultation_mode")
+  status             AppointmentStatus @default(PENDING_PAYMENT)
+  cancellationReason String?           @map("cancellation_reason")
+  notes              String?
+  createdAt          DateTime          @default(now()) @map("created_at")
+  updatedAt          DateTime          @default(now()) @updatedAt @map("updated_at")
+
+  patient      User                  @relation("PatientAppointments", fields: [patientId], references: [id], onDelete: Cascade)
+  doctor       Doctor                @relation("DoctorAppointments", fields: [doctorId], references: [id], onDelete: Cascade)
+  payment      Payment?
+  consultation ConsultationSession?
+  prescription Prescription?
+  review       Review?
+
+  @@index([patientId, status])
+  @@index([doctorId, slotTime])
+  @@map("appointments")
+}
+
+model Payment {
+  id                String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  appointmentId     String        @unique @map("appointment_id") @db.Uuid
+  provider          String        @default("RAZORPAY") @db.VarChar(50)
+  providerOrderId   String        @unique @map("provider_order_id") @db.VarChar(100)
+  providerPaymentId String?       @map("provider_payment_id") @db.VarChar(100)
+  amountPaise       Int           @map("amount_paise")
+  currency          String        @default("INR") @db.VarChar(10)
+  status            PaymentStatus @default(INITIATED)
+  idempotencyKey    String        @unique @map("idempotency_key") @db.VarChar(100)
+  createdAt         DateTime      @default(now()) @map("created_at")
+  updatedAt         DateTime      @default(now()) @updatedAt @map("updated_at")
+
+  appointment Appointment    @relation(fields: [appointmentId], references: [id], onDelete: Cascade)
+  refunds     Refund[]
+  ledgers     LedgerEntry[]
+
+  @@map("payments")
+}
+
+model PaymentEvent {
+  id              String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  providerEventId String    @unique @map("provider_event_id") @db.VarChar(150)
+  eventType       String    @map("event_type") @db.VarChar(100)
+  payload         Json
+  status          String    @default("PENDING") @db.VarChar(20)
+  createdAt       DateTime  @default(now()) @map("created_at")
+  processedAt     DateTime? @map("processed_at")
+
+  @@index([status, createdAt])
+  @@map("payment_events")
+}
+
+model Refund {
+  id               String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  paymentId        String       @map("payment_id") @db.Uuid
+  providerRefundId String?      @map("provider_refund_id") @db.VarChar(100)
+  amountPaise      Int          @map("amount_paise")
+  reason           String?      @db.VarChar(255)
+  status           RefundStatus @default(PENDING)
+  createdAt        DateTime     @default(now()) @map("created_at")
+
+  payment Payment @relation(fields: [paymentId], references: [id], onDelete: Cascade)
+
+  @@map("refunds")
+}
+
+model LedgerEntry {
+  id            String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  transactionId String            @map("transaction_id") @db.Uuid
+  accountType   LedgerAccountType @map("account_type")
+  entryType     LedgerEntryType   @map("entry_type")
+  amountPaise   Int               @map("amount_paise")
+  description   String?           @db.VarChar(255)
+  createdAt     DateTime          @default(now()) @map("created_at")
+
+  payment Payment? @relation(fields: [transactionId], references: [id], onDelete: Cascade)
+
+  @@index([transactionId])
+  @@index([accountType, entryType])
+  @@map("ledger_entries")
+}
+
+model ConsultationSession {
+  id                   String                    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  appointmentId        String                    @unique @map("appointment_id") @db.Uuid
+  roomName             String                    @unique @map("room_name") @db.VarChar(100)
+  status               ConsultationSessionStatus @default(SCHEDULED)
+  startedAt            DateTime?                 @map("started_at")
+  endedAt              DateTime?                 @map("ended_at")
+  patientConsentGiven  Boolean                   @default(false) @map("patient_consent_given")
+  consentTimestamp     DateTime?                 @map("consent_timestamp")
+
+  appointment Appointment @relation(fields: [appointmentId], references: [id], onDelete: Cascade)
+
+  @@map("consultation_sessions")
+}
+
+model Prescription {
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  appointmentId  String   @unique @map("appointment_id") @db.Uuid
+  doctorId       String   @map("doctor_id") @db.Uuid
+  patientId      String   @map("patient_id") @db.Uuid
+  diagnosis      String
+  medicines      Json     @default("[]")
+  advice         String?
+  currentVersion Int      @default(1) @map("current_version")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @default(now()) @updatedAt @map("updated_at")
+
+  appointment Appointment           @relation(fields: [appointmentId], references: [id], onDelete: Cascade)
+  doctor      Doctor                @relation("DoctorPrescriptions", fields: [doctorId], references: [id], onDelete: Cascade)
+  patient     User                  @relation("PatientPrescriptions", fields: [patientId], references: [id], onDelete: Cascade)
+  versions    PrescriptionVersion[]
+
+  @@index([patientId])
+  @@index([doctorId])
+  @@map("prescriptions")
+}
+
+model PrescriptionVersion {
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  prescriptionId String   @map("prescription_id") @db.Uuid
+  version        Int
+  diagnosis      String
+  medicines      Json     @default("[]")
+  advice         String?
+  savedAt        DateTime @default(now()) @map("saved_at")
+
+  prescription Prescription @relation(fields: [prescriptionId], references: [id], onDelete: Cascade)
+
+  @@unique([prescriptionId, version])
+  @@map("prescription_versions")
+}
+
+model Review {
+  id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  doctorId      String   @map("doctor_id") @db.Uuid
+  patientId     String   @map("patient_id") @db.Uuid
+  appointmentId String   @unique @map("appointment_id") @db.Uuid
+  rating        Int
+  comment       String?
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  doctor      Doctor      @relation(fields: [doctorId], references: [id], onDelete: Cascade)
+  patient     User        @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  appointment Appointment @relation(fields: [appointmentId], references: [id], onDelete: Cascade)
+
+  @@index([doctorId, rating])
+  @@map("reviews")
+}
+
+model Waitlist {
+  id             String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  doctorId       String         @map("doctor_id") @db.Uuid
+  patientId      String         @map("patient_id") @db.Uuid
+  slotDate       DateTime       @map("slot_date") @db.Date
+  slotTime       String?        @map("slot_time") @db.VarChar(20)
+  status         WaitlistStatus @default(WAITING)
+  offeredAt      DateTime?      @map("offered_at")
+  claimExpiresAt DateTime?      @map("claim_expires_at")
+  holdToken      String?        @map("hold_token") @db.VarChar(100)
+  createdAt      DateTime       @default(now()) @map("created_at")
+
+  doctor  Doctor @relation(fields: [doctorId], references: [id], onDelete: Cascade)
+  patient User   @relation(fields: [patientId], references: [id], onDelete: Cascade)
+
+  @@index([doctorId, slotDate, status])
+  @@map("waitlists")
+}
+
+model AmbulanceDriverProfile {
+  id              String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId          String    @unique @map("user_id") @db.Uuid
+  vehicleNumber   String    @map("vehicle_number") @db.VarChar(50)
+  isOnline        Boolean   @default(false) @map("is_online")
+  lastLat         Decimal?  @map("last_lat") @db.Decimal(9, 6)
+  lastLng         Decimal?  @map("last_lng") @db.Decimal(9, 6)
+  lastHeartbeatAt DateTime? @map("last_heartbeat_at")
+
+  user     User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  requests AmbulanceRequest[]
+
+  @@map("ambulance_driver_profiles")
+}
+
+model AmbulanceRequest {
+  id            String                 @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  patientId     String                 @map("patient_id") @db.Uuid
+  driverId      String?                @map("driver_id") @db.Uuid
+  pickupLat     Decimal                @map("pickup_lat") @db.Decimal(9, 6)
+  pickupLng     Decimal                @map("pickup_lng") @db.Decimal(9, 6)
+  pickupAddress String                 @map("pickup_address") @db.VarChar(255)
+  status        AmbulanceRequestStatus @default(REQUESTED)
+  etaSeconds    Int?                   @map("eta_seconds")
+  createdAt     DateTime               @default(now()) @map("created_at")
+  updatedAt     DateTime               @default(now()) @updatedAt @map("updated_at")
+
+  patient User                    @relation("PatientAmbulanceRequests", fields: [patientId], references: [id], onDelete: Cascade)
+  driver  AmbulanceDriverProfile? @relation(fields: [driverId], references: [id], onDelete: SetNull)
+
+  @@index([status, createdAt])
+  @@map("ambulance_requests")
+}
+
+model OutboxEvent {
+  id            String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  aggregateType String    @map("aggregate_type") @db.VarChar(50)
+  aggregateId   String    @map("aggregate_id") @db.VarChar(100)
+  eventType     String    @map("event_type") @db.VarChar(50)
+  payload       Json
+  status        String    @default("PENDING") @db.VarChar(20)
+  createdAt     DateTime  @default(now()) @map("created_at")
+  processedAt   DateTime? @map("processed_at")
+
+  @@index([status, createdAt])
+  @@map("outbox_events")
+}
+
+model AuditLog {
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId     String?  @map("user_id") @db.Uuid
+  action     String   @db.VarChar(100)
+  resource   String   @db.VarChar(100)
+  resourceId String?  @map("resource_id") @db.VarChar(100)
+  details    Json?
+  ipAddress  String?  @map("ip_address") @db.VarChar(50)
+  userAgent  String?  @map("user_agent") @db.VarChar(255)
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([userId, createdAt])
+  @@index([resource, resourceId])
+  @@map("audit_logs")
+}
+
+model SymptomSpecialty {
+  id        Int    @id @default(autoincrement())
+  symptom   String @db.VarChar(100)
+  specialty String @db.VarChar(100)
+
+  @@index([symptom])
+  @@map("symptom_specialty_map")
+}

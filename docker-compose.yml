@@ -1,16 +1,18 @@
 services:
   postgres:
-    image: postgres:16-alpine
+    image: pgvector/pgvector:pg16
     container_name: medibook-postgres
     restart: unless-stopped
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgrespassword}
       POSTGRES_DB: ${POSTGRES_DB:-medibook}
+    ports:
+      - "5434:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres}"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-medibook}"]
       interval: 5s
       timeout: 5s
       retries: 5
@@ -20,6 +22,8 @@ services:
     container_name: medibook-redis
     restart: unless-stopped
     command: redis-server --appendonly yes
+    ports:
+      - "6379:6379"
     volumes:
       - redis_data:/data
     healthcheck:
@@ -28,70 +32,127 @@ services:
       timeout: 5s
       retries: 5
 
-  backend-1:
-    build:
-      context: ./backend
-      dockerfile: Dockerfile
-    container_name: medibook-backend-1
+  minio:
+    image: minio/minio:latest
+    container_name: medibook-minio
     restart: unless-stopped
-    command: sh -c "npx node-pg-migrate up && node dist/index.js"
+    command: server /data --console-address ":9001"
     environment:
-      PORT: 5000
-      DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgrespassword}@postgres:5432/${POSTGRES_DB:-medibook}
-      JWT_SECRET: ${JWT_SECRET:-medibook-production-jwt-secret-key-32chars-min}
-      CLIENT_URL: ${CLIENT_URL:-http://localhost}
+      MINIO_ROOT_USER: ${MINIO_ACCESS_KEY:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY:-minioadmin}
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  mailpit:
+    image: axllent/mailpit:latest
+    container_name: medibook-mailpit
+    restart: unless-stopped
+    ports:
+      - "8025:8025"
+      - "1025:1025"
+    environment:
+      MP_MAX_MESSAGES: 5000
+
+  livekit:
+    image: livekit/livekit-server:latest
+    container_name: medibook-livekit
+    restart: unless-stopped
+    command: --dev --bind 0.0.0.0
+    ports:
+      - "7880:7880"
+      - "7881:7881"
+      - "7882:7882/udp"
+
+  ai:
+    build:
+      context: .
+      dockerfile: services/ai/Dockerfile
+    container_name: medibook-ai
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      PORT: 8000
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8000/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  api-1:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    container_name: medibook-api-1
+    restart: unless-stopped
+    environment:
+      PORT: 4000
+      HOST: 0.0.0.0
+      DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgrespassword}@postgres:5432/${POSTGRES_DB:-medibook}?schema=public
       REDIS_URL: redis://redis:6379
+      JWT_SECRET: ${JWT_SECRET:-medibook-production-jwt-secret-key-32chars-min}
+      COOKIE_SECRET: ${COOKIE_SECRET:-medibook-super-secure-cookie-secret-32-chars}
+      CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost:3000}
       NODE_ENV: production
+      AI_SERVICE_URL: http://ai:8000
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:5000/health/ready || exit 1"]
+      test: ["CMD-SHELL", "wget -qO- http://localhost:4000/health/ready || exit 1"]
       interval: 10s
       timeout: 5s
-      retries: 3
+      retries: 5
       start_period: 15s
 
-  backend-2:
+  api-2:
     build:
-      context: ./backend
-      dockerfile: Dockerfile
-    container_name: medibook-backend-2
+      context: .
+      dockerfile: apps/api/Dockerfile
+    container_name: medibook-api-2
     restart: unless-stopped
-    command: node dist/index.js
     environment:
-      PORT: 5000
-      DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgrespassword}@postgres:5432/${POSTGRES_DB:-medibook}
-      JWT_SECRET: ${JWT_SECRET:-medibook-production-jwt-secret-key-32chars-min}
-      CLIENT_URL: ${CLIENT_URL:-http://localhost}
+      PORT: 4000
+      HOST: 0.0.0.0
+      DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgrespassword}@postgres:5432/${POSTGRES_DB:-medibook}?schema=public
       REDIS_URL: redis://redis:6379
+      JWT_SECRET: ${JWT_SECRET:-medibook-production-jwt-secret-key-32chars-min}
+      COOKIE_SECRET: ${COOKIE_SECRET:-medibook-super-secure-cookie-secret-32-chars}
+      CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost:3000}
       NODE_ENV: production
+      AI_SERVICE_URL: http://ai:8000
     depends_on:
-      backend-1:
+      api-1:
         condition: service_healthy
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:5000/health/ready || exit 1"]
+      test: ["CMD-SHELL", "wget -qO- http://localhost:4000/health/ready || exit 1"]
       interval: 10s
       timeout: 5s
-      retries: 3
+      retries: 5
       start_period: 15s
 
   worker:
     build:
-      context: ./backend
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: apps/worker/Dockerfile
     container_name: medibook-worker
     restart: unless-stopped
-    command: node dist/worker.js
     environment:
-      DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgrespassword}@postgres:5432/${POSTGRES_DB:-medibook}
-      JWT_SECRET: ${JWT_SECRET:-medibook-production-jwt-secret-key-32chars-min}
+      DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgrespassword}@postgres:5432/${POSTGRES_DB:-medibook}?schema=public
       REDIS_URL: redis://redis:6379
       NODE_ENV: production
       SMTP_HOST: mailpit
@@ -102,29 +163,36 @@ services:
       redis:
         condition: service_healthy
 
-  mailpit:
-    image: axllent/mailpit:latest
-    container_name: medibook-mailpit
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+    container_name: medibook-web
     restart: unless-stopped
-    ports:
-      - "8025:8025"
     environment:
-      MP_MAX_MESSAGES: 5000
+      PORT: 3000
+      NODE_ENV: production
+    ports:
+      - "3000:3000"
+    depends_on:
+      api-1:
+        condition: service_healthy
 
   nginx:
     build:
       context: .
-      dockerfile: ./nginx/Dockerfile
+      dockerfile: infra/nginx/Dockerfile
     container_name: medibook-nginx
     restart: unless-stopped
     ports:
       - "80:80"
     depends_on:
-      backend-1:
+      api-1:
         condition: service_healthy
-      backend-2:
+      api-2:
         condition: service_healthy
 
 volumes:
   postgres_data:
   redis_data:
+  minio_data:
