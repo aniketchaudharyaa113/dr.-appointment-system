@@ -1,8 +1,8 @@
 # MediBook Rebuild Progress Checklist
 
-## Current Status: Phase 2 (Identity & Security) in progress
+## Current Status: Phase 3 (Scheduling Core) in progress
 - **Branch**: `rebuild/nest-next`
-- **Active Phase**: Phase 2 (Identity & Security)
+- **Active Phase**: Phase 3 (Scheduling Core)
 
 ---
 
@@ -15,6 +15,8 @@
 - [x] Create `docs/TEST_STRATEGY.md` (Test pyramid, Testcontainers, Playwright, CI quality gates)
 - [x] Create `PROGRESS.md`
 - [x] Create `docs/plans/phase-1.md`
+- [x] Create `docs/plans/phase-2.md`
+- [x] Create `docs/plans/phase-3.md`
 
 ---
 
@@ -34,15 +36,15 @@
 ---
 
 ## Phase 2: Identity & Security
-- [ ] User and doctor authentication (Argon2id password hashing)
-- [ ] Short-lived access JWT (15m) + rotating hashed refresh tokens in httpOnly cookies with revocation
-- [ ] RBAC guards (`PATIENT | DOCTOR | ADMIN | DRIVER`)
-- [ ] Redis-backed rate limiting (IP + email login throttler)
-- [ ] Security headers (Helmet, strict CORS)
-- [ ] Doctor verification workflow (Admin approve/reject with audit logging)
-- [ ] Immutable audit logging service (recording all mutations and PHI reads)
-- [ ] Phase 2 tests: token rotation reuse detection, RBAC matrix, rate limit
-- [ ] Phase 2 verification gate & commit
+- [x] User and doctor authentication (Argon2id password hashing)
+- [x] Short-lived access JWT (15m) + rotating hashed refresh tokens in httpOnly cookies with revocation
+- [x] RBAC guards (`PATIENT | DOCTOR | ADMIN | DRIVER`)
+- [x] Redis-backed rate limiting (IP + email login throttler)
+- [x] Security headers (Helmet, strict CORS)
+- [x] Doctor verification workflow (Admin approve/reject with audit logging)
+- [x] Immutable audit logging service (recording all mutations and PHI reads)
+- [x] Phase 2 tests: token rotation reuse detection, RBAC matrix, rate limit (PASSED)
+- [x] Phase 2 verification gate & commit
 
 ---
 
