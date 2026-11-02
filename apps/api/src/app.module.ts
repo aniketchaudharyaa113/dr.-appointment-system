@@ -6,6 +6,7 @@ import { SchedulingModule } from './modules/scheduling/scheduling.module';
 import { PaymentsModule } from './modules/payments/payments.module';
 import { ConsultationModule } from './modules/consultation/consultation.module';
 import { AmbulanceModule } from './modules/ambulance/ambulance.module';
+import { AiGatewayModule } from './modules/ai-gateway/ai-gateway.module';
 
 @Module({
   imports: [
@@ -16,9 +17,11 @@ import { AmbulanceModule } from './modules/ambulance/ambulance.module';
     PaymentsModule,
     ConsultationModule,
     AmbulanceModule,
+    AiGatewayModule,
   ],
 })
 export class AppModule {}
+
 
 
 

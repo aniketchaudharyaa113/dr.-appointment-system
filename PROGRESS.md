@@ -1,8 +1,9 @@
 # MediBook Rebuild Progress Checklist
 
-#### Current Status: Phase 7 (AI Service & Gateway) in progress
+#### Current Status: Phase 8 (Frontend Next.js with Accessible UI/UX) in progress
 - **Branch**: `rebuild/nest-next`
-- **Active Phase**: Phase 7 (AI Service & Gateway)
+- **Active Phase**: Phase 8 (Frontend Next.js with Accessible UI/UX)
+
 
 ---
 
@@ -105,16 +106,17 @@
 ---
 
 ## Phase 7: AI Service & Gateway
-- [ ] Python FastAPI service in `services/ai` with uv/pip and Pydantic schemas
-- [ ] Safety-first emergency triage detector (rules + classifier) intercepting before LLM
-- [ ] Clinical RAG pipeline with curated public health corpus in `services/ai/corpus/`
-- [ ] Hybrid search with pgvector + pg_trgm and explicit citation generation
-- [ ] Booking agent with tool calling executing strictly with end-user JWT permissions
-- [ ] Doctor clinical note copilot summarizing consultation transcripts into draft prescriptions
-- [ ] LLM provider abstraction (Ollama local, Mock LLM for CI, PII redaction)
-- [ ] Quantitative symptom-to-specialty classifier evaluation (`docs/AI_EVALS.md`)
-- [ ] Phase 7 tests & evals: golden Q&A suite, retrieval hit rate, emergency 100% recall
-- [ ] Phase 7 verification gate & commit
+- [x] Python FastAPI service in `services/ai` with uv/pip and Pydantic schemas
+- [x] Safety-first emergency triage detector (rules + classifier) intercepting before LLM
+- [x] Clinical RAG pipeline with curated public health corpus in `services/ai/corpus/`
+- [x] Hybrid search with pgvector + pg_trgm and explicit citation generation
+- [x] Booking agent with tool calling executing strictly with end-user JWT permissions
+- [x] Doctor clinical note copilot summarizing consultation transcripts into draft prescriptions
+- [x] LLM provider abstraction (Ollama local, Mock LLM for CI, PII redaction)
+- [x] Quantitative symptom-to-specialty classifier evaluation (`docs/AI_EVALS.md`)
+- [x] Phase 7 tests & evals: golden Q&A suite, retrieval hit rate, emergency 100% recall (53 tests + 7 pytest suites PASSED)
+- [x] Phase 7 verification gate & commit
+
 
 ---
 
