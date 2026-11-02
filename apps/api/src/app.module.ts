@@ -4,6 +4,7 @@ import { IdentityModule } from './modules/identity/identity.module';
 import { AdminModule } from './modules/admin/admin.module';
 import { SchedulingModule } from './modules/scheduling/scheduling.module';
 import { PaymentsModule } from './modules/payments/payments.module';
+import { ConsultationModule } from './modules/consultation/consultation.module';
 
 @Module({
   imports: [
@@ -12,7 +13,9 @@ import { PaymentsModule } from './modules/payments/payments.module';
     AdminModule,
     SchedulingModule,
     PaymentsModule,
+    ConsultationModule,
   ],
 })
 export class AppModule {}
+
 

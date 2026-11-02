@@ -23,7 +23,9 @@
     "@nestjs/core": "^11.0.11",
     "@nestjs/jwt": "^11.0.0",
     "@nestjs/platform-fastify": "^11.0.11",
+    "@nestjs/platform-socket.io": "^12.3.2",
     "@nestjs/swagger": "^11.0.6",
+    "@nestjs/websockets": "^12.3.2",
     "@prisma/client": "^6.4.1",
     "argon2": "^0.41.1",
     "bullmq": "^5.41.6",
@@ -31,9 +33,11 @@
     "fastify": "^5.2.1",
     "ioredis": "^5.6.0",
     "jsonwebtoken": "^9.0.3",
+    "livekit-server-sdk": "^2.19.2",
     "nestjs-pino": "^4.3.1",
     "pino": "^9.6.0",
     "pino-http": "^10.4.0",
+    "socket.io": "^4.8.4",
     "zod": "^3.24.2"
   },
   "devDependencies": {

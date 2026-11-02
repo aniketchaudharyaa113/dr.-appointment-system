@@ -109,8 +109,10 @@ model User {
   waitlists               Waitlist[]
   ambulanceRequests       AmbulanceRequest[]       @relation("PatientAmbulanceRequests")
   auditLogs               AuditLog[]
+  chatMessages            ChatMessage[]
 
   @@map("users")
+
 }
 
 model RefreshToken {
@@ -214,8 +216,10 @@ model Appointment {
   consultation ConsultationSession?
   prescription Prescription?
   review       Review?
+  messages     ChatMessage[]
 
   @@index([patientId, status])
+
   @@index([doctorId, slotTime])
   @@map("appointments")
 }
@@ -445,3 +449,23 @@ model SymptomSpecialty {
   @@index([symptom])
   @@map("symptom_specialty_map")
 }
+
+model ChatMessage {
+  id             String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  appointmentId  String    @map("appointment_id") @db.Uuid
+  senderId       String    @map("sender_id") @db.Uuid
+  senderRole     UserRole  @map("sender_role")
+  content        String
+  attachmentUrl  String?   @map("attachment_url") @db.VarChar(500)
+  attachmentType String?   @map("attachment_type") @db.VarChar(50)
+  status         String    @default("SENT") @db.VarChar(20)
+  readAt         DateTime? @map("read_at")
+  createdAt      DateTime  @default(now()) @map("created_at")
+
+  appointment Appointment @relation(fields: [appointmentId], references: [id], onDelete: Cascade)
+  sender      User        @relation(fields: [senderId], references: [id], onDelete: Cascade)
+
+  @@index([appointmentId, createdAt])
+  @@map("chat_messages")
+}
+

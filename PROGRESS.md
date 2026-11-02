@@ -1,8 +1,8 @@
 # MediBook Rebuild Progress Checklist
 
-## Current Status: Phase 5 (Consultation: Video + Chat) in progress
+### Current Status: Phase 6 (Ambulance Dispatch) in progress
 - **Branch**: `rebuild/nest-next`
-- **Active Phase**: Phase 5 (Consultation: Video + Chat)
+- **Active Phase**: Phase 6 (Ambulance Dispatch)
 
 ---
 
@@ -18,6 +18,7 @@
 - [x] Create `docs/plans/phase-2.md`
 - [x] Create `docs/plans/phase-3.md`
 - [x] Create `docs/plans/phase-4.md`
+- [x] Create `docs/plans/phase-5.md`
 
 ---
 
@@ -73,19 +74,19 @@
 - [x] Phase 4 tests: 10x webhook replay flood, out-of-order events, invalid signature rejection, late payment auto-refund, reconciliation recovery, ledger zero-sum balance (27 tests PASSED)
 - [x] Phase 4 verification gate & commit
 
-
 ---
 
 ## Phase 5: Consultation (Video + Chat)
-- [ ] Consultation modes (`IN_CLINIC | VIDEO | CHAT`) and session state machine
-- [ ] LiveKit service minting scoped JWT join tokens strictly within join window (-10m/+30m)
-- [ ] NestJS WebSocket gateway for consultation chat (`consult:<id>` rooms)
-- [ ] Chat message persistence, delivery/read receipts, typing indicators
-- [ ] MinIO signed URL generation for encrypted medical attachments
-- [ ] Patient telemedicine consent logging with timestamp
-- [ ] Versioned immutable prescription workflow and PDF generation
-- [ ] Phase 5 tests: join-window enforcement, non-participant rejection, message ordering, signed-URL scope
-- [ ] Phase 5 verification gate & commit
+- [x] Consultation modes (`IN_CLINIC | VIDEO | CHAT`) and session state machine
+- [x] LiveKit service minting scoped JWT join tokens strictly within join window (-10m/+30m)
+- [x] NestJS WebSocket gateway for consultation chat (`consult:<id>` rooms)
+- [x] Chat message persistence, delivery/read receipts, typing indicators
+- [x] MinIO signed URL generation for encrypted medical attachments
+- [x] Patient telemedicine consent logging with timestamp
+- [x] Versioned immutable prescription workflow and PDF generation
+- [x] Phase 5 tests: join-window enforcement, non-participant rejection, message ordering, signed-URL scope (43 tests PASSED)
+- [x] Phase 5 verification gate & commit
+
 
 ---
 

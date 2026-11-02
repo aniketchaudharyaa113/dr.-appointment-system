@@ -348,3 +348,22 @@ CREATE TABLE "symptom_specialty_map" (
 );
 CREATE INDEX "symptom_specialty_map_symptom_idx" ON "symptom_specialty_map"("symptom");
 CREATE INDEX "idx_symptom_specialty_trgm" ON "symptom_specialty_map" USING gin ("symptom" gin_trgm_ops);
+
+-- CHAT MESSAGES TABLE
+CREATE TABLE "chat_messages" (
+    "id" UUID NOT NULL DEFAULT gen_random_uuid(),
+    "appointment_id" UUID NOT NULL,
+    "sender_id" UUID NOT NULL,
+    "sender_role" "UserRole" NOT NULL,
+    "content" TEXT NOT NULL,
+    "attachment_url" VARCHAR(500),
+    "attachment_type" VARCHAR(50),
+    "status" VARCHAR(20) NOT NULL DEFAULT 'SENT',
+    "read_at" TIMESTAMP(3),
+    "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT "chat_messages_pkey" PRIMARY KEY ("id"),
+    CONSTRAINT "chat_messages_appointment_id_fkey" FOREIGN KEY ("appointment_id") REFERENCES "appointments"("id") ON DELETE CASCADE ON UPDATE CASCADE,
+    CONSTRAINT "chat_messages_sender_id_fkey" FOREIGN KEY ("sender_id") REFERENCES "users"("id") ON DELETE CASCADE ON UPDATE CASCADE
+);
+CREATE INDEX "chat_messages_appointment_id_created_at_idx" ON "chat_messages"("appointment_id", "created_at");
+
