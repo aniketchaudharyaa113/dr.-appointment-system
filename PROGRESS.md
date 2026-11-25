@@ -16,8 +16,14 @@
 
 ---
 
+## Slice 2: Outbox, Worker, Notifications — COMPLETED & VERIFIED
+- [x] **Outbox Relay (`apps/worker/src/outbox-relay.ts`)**: Polls `outbox_events` with `FOR UPDATE SKIP LOCKED`, publishes to BullMQ with `jobId = event.id`, marks `PUBLISHED` inside the same transaction so Redis outages leave events `PENDING` for redelivery.
+- [x] **Real Worker Processors (`apps/worker/src/worker-engine.ts`, `mailer.ts`)**: Inserts real `notifications` rows in Postgres (`GET /api/notifications`, `POST /api/notifications/:id/read`), sends emails via Nodemailer → Mailpit, schedules 24h & 1h delayed reminder jobs in BullMQ (and cancels them on `AppointmentCancelled` / `AppointmentCancelledByDoctor` / `APPOINTMENT_EXPIRED`), executes pending refunds idempotently, and routes exhausted poison jobs to `dlq-queue` (`status = 'DLQ'`).
+- [x] **Real Testcontainers Tests (4/4 PASSED)**: `apps/worker/test/worker.spec.ts` verified against real Postgres (`pgvector/pgvector:pg16`), Redis (`redis:7-alpine`), and Mailpit (`axllent/mailpit:latest`): full outbox+Mailpit+reminders+cancel cleanup, worker crash mid-job stalled-lock recovery, Redis outage recovery, and poison job → DLQ.
+
+---
+
 ## Remaining Slices (In Progress)
-- [ ] **Slice 2**: Outbox relay (`FOR UPDATE SKIP LOCKED`), BullMQ workers, in-app notifications, Nodemailer → Mailpit, 24h/1h reminders + cancel cleanup, retries/backoff + DLQ, real failure tests.
 - [ ] **Slice 3**: Single `JWT_SECRET` everywhere (fail-fast), Socket.IO Redis adapter, DB participation checks on room join, strict CORS, cross-instance isolation tests, `livekit-client` in web, MinIO signed URL attachments.
 - [ ] **Slice 4**: End-to-end ambulance dispatch, 20s timeout reassignment, atomic accept, Leaflet live tracking + driver simulator.
 - [ ] **Slice 5**: Real pgvector + tsvector hybrid RAG with embeddings, LLM provider abstraction (Ollama + deterministic mock), ML emergency classifier (>=150 labeled texts, held-out eval >=0.97 recall), golden Q&A >=100 in `docs/AI_EVALS.md`, booking agent using user JWT.
