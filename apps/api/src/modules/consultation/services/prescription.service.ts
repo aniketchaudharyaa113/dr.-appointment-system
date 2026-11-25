@@ -26,7 +26,7 @@ export interface PrescriptionPayload {
 export class PrescriptionService {
   constructor(
     @Inject(PrismaService) private readonly prisma: PrismaService,
-    private readonly auditService: AuditService,
+    @Inject(AuditService) private readonly auditService: AuditService,
   ) {}
 
   /**

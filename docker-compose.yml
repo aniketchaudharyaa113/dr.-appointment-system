@@ -33,10 +33,9 @@ services:
       retries: 5
 
   minio:
-    image: minio/minio:latest
+    image: bitnamilegacy/minio:latest
     container_name: medibook-minio
     restart: unless-stopped
-    command: server /data --console-address ":9001"
     environment:
       MINIO_ROOT_USER: ${MINIO_ACCESS_KEY:-minioadmin}
       MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY:-minioadmin}
@@ -46,7 +45,7 @@ services:
     volumes:
       - minio_data:/data
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:9000/minio/health/live"]
       interval: 10s
       timeout: 5s
       retries: 3
@@ -103,6 +102,18 @@ services:
       CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost,http://localhost:3000}
       NODE_ENV: production
       AI_SERVICE_URL: http://ai:8000
+      PAYMENT_PROVIDER: ${PAYMENT_PROVIDER:-FAKE}
+      PAYMENT_WEBHOOK_SECRET: ${PAYMENT_WEBHOOK_SECRET:-fake_webhook_secret_for_testing_123}
+      LIVEKIT_API_KEY: ${LIVEKIT_API_KEY:-devkey}
+      LIVEKIT_API_SECRET: ${LIVEKIT_API_SECRET:-secret_32_characters_minimum_len}
+      LIVEKIT_URL: ${LIVEKIT_URL:-ws://localhost:7880}
+      MINIO_ENDPOINT: minio
+      MINIO_PORT: 9000
+      MINIO_USE_SSL: "false"
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-minioadmin}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-minioadmin}
+      MINIO_BUCKET: ${MINIO_BUCKET:-medibook-records}
+      MINIO_PUBLIC_URL: ${MINIO_PUBLIC_URL:-http://localhost:9000}
     depends_on:
       postgres:
         condition: service_healthy
@@ -131,6 +142,18 @@ services:
       CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost,http://localhost:3000}
       NODE_ENV: production
       AI_SERVICE_URL: http://ai:8000
+      PAYMENT_PROVIDER: ${PAYMENT_PROVIDER:-FAKE}
+      PAYMENT_WEBHOOK_SECRET: ${PAYMENT_WEBHOOK_SECRET:-fake_webhook_secret_for_testing_123}
+      LIVEKIT_API_KEY: ${LIVEKIT_API_KEY:-devkey}
+      LIVEKIT_API_SECRET: ${LIVEKIT_API_SECRET:-secret_32_characters_minimum_len}
+      LIVEKIT_URL: ${LIVEKIT_URL:-ws://localhost:7880}
+      MINIO_ENDPOINT: minio
+      MINIO_PORT: 9000
+      MINIO_USE_SSL: "false"
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-minioadmin}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-minioadmin}
+      MINIO_BUCKET: ${MINIO_BUCKET:-medibook-records}
+      MINIO_PUBLIC_URL: ${MINIO_PUBLIC_URL:-http://localhost:9000}
     depends_on:
       api-1:
         condition: service_healthy

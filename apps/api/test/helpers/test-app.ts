@@ -51,6 +51,7 @@ export async function resetDatabaseAndRedis(
       ambulance_driver_profiles,
       refresh_tokens,
       audit_logs,
+      notifications,
       outbox_events,
       symptom_specialty_map,
       users

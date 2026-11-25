@@ -6,8 +6,18 @@ import {
   ForbiddenException,
   BadRequestException,
   NotFoundException,
+  Logger,
 } from '@nestjs/common';
+import {
+  S3Client,
+  PutObjectCommand,
+  GetObjectCommand,
+  HeadBucketCommand,
+  CreateBucketCommand,
+} from '@aws-sdk/client-s3';
+import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { PrismaService } from '../../platform/database/prisma.service';
+import { env } from '../../../common/config/env.schema';
 
 export interface PresignedUploadResult {
   uploadUrl: string;
@@ -18,6 +28,7 @@ export interface PresignedUploadResult {
 
 @Injectable()
 export class AttachmentService {
+  private readonly logger = new Logger(AttachmentService.name);
   private readonly allowedMimes = new Set([
     'application/pdf',
     'image/jpeg',
@@ -25,19 +36,63 @@ export class AttachmentService {
   ]);
   private readonly allowedExtensions = new Set(['.pdf', '.jpg', '.jpeg', '.png']);
   private readonly maxSizeBytes = 10 * 1024 * 1024; // 10MB
-  private readonly minioEndpoint: string;
   private readonly bucketName: string;
-  private readonly signingSecret: string;
+  private readonly s3Client: S3Client;
+  private readonly publicS3Client: S3Client;
+  private bucketVerified = false;
 
   constructor(@Inject(PrismaService) private readonly prisma: PrismaService) {
-    this.minioEndpoint = process.env.MINIO_ENDPOINT || 'http://localhost:9000';
-    this.bucketName = process.env.MINIO_BUCKET || 'medibook-attachments';
-    this.signingSecret = process.env.MINIO_SIGNING_SECRET || 'local_s3_secret_token_12345';
+    const protocol = env.MINIO_USE_SSL ? 'https' : 'http';
+    const internalEndpoint = env.MINIO_ENDPOINT.startsWith('http')
+      ? env.MINIO_ENDPOINT
+      : `${protocol}://${env.MINIO_ENDPOINT}:${env.MINIO_PORT}`;
+
+    const publicEndpoint = env.MINIO_PUBLIC_URL || internalEndpoint;
+
+    this.bucketName = env.MINIO_BUCKET;
+
+    const baseConfig = {
+      region: 'ap-south-1',
+      forcePathStyle: true,
+      credentials: {
+        accessKeyId: env.MINIO_ACCESS_KEY,
+        secretAccessKey: env.MINIO_SECRET_KEY,
+      },
+    };
+
+    this.s3Client = new S3Client({
+      ...baseConfig,
+      endpoint: internalEndpoint,
+    });
+
+    this.publicS3Client = new S3Client({
+      ...baseConfig,
+      endpoint: publicEndpoint,
+    });
+  }
+
+  private async ensureBucketExists() {
+    if (this.bucketVerified) return;
+    try {
+      await this.s3Client.send(new HeadBucketCommand({ Bucket: this.bucketName }));
+      this.bucketVerified = true;
+    } catch {
+      try {
+        await this.s3Client.send(
+          new CreateBucketCommand({ Bucket: this.bucketName }),
+        );
+        this.bucketVerified = true;
+      } catch (err: any) {
+        this.logger.warn(
+          `Could not verify/create MinIO bucket ${this.bucketName}: ${err.message}`,
+        );
+      }
+    }
   }
 
   /**
-   * Generates presigned upload URL with strict type and size validation,
-   * scoped only to appointment participants.
+   * Generates real AWS S3/MinIO presigned PUT upload URL and GET download URL,
+   * strictly scoped to appointment participants and validated for MIME/extension/size.
    */
   async generatePresignedUploadUrl(params: {
     appointmentId: string;
@@ -48,7 +103,6 @@ export class AttachmentService {
   }): Promise<PresignedUploadResult> {
     const { appointmentId, userId, fileName, mimeType, sizeBytes } = params;
 
-    // 1. Participant check
     const appointment = await this.prisma.appointment.findUnique({
       where: { id: appointmentId },
       include: { doctor: true },
@@ -67,7 +121,6 @@ export class AttachmentService {
       );
     }
 
-    // 2. MIME type & extension validation
     const ext = path.extname(fileName).toLowerCase();
     if (!this.allowedExtensions.has(ext)) {
       throw new BadRequestException(
@@ -81,27 +134,35 @@ export class AttachmentService {
       );
     }
 
-    // 3. File size cap validation
     if (sizeBytes > this.maxSizeBytes) {
       throw new BadRequestException(
         `File size (${(sizeBytes / 1024 / 1024).toFixed(1)}MB) exceeds maximum allowed limit of 10MB`,
       );
     }
 
-    // 4. Scoped storage path: appointments/{appointmentId}/{randomUUID}{ext}
+    await this.ensureBucketExists();
+
     const safeId = crypto.randomUUID();
     const fileKey = `appointments/${appointmentId}/${safeId}${ext}`;
     const expiresInSeconds = 900; // 15 minutes
-    const expiresAt = Math.floor(Date.now() / 1000) + expiresInSeconds;
 
-    // Cryptographic signature token for upload
-    const signature = crypto
-      .createHmac('sha256', this.signingSecret)
-      .update(`${fileKey}:${expiresAt}:${mimeType}`)
-      .digest('hex');
+    const putCmd = new PutObjectCommand({
+      Bucket: this.bucketName,
+      Key: fileKey,
+      ContentType: mimeType,
+    });
 
-    const uploadUrl = `${this.minioEndpoint}/${this.bucketName}/${fileKey}?expires=${expiresAt}&sig=${signature}`;
-    const downloadUrl = `${this.minioEndpoint}/${this.bucketName}/${fileKey}`;
+    const getCmd = new GetObjectCommand({
+      Bucket: this.bucketName,
+      Key: fileKey,
+    });
+
+    const uploadUrl = await getSignedUrl(this.publicS3Client, putCmd, {
+      expiresIn: expiresInSeconds,
+    });
+    const downloadUrl = await getSignedUrl(this.publicS3Client, getCmd, {
+      expiresIn: 3600,
+    });
 
     return {
       uploadUrl,
@@ -112,7 +173,7 @@ export class AttachmentService {
   }
 
   /**
-   * Verifies access and generates presigned download URL for an attachment.
+   * Verifies access and generates real presigned S3/MinIO GET download URL.
    */
   async verifyAndGetDownloadUrl(
     appointmentId: string,
@@ -133,17 +194,15 @@ export class AttachmentService {
       throw new ForbiddenException('Access denied to consultation attachment');
     }
 
-    // Ensure requested fileKey belongs to this appointment
     if (!fileKey.startsWith(`appointments/${appointmentId}/`)) {
       throw new ForbiddenException('Attachment does not belong to this consultation');
     }
 
-    const expiresAt = Math.floor(Date.now() / 1000) + 3600; // 1 hour
-    const sig = crypto
-      .createHmac('sha256', this.signingSecret)
-      .update(`${fileKey}:${expiresAt}:download`)
-      .digest('hex');
+    const getCmd = new GetObjectCommand({
+      Bucket: this.bucketName,
+      Key: fileKey,
+    });
 
-    return `${this.minioEndpoint}/${this.bucketName}/${fileKey}?expires=${expiresAt}&sig=${sig}`;
+    return getSignedUrl(this.publicS3Client, getCmd, { expiresIn: 3600 });
   }
 }

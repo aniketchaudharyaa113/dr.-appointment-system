@@ -1,52 +1,59 @@
-import { describe, it, expect } from 'vitest';
-import { ExecutionContext, HttpException, HttpStatus } from '@nestjs/common';
-import { LoginRateLimitGuard } from '../src/modules/identity/rate-limit/login-rate-limit.guard';
-import { RedisService } from '../src/modules/platform/redis/redis.service';
+import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
+import {
+  bootTestApp,
+  resetDatabaseAndRedis,
+  TestContext,
+} from './helpers/test-app';
 
-describe('Login Rate Limiter (IP + Email Protection)', () => {
-  it('permits up to 5 attempts and rejects the 6th with 429 Too Many Requests', async () => {
-    let callCount = 0;
+describe('Login Rate Limiter (Real Redis + HTTP /api/auth/login)', () => {
+  let ctx: TestContext;
 
-    const mockRedisClient = {
-      incr: async (_key: string) => ++callCount,
-      expire: async (_key: string, _ttl: number) => 1,
-      ttl: async (_key: string) => 45,
+  beforeAll(async () => {
+    ctx = await bootTestApp();
+  });
+
+  afterAll(async () => {
+    await ctx.app.close();
+  });
+
+  beforeEach(async () => {
+    await resetDatabaseAndRedis(ctx.prisma, ctx.redisClient);
+  });
+
+  it('permits up to 5 attempts and rejects the 6th with 429 Too Many Requests using real Redis counters', async () => {
+    const payload = {
+      email: 'patient.bruteforce@test.com',
+      password: 'WrongPassword123!',
     };
 
-    const mockRedisService = {
-      getClient: () => mockRedisClient,
-    } as unknown as RedisService;
-
-    const guard = new LoginRateLimitGuard(mockRedisService);
-
-    const createCtx = (email: string, ip: string): ExecutionContext =>
-      ({
-        switchToHttp: () => ({
-          getRequest: () => ({
-            body: { email },
-            headers: { 'x-forwarded-for': ip },
-          }),
-        }),
-      }) as unknown as ExecutionContext;
-
-    const ctx = createCtx('patient.bruteforce@test.com', '192.168.1.100');
-
-    // Attempts 1 to 5 should all pass
     for (let i = 1; i <= 5; i++) {
-      const allowed = await guard.canActivate(ctx);
-      expect(allowed).toBe(true);
+      const res = await ctx.app.inject({
+        method: 'POST',
+        url: '/api/auth/login',
+        headers: { 'x-forwarded-for': '192.168.1.100' },
+        payload,
+      });
+      expect(res.statusCode).toBe(401);
     }
 
-    // 6th attempt must be rejected with 429
-    await expect(guard.canActivate(ctx)).rejects.toThrow(HttpException);
+    const sixth = await ctx.app.inject({
+      method: 'POST',
+      url: '/api/auth/login',
+      headers: { 'x-forwarded-for': '192.168.1.100' },
+      payload,
+    });
+    expect(sixth.statusCode).toBe(429);
+    const body = sixth.json();
+    expect(body.message).toContain('Too many login attempts');
+    expect(body.details.retryAfter).toBeGreaterThan(0);
 
-    try {
-      await guard.canActivate(ctx);
-    } catch (err: any) {
-      expect(err.getStatus()).toBe(HttpStatus.TOO_MANY_REQUESTS);
-      const res = err.getResponse();
-      expect(res.message).toContain('Too many login attempts');
-      expect(res.retryAfter).toBe(45);
-    }
+    // Separate IP for same email resets its own counter independently
+    const otherIp = await ctx.app.inject({
+      method: 'POST',
+      url: '/api/auth/login',
+      headers: { 'x-forwarded-for': '10.0.0.55' },
+      payload,
+    });
+    expect(otherIp.statusCode).toBe(401);
   });
 });

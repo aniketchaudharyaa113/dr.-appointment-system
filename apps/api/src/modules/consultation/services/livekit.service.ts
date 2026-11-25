@@ -7,9 +7,11 @@ import {
 } from '@nestjs/common';
 import { AccessToken } from 'livekit-server-sdk';
 import { PrismaService } from '../../platform/database/prisma.service';
+import { env } from '../../../common/config/env.schema';
 
 export interface VideoTokenResult {
   token: string;
+  livekitUrl: string;
   roomName: string;
   status: string;
   windowStart: string;
@@ -18,20 +20,14 @@ export interface VideoTokenResult {
 
 @Injectable()
 export class LiveKitService {
-  private readonly apiKey: string;
-  private readonly apiSecret: string;
-
-  constructor(@Inject(PrismaService) private readonly prisma: PrismaService) {
-    this.apiKey = process.env.LIVEKIT_API_KEY || 'devkey';
-    this.apiSecret = process.env.LIVEKIT_API_SECRET || 'secret_placeholder_for_local_testing_123';
-  }
+  constructor(@Inject(PrismaService) private readonly prisma: PrismaService) {}
 
   /**
    * Mints short-lived LiveKit join token.
    * Enforces:
    * 1. Only verified appointment participants (patient or doctor) can join.
    * 2. Join window: [slotTime - 10min, slotTime + 30min]. Outside this window, returns HTTP 400.
-   * 3. Telemedicine consent must be granted.
+   * 3. Patient telemedicine consent must be granted.
    */
   async mintJoinToken(
     appointmentId: string,
@@ -50,7 +46,6 @@ export class LiveKitService {
       throw new NotFoundException(`Appointment ${appointmentId} not found`);
     }
 
-    // 1. Authorization check
     const isPatient = appointment.patientId === userId;
     const isDoctor = appointment.doctor.userId === userId;
 
@@ -60,7 +55,16 @@ export class LiveKitService {
       );
     }
 
-    // 2. Join window check [slotTime - 10m, slotTime + 30m]
+    if (
+      appointment.status === 'CANCELLED' ||
+      appointment.status === 'REFUNDED' ||
+      appointment.status === 'PENDING_PAYMENT'
+    ) {
+      throw new BadRequestException(
+        `Cannot join video consultation while appointment status is ${appointment.status}`,
+      );
+    }
+
     const slotTimeMs = appointment.slotTime.getTime();
     const windowStartMs = slotTimeMs - 10 * 60 * 1000;
     const windowEndMs = slotTimeMs + 30 * 60 * 1000;
@@ -82,9 +86,8 @@ export class LiveKitService {
       );
     }
 
-    // 3. Ensure consultation session exists
     let session = appointment.consultation;
-    const roomName = `room_${appointment.id.replace(/-/g, '').slice(0, 16)}`;
+    const roomName = `consult-${appointment.id}`;
 
     if (!session) {
       session = await this.prisma.consultationSession.create({
@@ -96,16 +99,14 @@ export class LiveKitService {
       });
     }
 
-    // 4. Patient telemedicine consent check
     if (isPatient && !session.patientConsentGiven) {
       throw new BadRequestException(
         'Patient must accept telemedicine consent before joining consultation',
       );
     }
 
-    // 5. Mint LiveKit JWT access token
-    const participantName = isDoctor ? `Dr. Consultation` : `Patient`;
-    const at = new AccessToken(this.apiKey, this.apiSecret, {
+    const participantName = isDoctor ? 'Attending Doctor' : 'Patient';
+    const at = new AccessToken(env.LIVEKIT_API_KEY, env.LIVEKIT_API_SECRET, {
       identity: userId,
       name: participantName,
       ttl: '1h',
@@ -122,6 +123,7 @@ export class LiveKitService {
 
     return {
       token,
+      livekitUrl: env.LIVEKIT_URL,
       roomName: session.roomName,
       status: session.status,
       windowStart: new Date(windowStartMs).toISOString(),
@@ -129,9 +131,6 @@ export class LiveKitService {
     };
   }
 
-  /**
-   * Records patient telemedicine consent with timestamp.
-   */
   async recordConsent(appointmentId: string, userId: string): Promise<boolean> {
     const appointment = await this.prisma.appointment.findUnique({
       where: { id: appointmentId },
@@ -139,10 +138,12 @@ export class LiveKitService {
     });
 
     if (!appointment || appointment.patientId !== userId) {
-      throw new ForbiddenException('Only the appointed patient can grant telemedicine consent');
+      throw new ForbiddenException(
+        'Only the appointed patient can grant telemedicine consent',
+      );
     }
 
-    const roomName = `room_${appointment.id.replace(/-/g, '').slice(0, 16)}`;
+    const roomName = `consult-${appointment.id}`;
     await this.prisma.consultationSession.upsert({
       where: { appointmentId: appointment.id },
       create: {
@@ -161,9 +162,6 @@ export class LiveKitService {
     return true;
   }
 
-  /**
-   * Update session status (WAITING -> LIVE -> ENDED)
-   */
   async updateSessionStatus(
     appointmentId: string,
     userId: string,
@@ -176,9 +174,16 @@ export class LiveKitService {
 
     if (!appointment) throw new NotFoundException('Appointment not found');
 
+    const isPatient = appointment.patientId === userId;
     const isDoctor = appointment.doctor.userId === userId;
+    if (!isPatient && !isDoctor) {
+      throw new ForbiddenException('Not authorized for this consultation session');
+    }
+
     if (!isDoctor && newStatus === 'LIVE') {
-      throw new ForbiddenException('Only the doctor can transition consultation to LIVE');
+      throw new ForbiddenException(
+        'Only the doctor can transition consultation to LIVE',
+      );
     }
 
     return this.prisma.consultationSession.update({

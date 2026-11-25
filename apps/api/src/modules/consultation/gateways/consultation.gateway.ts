@@ -6,52 +6,75 @@ import {
   ConnectedSocket,
   OnGatewayConnection,
   OnGatewayDisconnect,
+  OnGatewayInit,
 } from '@nestjs/websockets';
-import { Logger } from '@nestjs/common';
-import { Server, Socket } from 'socket.io';
+import { Logger, Inject } from '@nestjs/common';
+import { Namespace, Socket } from 'socket.io';
 import * as jwt from 'jsonwebtoken';
+import { JwtPayload } from '@medibook/shared';
 import { ChatService } from '../services/chat.service';
+import { PrismaService } from '../../platform/database/prisma.service';
+import { RealtimeService } from '../../platform/realtime/realtime.service';
 import { env } from '../../../common/config/env.schema';
 
 @WebSocketGateway({
-  cors: { origin: '*' },
   namespace: '/consultation',
 })
-export class ConsultationGateway implements OnGatewayConnection, OnGatewayDisconnect {
+export class ConsultationGateway
+  implements OnGatewayInit, OnGatewayConnection, OnGatewayDisconnect
+{
   @WebSocketServer()
-  server!: Server;
+  server!: Namespace;
 
   private readonly logger = new Logger(ConsultationGateway.name);
-  private readonly jwtSecret: string;
 
-  constructor(private readonly chatService: ChatService) {
-    this.jwtSecret = env.JWT_SECRET;
+  constructor(
+    @Inject(ChatService) private readonly chatService: ChatService,
+    @Inject(PrismaService) private readonly prisma: PrismaService,
+    @Inject(RealtimeService) private readonly realtime: RealtimeService,
+  ) {}
+
+  afterInit(server: Namespace) {
+    this.realtime.registerConsultationServer(server);
   }
 
-  handleConnection(client: Socket) {
+  async handleConnection(client: Socket) {
     try {
       const token =
         client.handshake.auth?.token ||
-        (client.handshake.headers['authorization'] as string)?.replace('Bearer ', '') ||
+        (client.handshake.headers['authorization'] as string)?.replace(
+          /^Bearer\s+/i,
+          '',
+        ) ||
         (client.handshake.query?.token as string);
 
       if (!token) {
-        client.disconnect();
+        client.disconnect(true);
         return;
       }
 
-      const decoded = jwt.verify(token, this.jwtSecret) as any;
+      const decoded = jwt.verify(token, env.JWT_SECRET) as JwtPayload;
+      if (!decoded?.sub) {
+        client.disconnect(true);
+        return;
+      }
+
       (client as any).user = decoded;
-      this.logger.log(`Client connected to consultation namespace: ${decoded.sub}`);
+      await client.join(`user:${decoded.sub}`);
+      this.logger.log(
+        `Client connected to consultation namespace: ${decoded.sub}`,
+      );
     } catch {
-      client.disconnect();
+      client.disconnect(true);
     }
   }
 
   handleDisconnect(client: Socket) {
-    const user = (client as any).user;
-    if (user) {
-      this.logger.log(`Client disconnected from consultation namespace: ${user.sub}`);
+    const user = (client as any).user as JwtPayload | undefined;
+    if (user?.sub) {
+      this.logger.log(
+        `Client disconnected from consultation namespace: ${user.sub}`,
+      );
     }
   }
 
@@ -60,12 +83,33 @@ export class ConsultationGateway implements OnGatewayConnection, OnGatewayDiscon
     @ConnectedSocket() client: Socket,
     @MessageBody() data: { appointmentId: string },
   ) {
-    const user = (client as any).user;
-    if (!user || !data.appointmentId) return { error: 'Unauthorized' };
+    const user = (client as any).user as JwtPayload | undefined;
+    if (!user?.sub || !data?.appointmentId) {
+      return { error: 'Unauthorized' };
+    }
+
+    const appointment = await this.prisma.appointment.findUnique({
+      where: { id: data.appointmentId },
+      include: { doctor: true },
+    });
+
+    if (!appointment) {
+      return { error: 'Appointment not found' };
+    }
+
+    const isPatient = appointment.patientId === user.sub;
+    const isDoctor = appointment.doctor.userId === user.sub;
+    const isAdmin = user.role === 'ADMIN';
+
+    if (!isPatient && !isDoctor && !isAdmin) {
+      this.logger.warn(
+        `Unauthorized consultation join_room attempt by ${user.sub} for ${data.appointmentId}`,
+      );
+      return { error: 'Forbidden: Not a participant in this consultation' };
+    }
 
     const roomName = `consult:${data.appointmentId}`;
     await client.join(roomName);
-
     return { joined: roomName };
   }
 
@@ -80,8 +124,8 @@ export class ConsultationGateway implements OnGatewayConnection, OnGatewayDiscon
       attachmentType?: string;
     },
   ) {
-    const user = (client as any).user;
-    if (!user) return { error: 'Unauthorized' };
+    const user = (client as any).user as JwtPayload | undefined;
+    if (!user?.sub) return { error: 'Unauthorized' };
 
     try {
       const message = await this.chatService.sendMessage({
@@ -95,21 +139,23 @@ export class ConsultationGateway implements OnGatewayConnection, OnGatewayDiscon
       const roomName = `consult:${data.appointmentId}`;
       this.server.to(roomName).emit('new_message', message);
 
-      return { success: true, messageId: message.id };
+      return { success: true, messageId: message.id, message };
     } catch (err: any) {
       return { error: err.message };
     }
   }
 
   @SubscribeMessage('typing')
-  handleTyping(
+  async handleTyping(
     @ConnectedSocket() client: Socket,
     @MessageBody() data: { appointmentId: string; isTyping: boolean },
   ) {
-    const user = (client as any).user;
-    if (!user) return;
+    const user = (client as any).user as JwtPayload | undefined;
+    if (!user?.sub || !data?.appointmentId) return;
 
     const roomName = `consult:${data.appointmentId}`;
+    if (!client.rooms.has(roomName)) return;
+
     client.to(roomName).emit('user_typing', {
       userId: user.sub,
       isTyping: data.isTyping,

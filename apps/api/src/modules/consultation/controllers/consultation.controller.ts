@@ -142,6 +142,22 @@ export class ConsultationController {
     });
   }
 
+  @Get(':id/attachments/download-url')
+  @ApiOperation({ summary: 'Generate presigned MinIO download URL for consultation attachment' })
+  async getDownloadUrl(
+    @Param('id', new ZodValidationPipe(UuidSchema)) appointmentId: string,
+    @CurrentUser() user: JwtPayload,
+    @Query(new ZodValidationPipe(z.object({ fileKey: z.string().min(5).max(500) })))
+    query: { fileKey: string },
+  ) {
+    const downloadUrl = await this.attachmentService.verifyAndGetDownloadUrl(
+      appointmentId,
+      user.sub,
+      query.fileKey,
+    );
+    return { downloadUrl };
+  }
+
   @Post(':id/prescriptions')
   @ApiOperation({ summary: 'Doctor creates prescription for completed appointment' })
   async createPrescription(

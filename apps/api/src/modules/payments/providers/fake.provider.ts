@@ -6,16 +6,26 @@ import {
   RefundResult,
   ParsedWebhookEvent,
 } from './payment-provider.interface';
+import { env } from '../../../common/config/env.schema';
 
 @Injectable()
 export class FakePaymentProvider implements PaymentProvider {
   readonly name = 'FAKE';
-  private readonly webhookSecret = process.env.PAYMENT_WEBHOOK_SECRET || 'fake_webhook_secret_for_testing_123';
-  private orders = new Map<string, { amountPaise: number; status: 'CAPTURED' | 'PENDING' | 'FAILED'; providerPaymentId?: string }>();
+  private readonly webhookSecret: string;
+  private orders = new Map<
+    string,
+    { amountPaise: number; status: 'CAPTURED' | 'PENDING' | 'FAILED'; providerPaymentId?: string }
+  >();
 
-  // Configurable failure simulation flags
   public simulateFailure = false;
   public simulateDelayedWebhook = false;
+
+  constructor() {
+    this.webhookSecret = env.PAYMENT_WEBHOOK_SECRET || env.RAZORPAY_WEBHOOK_SECRET || '';
+    if (!this.webhookSecret) {
+      throw new Error('PAYMENT_WEBHOOK_SECRET is required for FakePaymentProvider');
+    }
+  }
 
   async createOrder(params: {
     appointmentId: string;
@@ -37,24 +47,25 @@ export class FakePaymentProvider implements PaymentProvider {
 
   verifyWebhookSignature(rawBody: string | Buffer, signature: string): boolean {
     if (!signature) return false;
-    const bodyStr = typeof rawBody === 'string' ? rawBody : rawBody.toString('utf8');
     const expected = crypto
       .createHmac('sha256', this.webhookSecret)
-      .update(bodyStr)
+      .update(rawBody)
       .digest('hex');
 
     try {
-      return crypto.timingSafeEqual(Buffer.from(signature, 'hex'), Buffer.from(expected, 'hex'));
+      return crypto.timingSafeEqual(
+        Buffer.from(signature, 'hex'),
+        Buffer.from(expected, 'hex'),
+      );
     } catch {
       return false;
     }
   }
 
   generateSignature(rawBody: string | Buffer): string {
-    const bodyStr = typeof rawBody === 'string' ? rawBody : rawBody.toString('utf8');
     return crypto
       .createHmac('sha256', this.webhookSecret)
-      .update(bodyStr)
+      .update(rawBody)
       .digest('hex');
   }
 
@@ -66,7 +77,10 @@ export class FakePaymentProvider implements PaymentProvider {
       eventId: json.id || `evt_${crypto.randomUUID().slice(0, 12)}`,
       eventType: json.event || 'payment.captured',
       providerOrderId: json.payload?.payment?.entity?.order_id || json.order_id || '',
-      providerPaymentId: json.payload?.payment?.entity?.id || json.payment_id || `fake_pay_${crypto.randomUUID().slice(0, 12)}`,
+      providerPaymentId:
+        json.payload?.payment?.entity?.id ||
+        json.payment_id ||
+        `fake_pay_${crypto.randomUUID().slice(0, 12)}`,
       amountPaise: json.payload?.payment?.entity?.amount || json.amount || 0,
       status: json.event === 'payment.failed' ? 'FAILED' : 'CAPTURED',
       rawPayload: json,
@@ -100,8 +114,10 @@ export class FakePaymentProvider implements PaymentProvider {
     };
   }
 
-  // Helper for tests to simulate external capture
-  simulateExternalCapture(providerOrderId: string, providerPaymentId = `fake_pay_${Date.now()}`): void {
+  simulateExternalCapture(
+    providerOrderId: string,
+    providerPaymentId = `fake_pay_${Date.now()}`,
+  ): void {
     const ord = this.orders.get(providerOrderId);
     if (ord) {
       ord.status = 'CAPTURED';
@@ -115,4 +131,3 @@ export class FakePaymentProvider implements PaymentProvider {
     }
   }
 }
-

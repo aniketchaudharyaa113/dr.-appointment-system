@@ -16,6 +16,13 @@ export async function setup() {
     process.env.PAYMENT_WEBHOOK_SECRET || 'fake_webhook_secret_for_testing_123';
   process.env.RAZORPAY_WEBHOOK_SECRET =
     process.env.RAZORPAY_WEBHOOK_SECRET || 'webhook_secret_123';
+  process.env.LIVEKIT_API_KEY = process.env.LIVEKIT_API_KEY || 'devkey';
+  process.env.LIVEKIT_API_SECRET =
+    process.env.LIVEKIT_API_SECRET || 'test_livekit_secret_32_characters_min';
+  process.env.LIVEKIT_URL = process.env.LIVEKIT_URL || 'ws://localhost:7880';
+  process.env.MINIO_ACCESS_KEY = process.env.MINIO_ACCESS_KEY || 'minioadmin';
+  process.env.MINIO_SECRET_KEY = process.env.MINIO_SECRET_KEY || 'minioadmin';
+  process.env.MINIO_BUCKET = process.env.MINIO_BUCKET || 'medibook-records';
   process.env.CLINIC_TIMEZONE = 'Asia/Kolkata';
 
   console.log('🐳 Starting Testcontainers (pgvector/pgvector:pg16 + redis:7-alpine)...');

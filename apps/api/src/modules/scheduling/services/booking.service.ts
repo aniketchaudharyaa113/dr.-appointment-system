@@ -11,6 +11,7 @@ import { PrismaService } from '../../platform/database/prisma.service';
 import { RedisService } from '../../platform/redis/redis.service';
 import { SlotService } from './slot.service';
 import { AuditService } from '../../platform/audit/audit.service';
+import { RealtimeService } from '../../platform/realtime/realtime.service';
 import { ConsultationMode } from '@medibook/shared';
 import { getIstDateCompact, getIstDateString } from '../../../common/utils/ist-time';
 
@@ -21,6 +22,7 @@ export class BookingService {
     @Inject(RedisService) private readonly redis: RedisService,
     @Inject(SlotService) private readonly slotService: SlotService,
     @Inject(AuditService) private readonly audit: AuditService,
+    @Inject(RealtimeService) private readonly realtime: RealtimeService,
   ) {}
 
   /**
@@ -271,6 +273,12 @@ export class BookingService {
       if (idemKey) {
         await this.redis.setIdempotency(idemKey, appointment, 86400);
       }
+
+      this.realtime.emitToUser(patientId, 'booking_updated', {
+        appointmentId: appointment.id,
+        bookingRef: appointment.bookingRef,
+        status: appointment.status,
+      });
 
       return appointment;
     } catch (error: any) {

@@ -2,6 +2,10 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { useParams, useSearchParams } from 'next/navigation';
+import Link from 'next/link';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { io, type Socket } from 'socket.io-client';
+import { Room, RoomEvent, Track, createLocalTracks } from 'livekit-client';
 import {
   Video,
   VideoOff,
@@ -14,338 +18,635 @@ import {
   FileText,
   ShieldCheck,
   Bot,
-  Download,
   User,
+  AlertCircle,
+  Download,
 } from 'lucide-react';
+import { fetchApi, formatIstTime, getAuthToken, getCurrentUser } from '@/lib/api';
 
 interface ChatMessage {
   id: string;
-  sender: 'doctor' | 'patient';
-  text: string;
-  timestamp: string;
-  attachmentUrl?: string;
-  attachmentName?: string;
+  senderId: string;
+  senderRole: 'DOCTOR' | 'PATIENT' | 'ADMIN' | 'DRIVER';
+  content: string;
+  attachmentUrl?: string | null;
+  attachmentType?: string | null;
+  status: string;
+  createdAt: string;
+}
+
+interface AppointmentDetail {
+  id: string;
+  bookingRef: string;
+  doctorId: string;
+  doctorName: string;
+  specialty: string;
+  qualifications?: string | null;
+  licenseNumber?: string | null;
+  patientId: string;
+  patientName: string;
+  slotTime: string;
+  status: string;
+  consultation: {
+    roomName: string;
+    status: string;
+    patientConsentGiven: boolean;
+    consentTimestamp?: string | null;
+  } | null;
 }
 
 export default function ConsultationRoomPage() {
   const params = useParams();
   const searchParams = useSearchParams();
-  const appointmentId = (params?.id as string) || 'apt-test-1';
+  const queryClient = useQueryClient();
+  const appointmentId = params?.id as string;
   const initialTab = searchParams.get('tab') || 'video';
 
-  const [hasConsented, setHasConsented] = useState(false);
-  const [consentDate, setConsentDate] = useState<string | null>(null);
+  const currentUser = typeof window !== 'undefined' ? getCurrentUser() : null;
+  const isDoctor = currentUser?.role === 'DOCTOR';
 
-  // Audio/Video controls
+  const [hasConsented, setHasConsented] = useState(false);
   const [isCameraOn, setIsCameraOn] = useState(true);
   const [isMicOn, setIsMicOn] = useState(true);
-  const [, setCallActive] = useState(false);
+  const [livekitStatus, setLivekitStatus] = useState<string>('Disconnected');
+  const [livekitError, setLivekitError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<'video' | 'prescription' | 'copilot'>(
-    initialTab === 'prescription' ? 'prescription' : 'video'
+    initialTab === 'prescription' ? 'prescription' : 'video',
   );
 
-  // Chat
-  const [messages, setMessages] = useState<ChatMessage[]>([
-    {
-      id: 'm-1',
-      sender: 'doctor',
-      text: 'Good evening! I am reviewing your symptom history. How long have you felt this discomfort?',
-      timestamp: '05:31 PM',
-    },
-    {
-      id: 'm-2',
-      sender: 'patient',
-      text: 'Hi Doctor. It started two days ago after dinner, feeling a mild heaviness.',
-      timestamp: '05:32 PM',
-    },
-  ]);
+  // Chat state
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [inputMsg, setInputMsg] = useState('');
   const [isTyping, setIsTyping] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const [chatError, setChatError] = useState<string | null>(null);
+
+  // Prescription form for doctors
+  const [rxDiagnosis, setRxDiagnosis] = useState('');
+  const [rxAdvice, setRxAdvice] = useState('');
+  const [rxMedName, setRxMedName] = useState('');
+  const [rxMedDosage, setRxMedDosage] = useState('40mg');
+  const [rxMedFreq, setRxMedFreq] = useState('Once Daily');
+  const [rxMedDays, setRxMedDays] = useState(14);
+  const [copilotNote, setCopilotNote] = useState<any>(null);
+
+  const socketRef = useRef<Socket | null>(null);
+  const roomRef = useRef<Room | null>(null);
+  const remoteVideoRef = useRef<HTMLVideoElement | null>(null);
+  const localVideoRef = useRef<HTMLVideoElement | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
   const chatEndRef = useRef<HTMLDivElement>(null);
+
+  const apptQuery = useQuery<AppointmentDetail>({
+    queryKey: ['appointment', appointmentId],
+    queryFn: () => fetchApi<AppointmentDetail>(`/appointments/${appointmentId}`),
+    enabled: !!appointmentId && !!currentUser?.token,
+  });
+
+  const messagesQuery = useQuery<ChatMessage[]>({
+    queryKey: ['consultation-messages', appointmentId],
+    queryFn: () => fetchApi<ChatMessage[]>(`/consultations/${appointmentId}/messages?limit=100`),
+    enabled: !!appointmentId && !!currentUser?.token,
+  });
+
+  const rxQuery = useQuery<any>({
+    queryKey: ['consultation-prescription', appointmentId],
+    queryFn: () => fetchApi(`/consultations/${appointmentId}/prescriptions`),
+    enabled: !!appointmentId && !!currentUser?.token && activeTab === 'prescription',
+    retry: false,
+  });
+
+  useEffect(() => {
+    if (messagesQuery.data) {
+      setMessages(messagesQuery.data);
+    }
+  }, [messagesQuery.data]);
+
+  useEffect(() => {
+    if (apptQuery.data?.consultation?.patientConsentGiven || isDoctor) {
+      setHasConsented(true);
+    }
+  }, [apptQuery.data, isDoctor]);
 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, isTyping]);
 
-  const handleConsent = () => {
-    setHasConsented(true);
-    setConsentDate(new Date().toISOString());
-    setCallActive(true);
-  };
+  // Connect Socket.IO /consultation namespace with JWT
+  useEffect(() => {
+    const token = getAuthToken();
+    if (!token || !appointmentId) return;
 
-  const handleSendMessage = (e: React.FormEvent) => {
+    const socketOrigin =
+      typeof window !== 'undefined' && process.env.NEXT_PUBLIC_SOCKET_URL
+        ? process.env.NEXT_PUBLIC_SOCKET_URL
+        : undefined;
+
+    const sock = io(socketOrigin ? `${socketOrigin}/consultation` : '/consultation', {
+      auth: { token },
+      transports: ['websocket', 'polling'],
+    });
+    socketRef.current = sock;
+
+    sock.on('connect', () => {
+      sock.emit('join_room', { appointmentId }, (ack: any) => {
+        if (ack?.error) {
+          setChatError(ack.error);
+        }
+      });
+    });
+
+    sock.on('new_message', (msg: ChatMessage) => {
+      setMessages((prev) => (prev.some((m) => m.id === msg.id) ? prev : [...prev, msg]));
+    });
+
+    sock.on('user_typing', (evt: { userId: string; isTyping: boolean }) => {
+      if (evt.userId !== currentUser?.id) {
+        setIsTyping(evt.isTyping);
+      }
+    });
+
+    return () => {
+      sock.disconnect();
+      socketRef.current = null;
+    };
+  }, [appointmentId, currentUser?.id]);
+
+  // Connect LiveKit room once consented
+  useEffect(() => {
+    if (!hasConsented || !appointmentId || !currentUser?.token) return;
+    let cancelled = false;
+
+    const connectLiveKit = async () => {
+      try {
+        setLivekitError(null);
+        setLivekitStatus('Requesting join token...');
+        const tokenData = await fetchApi<{
+          token: string;
+          livekitUrl: string;
+          roomName: string;
+        }>(`/consultations/${appointmentId}/video-token`, {
+          method: 'POST',
+          body: JSON.stringify({}),
+        });
+
+        if (cancelled) return;
+        const room = new Room();
+        roomRef.current = room;
+
+        room.on(RoomEvent.TrackSubscribed, (track) => {
+          if (track.kind === Track.Kind.Video && remoteVideoRef.current) {
+            track.attach(remoteVideoRef.current);
+          }
+          if (track.kind === Track.Kind.Audio) {
+            const el = track.attach();
+            document.body.appendChild(el);
+          }
+        });
+
+        room.on(RoomEvent.Disconnected, () => {
+          setLivekitStatus('Disconnected');
+        });
+
+        await room.connect(tokenData.livekitUrl, tokenData.token);
+        setLivekitStatus(`Connected (${tokenData.roomName})`);
+
+        try {
+          const tracks = await createLocalTracks({
+            audio: isMicOn,
+            video: isCameraOn,
+          });
+          for (const t of tracks) {
+            await room.localParticipant.publishTrack(t);
+            if (t.kind === Track.Kind.Video && localVideoRef.current) {
+              t.attach(localVideoRef.current);
+            }
+          }
+        } catch {
+          // Graceful fallback when running in headless browser / without camera
+        }
+      } catch (err: any) {
+        if (!cancelled) {
+          setLivekitStatus('Waiting / Outside Join Window');
+          setLivekitError(err.message);
+        }
+      }
+    };
+
+    connectLiveKit();
+
+    return () => {
+      cancelled = true;
+      roomRef.current?.disconnect();
+      roomRef.current = null;
+    };
+  }, [hasConsented, appointmentId, currentUser?.token]);
+
+  const consentMutation = useMutation({
+    mutationFn: () =>
+      fetchApi(`/consultations/${appointmentId}/consent`, {
+        method: 'POST',
+        body: JSON.stringify({}),
+      }),
+    onSuccess: () => {
+      setHasConsented(true);
+      queryClient.invalidateQueries({ queryKey: ['appointment', appointmentId] });
+    },
+  });
+
+  const handleSendMessage = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!inputMsg.trim()) return;
-
-    const newMsg: ChatMessage = {
-      id: `m-${Date.now()}`,
-      sender: 'patient',
-      text: inputMsg.trim(),
-      timestamp: new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }),
-    };
-
-    setMessages((prev) => [...prev, newMsg]);
+    const content = inputMsg.trim();
+    if (!content) return;
     setInputMsg('');
+    setChatError(null);
 
-    // Simulate doctor typing indicator
-    setIsTyping(true);
-    setTimeout(() => {
-      setIsTyping(false);
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: `m-doc-${Date.now()}`,
-          sender: 'doctor',
-          text: 'Understood. Please keep breathing calmly. I will check your heart rate and record this in your clinical note.',
-          timestamp: new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }),
+    if (socketRef.current?.connected) {
+      socketRef.current.emit(
+        'send_message',
+        { appointmentId, content },
+        (ack: any) => {
+          if (ack?.error) setChatError(ack.error);
+          if (ack?.message) {
+            setMessages((prev) =>
+              prev.some((m) => m.id === ack.message.id) ? prev : [...prev, ack.message],
+            );
+          }
         },
-      ]);
-    }, 1800);
+      );
+    } else {
+      try {
+        const msg = await fetchApi<ChatMessage>(`/consultations/${appointmentId}/messages`, {
+          method: 'POST',
+          body: JSON.stringify({ content }),
+        });
+        setMessages((prev) => [...prev, msg]);
+      } catch (err: any) {
+        setChatError(err.message);
+      }
+    }
   };
 
-  const handleSimulateAttachment = () => {
-    const attachMsg: ChatMessage = {
-      id: `m-att-${Date.now()}`,
-      sender: 'patient',
-      text: 'Uploaded recent blood lipid panel report for reference.',
-      timestamp: new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }),
-      attachmentUrl: '#',
-      attachmentName: 'Lipid_Panel_Report_Oct2026.pdf',
-    };
-    setMessages((prev) => [...prev, attachMsg]);
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setUploading(true);
+    setChatError(null);
+    try {
+      const { uploadUrl, fileKey } = await fetchApi<{
+        uploadUrl: string;
+        fileKey: string;
+      }>(`/consultations/${appointmentId}/attachments/upload-url`, {
+        method: 'POST',
+        body: JSON.stringify({
+          fileName: file.name,
+          mimeType: file.type || 'application/pdf',
+          sizeBytes: file.size,
+        }),
+      });
+
+      const putRes = await fetch(uploadUrl, {
+        method: 'PUT',
+        headers: { 'Content-Type': file.type || 'application/pdf' },
+        body: file,
+      });
+      if (!putRes.ok) {
+        throw new Error(`Upload to object storage failed (${putRes.status})`);
+      }
+
+      if (socketRef.current?.connected) {
+        socketRef.current.emit('send_message', {
+          appointmentId,
+          content: `Attached file: ${file.name}`,
+          attachmentUrl: fileKey,
+          attachmentType: file.type,
+        });
+      } else {
+        const msg = await fetchApi<ChatMessage>(`/consultations/${appointmentId}/messages`, {
+          method: 'POST',
+          body: JSON.stringify({
+            content: `Attached file: ${file.name}`,
+            attachmentUrl: fileKey,
+            attachmentType: file.type,
+          }),
+        });
+        setMessages((prev) => [...prev, msg]);
+      }
+    } catch (err: any) {
+      setChatError(err.message);
+    } finally {
+      setUploading(false);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
   };
+
+  const handleDownloadAttachment = async (fileKey: string) => {
+    try {
+      const res = await fetchApi<{ downloadUrl: string }>(
+        `/consultations/${appointmentId}/attachments/download-url?fileKey=${encodeURIComponent(fileKey)}`,
+      );
+      window.open(res.downloadUrl, '_blank', 'noopener,noreferrer');
+    } catch (err: any) {
+      setChatError(err.message);
+    }
+  };
+
+  const copilotMutation = useMutation({
+    mutationFn: () =>
+      fetchApi('/ai/copilot/draft-note', {
+        method: 'POST',
+        body: JSON.stringify({
+          appointmentId,
+          patientName: apptQuery.data?.patientName || 'Patient',
+          messages: messages.map((m) => ({ sender: m.senderRole, content: m.content })),
+        }),
+      }),
+    onSuccess: (data) => setCopilotNote(data.soap_note),
+  });
+
+  const saveRxMutation = useMutation({
+    mutationFn: () => {
+      const method = rxQuery.data ? 'PUT' : 'POST';
+      return fetchApi(`/consultations/${appointmentId}/prescriptions`, {
+        method,
+        body: JSON.stringify({
+          diagnosis: rxDiagnosis,
+          advice: rxAdvice,
+          medicines: rxMedName
+            ? [
+                {
+                  name: rxMedName,
+                  dosage: rxMedDosage,
+                  frequency: rxMedFreq,
+                  durationDays: Number(rxMedDays),
+                },
+              ]
+            : [],
+        }),
+      });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['consultation-prescription', appointmentId] });
+    },
+  });
+
+  if (!currentUser?.token) {
+    return (
+      <div className="max-w-2xl mx-auto px-4 py-16 text-center space-y-4">
+        <AlertCircle className="w-10 h-10 text-teal-600 mx-auto" />
+        <h1 className="text-xl font-bold">Sign In Required for Consultation Room</h1>
+        <Link
+          href={`/auth/login?redirect=${encodeURIComponent(`/consultation/${appointmentId}`)}`}
+          className="inline-block px-5 py-2.5 rounded-xl bg-teal-600 text-white text-xs font-bold"
+        >
+          Sign In
+        </Link>
+      </div>
+    );
+  }
+
+  const appt = apptQuery.data;
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-6">
-      {/* Telehealth Legal Consent Modal */}
-      {!hasConsented && (
+      {!hasConsented && !isDoctor && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs">
-          <div className="bg-white dark:bg-slate-900 rounded-3xl p-6 sm:p-8 max-w-lg w-full border border-slate-200 dark:border-slate-800 shadow-2xl space-y-6 animate-in zoom-in-95">
+          <div className="bg-white dark:bg-slate-900 rounded-3xl p-6 sm:p-8 max-w-lg w-full border border-slate-200 dark:border-slate-800 shadow-2xl space-y-6">
             <div className="flex items-center gap-3">
-              <div className="w-12 h-12 rounded-2xl bg-teal-100 dark:bg-teal-950 text-teal-600 dark:text-teal-400 flex items-center justify-center">
+              <div className="w-12 h-12 rounded-2xl bg-teal-100 dark:bg-teal-950 text-teal-600 flex items-center justify-center">
                 <ShieldCheck className="w-7 h-7" />
               </div>
               <div>
-                <h3 className="font-bold text-lg text-slate-900 dark:text-white">Telemedicine Informed Consent</h3>
-                <p className="text-xs text-slate-500">India Telemedicine Practice Guidelines 2020 Compliance</p>
+                <h3 className="font-bold text-lg text-slate-900 dark:text-white">
+                  Telemedicine Informed Consent
+                </h3>
+                <p className="text-xs text-slate-500">
+                  India Telemedicine Practice Guidelines 2020 Compliance
+                </p>
               </div>
             </div>
 
-            <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200/60 dark:border-slate-700/60 text-xs text-slate-600 dark:text-slate-300 leading-relaxed space-y-2">
+            <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-800/60 text-xs text-slate-600 dark:text-slate-300 space-y-2">
               <p>
-                By joining this remote consultation, you confirm that you are physically located in India and give consent for teleconsultation with your attending physician.
+                By joining this remote consultation with {appt?.doctorName || 'your attending physician'}, you confirm you are in India and consent to encrypted video & chat consultation.
               </p>
-              <p>
-                Remote consultations are not suitable for emergency trauma, acute stroke, or severe respiratory failure. If in distress, immediately dial 112.
-              </p>
-            </div>
-
-            {/* Device preview */}
-            <div className="flex items-center justify-center gap-4 py-2">
-              <button
-                type="button"
-                onClick={() => setIsCameraOn(!isCameraOn)}
-                className={`p-3 rounded-full ${isCameraOn ? 'bg-teal-600 text-white' : 'bg-slate-200 dark:bg-slate-800 text-slate-600'}`}
-              >
-                {isCameraOn ? <Video className="w-5 h-5" /> : <VideoOff className="w-5 h-5" />}
-              </button>
-              <button
-                type="button"
-                onClick={() => setIsMicOn(!isMicOn)}
-                className={`p-3 rounded-full ${isMicOn ? 'bg-teal-600 text-white' : 'bg-slate-200 dark:bg-slate-800 text-slate-600'}`}
-              >
-                {isMicOn ? <Mic className="w-5 h-5" /> : <MicOff className="w-5 h-5" />}
-              </button>
+              <p>If experiencing acute medical emergency, dial 112 immediately.</p>
             </div>
 
             <button
-              onClick={handleConsent}
-              className="w-full py-3.5 px-4 rounded-xl bg-teal-600 hover:bg-teal-700 text-white font-bold text-sm shadow-md transition-colors"
+              type="button"
+              disabled={consentMutation.isPending}
+              onClick={() => consentMutation.mutate()}
+              className="w-full py-3.5 px-4 rounded-xl bg-teal-600 hover:bg-teal-700 text-white font-bold text-sm shadow-md"
             >
-              I Consent & Join Consultation Room
+              {consentMutation.isPending ? 'Recording Consent...' : 'I Consent & Join Consultation Room'}
             </button>
           </div>
         </div>
       )}
 
-      {/* Main Consultation Room View */}
+      {/* Header */}
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 pb-2 border-b border-slate-200 dark:border-slate-800">
         <div>
           <div className="flex items-center gap-2">
             <h1 className="text-xl sm:text-2xl font-bold text-slate-900 dark:text-white">
-              Consultation Room
+              Consultation Room {appt ? `• ${appt.doctorName}` : ''}
             </h1>
-            <span className="text-[10px] font-bold bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300 px-2 py-0.5 rounded-full flex items-center gap-1">
-              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-ping" />
-              LiveKit Encrypted
+            <span className="text-[10px] font-bold bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300 px-2 py-0.5 rounded-full">
+              {livekitStatus}
             </span>
           </div>
           <p className="text-xs text-slate-500 mt-0.5">
-            Appointment ID: {appointmentId} • Telemedicine Consent logged: {consentDate ? 'Verified' : 'Pending'}
+            Ref: {appt?.bookingRef || appointmentId} • Consent: {hasConsented ? 'Verified' : 'Pending'}
           </p>
         </div>
 
-        {/* Tab switchers */}
         <div className="flex items-center gap-1 bg-slate-100 dark:bg-slate-800 p-1 rounded-xl text-xs font-semibold">
           <button
+            type="button"
             onClick={() => setActiveTab('video')}
-            className={`px-3 py-1.5 rounded-lg transition-colors ${activeTab === 'video' ? 'bg-white dark:bg-slate-900 text-teal-600 dark:text-teal-400 shadow-xs' : 'text-slate-500'}`}
+            className={`px-3 py-1.5 rounded-lg ${activeTab === 'video' ? 'bg-white dark:bg-slate-900 text-teal-600 shadow-xs' : 'text-slate-500'}`}
           >
             Video & Chat
           </button>
           <button
+            type="button"
             onClick={() => setActiveTab('prescription')}
-            className={`px-3 py-1.5 rounded-lg transition-colors ${activeTab === 'prescription' ? 'bg-white dark:bg-slate-900 text-teal-600 dark:text-teal-400 shadow-xs' : 'text-slate-500'}`}
+            className={`px-3 py-1.5 rounded-lg ${activeTab === 'prescription' ? 'bg-white dark:bg-slate-900 text-teal-600 shadow-xs' : 'text-slate-500'}`}
           >
             Digital Prescription
           </button>
-          <button
-            onClick={() => setActiveTab('copilot')}
-            className={`px-3 py-1.5 rounded-lg transition-colors ${activeTab === 'copilot' ? 'bg-white dark:bg-slate-900 text-teal-600 dark:text-teal-400 shadow-xs' : 'text-slate-500'}`}
-          >
-            AI Clinical Note
-          </button>
+          {isDoctor && (
+            <button
+              type="button"
+              onClick={() => setActiveTab('copilot')}
+              className={`px-3 py-1.5 rounded-lg ${activeTab === 'copilot' ? 'bg-white dark:bg-slate-900 text-teal-600 shadow-xs' : 'text-slate-500'}`}
+            >
+              AI Clinical Note
+            </button>
+          )}
         </div>
       </div>
 
       {activeTab === 'video' && (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 h-[640px]">
-          {/* Video Container (Left 2 cols) */}
           <div className="lg:col-span-2 bg-slate-900 rounded-3xl overflow-hidden relative flex flex-col justify-between p-4 shadow-xl border border-slate-800">
-            {/* Top Bar inside video */}
-            <div className="flex items-center justify-between text-white text-xs z-10">
-              <span className="bg-black/40 backdrop-blur-md px-3 py-1 rounded-full font-medium flex items-center gap-2">
-                <span className="w-2 h-2 rounded-full bg-rose-500 animate-pulse" />
-                Live: 14:22
-              </span>
-              <span className="bg-black/40 backdrop-blur-md px-3 py-1 rounded-full font-medium">
-                HD 1080p • 60 FPS
-              </span>
+            <video
+              ref={remoteVideoRef}
+              autoPlay
+              playsInline
+              className="absolute inset-0 w-full h-full object-cover"
+            />
+            <div className="relative z-10 flex items-center justify-between text-white text-xs">
+              <span className="bg-black/50 px-3 py-1 rounded-full">{livekitStatus}</span>
+              {livekitError && (
+                <span className="bg-amber-900/80 text-amber-200 px-3 py-1 rounded-full text-[11px]">
+                  {livekitError}
+                </span>
+              )}
             </div>
 
-            {/* Doctor Main Video Feed (Simulated) */}
-            <div className="absolute inset-0 flex flex-col items-center justify-center text-white space-y-3">
-              <div className="w-28 h-28 rounded-full bg-slate-800 border-4 border-teal-500/40 flex items-center justify-center text-3xl font-bold">
-                AM
+            <div className="relative z-10 flex flex-col items-center justify-center text-white pointer-events-none">
+              <div className="w-24 h-24 rounded-full bg-slate-800/80 border-2 border-teal-500/40 flex items-center justify-center text-2xl font-bold">
+                {(appt?.doctorName || 'MD').replace(/^Dr\.\s*/i, '').slice(0, 2).toUpperCase()}
               </div>
-              <div className="text-center">
-                <p className="font-bold text-base">Attending Physician</p>
-                <p className="text-xs text-teal-400 font-medium">Senior Consultant Cardiologist</p>
-              </div>
+              <p className="mt-2 font-bold text-sm">{appt?.doctorName || 'Attending Physician'}</p>
+              <p className="text-xs text-teal-400">{appt?.specialty || 'Telehealth'}</p>
             </div>
 
-            {/* Patient Self Video PiP */}
             <div className="absolute bottom-20 right-6 w-36 h-28 rounded-2xl bg-slate-800 border-2 border-slate-700 overflow-hidden shadow-lg flex items-center justify-center text-white text-xs z-10">
-              {isCameraOn ? (
-                <div className="w-full h-full bg-slate-700/60 flex flex-col items-center justify-center">
-                  <User className="w-8 h-8 opacity-60" />
-                  <span className="text-[10px] opacity-75 mt-1">You</span>
-                </div>
-              ) : (
-                <div className="text-slate-400 text-[10px] flex flex-col items-center">
+              <video ref={localVideoRef} autoPlay muted playsInline className="w-full h-full object-cover" />
+              {!isCameraOn && (
+                <div className="absolute inset-0 bg-slate-900/90 flex flex-col items-center justify-center text-slate-400 text-[10px]">
                   <VideoOff className="w-5 h-5 mb-1" /> Camera Off
                 </div>
               )}
             </div>
 
-            {/* Video Controls Bar */}
             <div className="z-10 flex items-center justify-center gap-3 bg-slate-950/80 backdrop-blur-md max-w-md mx-auto py-2.5 px-6 rounded-2xl border border-slate-800">
               <button
-                onClick={() => setIsMicOn(!isMicOn)}
-                className={`p-3 rounded-full transition-colors ${isMicOn ? 'bg-slate-800 text-white hover:bg-slate-700' : 'bg-rose-600 text-white'}`}
-                title={isMicOn ? 'Mute Mic' : 'Unmute Mic'}
+                type="button"
+                onClick={() => {
+                  const next = !isMicOn;
+                  setIsMicOn(next);
+                  roomRef.current?.localParticipant.setMicrophoneEnabled(next).catch(() => {});
+                }}
+                className={`p-3 rounded-full ${isMicOn ? 'bg-slate-800 text-white' : 'bg-rose-600 text-white'}`}
               >
                 {isMicOn ? <Mic className="w-5 h-5" /> : <MicOff className="w-5 h-5" />}
               </button>
-
               <button
-                onClick={() => setIsCameraOn(!isCameraOn)}
-                className={`p-3 rounded-full transition-colors ${isCameraOn ? 'bg-slate-800 text-white hover:bg-slate-700' : 'bg-rose-600 text-white'}`}
-                title={isCameraOn ? 'Turn Camera Off' : 'Turn Camera On'}
+                type="button"
+                onClick={() => {
+                  const next = !isCameraOn;
+                  setIsCameraOn(next);
+                  roomRef.current?.localParticipant.setCameraEnabled(next).catch(() => {});
+                }}
+                className={`p-3 rounded-full ${isCameraOn ? 'bg-slate-800 text-white' : 'bg-rose-600 text-white'}`}
               >
                 {isCameraOn ? <Video className="w-5 h-5" /> : <VideoOff className="w-5 h-5" />}
               </button>
-
               <button
+                type="button"
                 onClick={() => {
-                  setCallActive(false);
+                  roomRef.current?.disconnect();
                   setActiveTab('prescription');
                 }}
-                className="p-3 rounded-full bg-rose-600 hover:bg-rose-700 text-white transition-colors"
-                title="End Call & Issue Prescription"
+                className="p-3 rounded-full bg-rose-600 hover:bg-rose-700 text-white"
               >
                 <PhoneOff className="w-5 h-5" />
               </button>
             </div>
           </div>
 
-          {/* Real-Time Consultation Chat (Right col) */}
+          {/* Real-Time Socket.IO Chat */}
           <div className="rounded-3xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 flex flex-col shadow-sm overflow-hidden">
             <div className="p-4 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between">
               <div>
-                <h3 className="font-bold text-sm text-slate-900 dark:text-white">Encrypted Consultation Chat</h3>
-                <p className="text-[11px] text-slate-400">Available during call + 7 days follow-up</p>
+                <h3 className="font-bold text-sm text-slate-900 dark:text-white">
+                  Encrypted Consultation Chat
+                </h3>
+                <p className="text-[11px] text-slate-400">Persisted in PostgreSQL + 7d follow-up</p>
               </div>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept=".pdf,.jpg,.jpeg,.png"
+                onChange={handleFileUpload}
+                className="hidden"
+              />
               <button
-                onClick={handleSimulateAttachment}
-                className="p-1.5 rounded-lg text-slate-400 hover:text-teal-600 hover:bg-teal-50 dark:hover:bg-slate-800 transition-colors"
-                title="Attach medical report (MinIO signed URL)"
+                type="button"
+                disabled={uploading}
+                onClick={() => fileInputRef.current?.click()}
+                className="p-1.5 rounded-lg text-slate-400 hover:text-teal-600"
+                title="Upload medical PDF/image via MinIO presigned URL"
               >
                 <Paperclip className="w-4 h-4" />
               </button>
             </div>
 
-            {/* Messages */}
-            <div className="flex-1 overflow-y-auto p-4 space-y-3 text-xs">
-              {messages.map((m) => (
-                <div
-                  key={m.id}
-                  className={`flex flex-col ${m.sender === 'patient' ? 'items-end' : 'items-start'}`}
-                >
-                  <div
-                    className={`max-w-[85%] rounded-2xl px-3.5 py-2.5 ${
-                      m.sender === 'patient'
-                        ? 'bg-teal-600 text-white rounded-br-xs'
-                        : 'bg-slate-100 dark:bg-slate-800 text-slate-900 dark:text-white rounded-bl-xs'
-                    }`}
-                  >
-                    <p>{m.text}</p>
-                    {m.attachmentName && (
-                      <div className="mt-2 p-2 rounded-lg bg-black/20 text-[11px] flex items-center gap-1.5">
-                        <FileText className="w-3.5 h-3.5" />
-                        <span className="truncate">{m.attachmentName}</span>
-                      </div>
-                    )}
-                  </div>
-                  <div className="flex items-center gap-1 text-[10px] text-slate-400 mt-1 px-1">
-                    <span>{m.timestamp}</span>
-                    {m.sender === 'patient' && <CheckCheck className="w-3 h-3 text-teal-600" />}
-                  </div>
-                </div>
-              ))}
+            {chatError && (
+              <div className="px-4 py-2 bg-rose-50 dark:bg-rose-950/40 text-rose-600 text-[11px]">
+                {chatError}
+              </div>
+            )}
 
-              {isTyping && (
-                <div className="text-[11px] text-slate-400 italic flex items-center gap-1.5">
-                  <span className="w-1.5 h-1.5 rounded-full bg-teal-500 animate-bounce" />
-                  Dr. Mukherjee is typing...
-                </div>
-              )}
+            <div className="flex-1 overflow-y-auto p-4 space-y-3 text-xs">
+              {messages.map((m) => {
+                const isMine = m.senderId === currentUser?.id;
+                return (
+                  <div key={m.id} className={`flex flex-col ${isMine ? 'items-end' : 'items-start'}`}>
+                    <div
+                      className={`max-w-[85%] rounded-2xl px-3.5 py-2.5 ${
+                        isMine
+                          ? 'bg-teal-600 text-white rounded-br-xs'
+                          : 'bg-slate-100 dark:bg-slate-800 text-slate-900 dark:text-white rounded-bl-xs'
+                      }`}
+                    >
+                      <p>{m.content}</p>
+                      {m.attachmentUrl && (
+                        <button
+                          type="button"
+                          onClick={() => handleDownloadAttachment(m.attachmentUrl!)}
+                          className="mt-2 p-2 rounded-lg bg-black/20 text-[11px] flex items-center gap-1.5 underline"
+                        >
+                          <Download className="w-3.5 h-3.5" />
+                          <span>Download Attachment</span>
+                        </button>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-1 text-[10px] text-slate-400 mt-1 px-1">
+                      <span>{formatIstTime(m.createdAt)}</span>
+                      {isMine && <CheckCheck className="w-3 h-3 text-teal-600" />}
+                    </div>
+                  </div>
+                );
+              })}
               <div ref={chatEndRef} />
             </div>
 
-            {/* Input Form */}
-            <form onSubmit={handleSendMessage} className="p-3 border-t border-slate-200 dark:border-slate-800 flex items-center gap-2">
+            <form
+              onSubmit={handleSendMessage}
+              className="p-3 border-t border-slate-200 dark:border-slate-800 flex items-center gap-2"
+            >
               <input
                 type="text"
                 value={inputMsg}
-                onChange={(e) => setInputMsg(e.target.value)}
-                placeholder="Type query or report details..."
-                className="flex-1 bg-slate-100 dark:bg-slate-800 border-none rounded-xl px-3.5 py-2 text-xs text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-teal-500"
+                onChange={(e) => {
+                  setInputMsg(e.target.value);
+                  socketRef.current?.emit('typing', {
+                    appointmentId,
+                    isTyping: e.target.value.length > 0,
+                  });
+                }}
+                placeholder="Type message..."
+                className="flex-1 bg-slate-100 dark:bg-slate-800 border-none rounded-xl px-3.5 py-2 text-xs text-slate-900 dark:text-white"
               />
               <button
                 type="submit"
                 disabled={!inputMsg.trim()}
-                className="p-2 rounded-xl bg-teal-600 hover:bg-teal-700 text-white disabled:opacity-40 transition-colors"
+                className="p-2 rounded-xl bg-teal-600 hover:bg-teal-700 text-white disabled:opacity-40"
               >
                 <Send className="w-4 h-4" />
               </button>
@@ -354,131 +655,138 @@ export default function ConsultationRoomPage() {
         </div>
       )}
 
-      {/* Prescription Tab */}
       {activeTab === 'prescription' && (
         <div className="max-w-3xl mx-auto p-8 rounded-3xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xl space-y-6">
-          <div className="flex items-start justify-between border-b border-slate-200 dark:border-slate-800 pb-6">
+          <div className="flex items-start justify-between border-b border-slate-200 dark:border-slate-800 pb-4">
             <div>
-              <h2 className="text-2xl font-bold text-slate-900 dark:text-white">Official Telehealth Prescription</h2>
-              <p className="text-xs text-slate-500 mt-1">
-                Issued via MediBook Telehealth Digital Rx
+              <h2 className="text-xl font-bold">Immutable Digital Prescription</h2>
+              <p className="text-xs text-slate-500">
+                {appt?.doctorName} ({appt?.licenseNumber || 'Verified'})
               </p>
             </div>
-            <span className="text-xs font-mono font-bold bg-teal-100 text-teal-700 dark:bg-teal-900 dark:text-teal-300 px-3 py-1 rounded-full">
-              Version: 1.0 (Immutable)
-            </span>
+            {rxQuery.data && (
+              <span className="text-xs font-mono font-bold bg-teal-100 text-teal-700 px-3 py-1 rounded-full">
+                v{rxQuery.data.currentVersion}.0
+              </span>
+            )}
           </div>
 
-          <div className="grid grid-cols-2 gap-4 text-xs text-slate-600 dark:text-slate-400">
-            <div>
-              <span className="text-slate-400 block">Patient Name:</span>
-              <span className="font-semibold text-slate-900 dark:text-white text-sm">Aniket Chaudhary (28/M)</span>
-            </div>
-            <div>
-              <span className="text-slate-400 block">Date of Consultation:</span>
-              <span className="font-semibold text-slate-900 dark:text-white text-sm">02 Nov 2026, 05:45 PM IST</span>
-            </div>
-            <div>
-              <span className="text-slate-400 block">Clinical Diagnosis:</span>
-              <span className="font-semibold text-slate-900 dark:text-white">Stage-1 Essential Hypertension / Stress Discomfort</span>
-            </div>
-            <div>
-              <span className="text-slate-400 block">Consultation ID:</span>
-              <span className="font-mono font-semibold">{appointmentId}</span>
-            </div>
-          </div>
-
-          <div className="space-y-3 pt-4 border-t border-slate-100 dark:border-slate-800">
-            <h4 className="font-bold text-sm text-slate-900 dark:text-white">Prescribed Medications (Rx)</h4>
-            <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200/60 dark:border-slate-700/60 space-y-2 text-xs">
-              <div className="flex justify-between font-semibold text-slate-800 dark:text-slate-200">
-                <span>1. Tab. Telmisartan 40mg</span>
-                <span>1 Tab - Once Daily (Morning after food) x 30 Days</span>
+          {rxQuery.data ? (
+            <div className="space-y-4 text-xs">
+              <div>
+                <span className="text-slate-400 block">Diagnosis:</span>
+                <p className="font-bold text-sm">{rxQuery.data.diagnosis}</p>
               </div>
-              <div className="flex justify-between font-semibold text-slate-800 dark:text-slate-200">
-                <span>2. Tab. Rosuvastatin 10mg</span>
-                <span>1 Tab - Once Daily (Night after food) x 30 Days</span>
+              <div className="space-y-2">
+                <span className="text-slate-400 block">Medicines:</span>
+                {(rxQuery.data.medicines || []).map((med: any, idx: number) => (
+                  <div key={idx} className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800 flex justify-between">
+                    <span className="font-semibold">
+                      {med.name} ({med.dosage})
+                    </span>
+                    <span>
+                      {med.frequency} × {med.durationDays} days
+                    </span>
+                  </div>
+                ))}
               </div>
+              {rxQuery.data.advice && (
+                <div>
+                  <span className="text-slate-400 block">Advice:</span>
+                  <p>{rxQuery.data.advice}</p>
+                </div>
+              )}
             </div>
-          </div>
+          ) : (
+            <p className="text-xs text-slate-500">No prescription issued yet.</p>
+          )}
 
-          <div className="space-y-2 text-xs text-slate-500">
-            <h4 className="font-bold text-slate-700 dark:text-slate-300">Clinical Advice & Follow-Up</h4>
-            <p>Maintain sodium intake &lt; 2g/day. Regular 30-min walking. Follow-up video consultation in 3 weeks.</p>
-          </div>
-
-          <div className="pt-4 border-t border-slate-200 dark:border-slate-800 flex items-center justify-between">
-            <span className="text-[11px] text-slate-400">
-              Digitally signed and cryptographically hashed per IT Act 2000.
-            </span>
-            <button
-              onClick={() => alert('Digital Rx PDF download triggered (generated via NestJS prescription service).')}
-              className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-teal-600 hover:bg-teal-700 text-white font-bold text-xs shadow-md transition-colors"
-            >
-              <Download className="w-4 h-4" /> Download PDF Prescription
-            </button>
-          </div>
+          {isDoctor && (
+            <div className="pt-4 border-t border-slate-200 dark:border-slate-800 space-y-3 text-xs">
+              <h3 className="font-bold">Issue / Append Version</h3>
+              <input
+                type="text"
+                value={rxDiagnosis}
+                onChange={(e) => setRxDiagnosis(e.target.value)}
+                placeholder="Diagnosis"
+                className="w-full p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700"
+              />
+              <div className="grid grid-cols-4 gap-2">
+                <input
+                  type="text"
+                  value={rxMedName}
+                  onChange={(e) => setRxMedName(e.target.value)}
+                  placeholder="Medicine"
+                  className="p-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700"
+                />
+                <input
+                  type="text"
+                  value={rxMedDosage}
+                  onChange={(e) => setRxMedDosage(e.target.value)}
+                  placeholder="Dosage"
+                  className="p-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700"
+                />
+                <input
+                  type="text"
+                  value={rxMedFreq}
+                  onChange={(e) => setRxMedFreq(e.target.value)}
+                  placeholder="Frequency"
+                  className="p-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700"
+                />
+                <input
+                  type="number"
+                  value={rxMedDays}
+                  onChange={(e) => setRxMedDays(Number(e.target.value))}
+                  placeholder="Days"
+                  className="p-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700"
+                />
+              </div>
+              <input
+                type="text"
+                value={rxAdvice}
+                onChange={(e) => setRxAdvice(e.target.value)}
+                placeholder="Clinical advice"
+                className="w-full p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700"
+              />
+              <button
+                type="button"
+                disabled={saveRxMutation.isPending || rxDiagnosis.length < 3}
+                onClick={() => saveRxMutation.mutate()}
+                className="px-4 py-2 rounded-xl bg-teal-600 text-white font-bold"
+              >
+                {saveRxMutation.isPending ? 'Saving...' : 'Save Immutable Rx Version'}
+              </button>
+            </div>
+          )}
         </div>
       )}
 
-      {/* AI Clinical Note Copilot Tab */}
-      {activeTab === 'copilot' && (
+      {activeTab === 'copilot' && isDoctor && (
         <div className="max-w-3xl mx-auto p-8 rounded-3xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xl space-y-6">
-          <div className="flex items-center gap-3 pb-4 border-b border-slate-200 dark:border-slate-800">
-            <div className="w-10 h-10 rounded-2xl bg-teal-100 dark:bg-teal-950 text-teal-600 dark:text-teal-400 flex items-center justify-center">
-              <Bot className="w-6 h-6" />
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Bot className="w-6 h-6 text-teal-600" />
+              <h2 className="text-lg font-bold">AI Clinical Note Copilot (Draft)</h2>
             </div>
-            <div>
-              <h2 className="text-xl font-bold text-slate-900 dark:text-white flex items-center gap-2">
-                AI Clinical Note Copilot
-                <span className="text-[10px] font-bold bg-amber-100 text-amber-700 dark:bg-amber-900 dark:text-amber-300 px-2 py-0.5 rounded">
-                  Requires Doctor Review
-                </span>
-              </h2>
-              <p className="text-xs text-slate-500">
-                Summarized from live consultation transcript. AI never writes to medical records automatically.
-              </p>
-            </div>
-          </div>
-
-          <div className="space-y-4 text-xs">
-            <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200/60 dark:border-slate-700/60 space-y-1">
-              <span className="font-bold text-teal-600 uppercase text-[10px]">Subjective</span>
-              <p className="text-slate-700 dark:text-slate-300">
-                Patient reports 2-day history of mild chest heaviness post-prandial. No radiation to neck or left arm. No diaphoresis or syncope.
-              </p>
-            </div>
-
-            <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200/60 dark:border-slate-700/60 space-y-1">
-              <span className="font-bold text-teal-600 uppercase text-[10px]">Objective</span>
-              <p className="text-slate-700 dark:text-slate-300">
-                Reported resting BP: 142/90 mmHg. Heart rate: 76 bpm. Recent lipid panel attached by patient indicates elevated LDL (148 mg/dL).
-              </p>
-            </div>
-
-            <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200/60 dark:border-slate-700/60 space-y-1">
-              <span className="font-bold text-teal-600 uppercase text-[10px]">Assessment</span>
-              <p className="text-slate-700 dark:text-slate-300">
-                Stage 1 Essential Hypertension with mild dyslipidemia. Low short-term cardiovascular risk score.
-              </p>
-            </div>
-
-            <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200/60 dark:border-slate-700/60 space-y-1">
-              <span className="font-bold text-teal-600 uppercase text-[10px]">Plan</span>
-              <p className="text-slate-700 dark:text-slate-300">
-                Initiate Telmisartan 40mg + Rosuvastatin 10mg. Dietary salt reduction. Review in 3 weeks via video.
-              </p>
-            </div>
-          </div>
-
-          <div className="pt-2 flex justify-end gap-3">
             <button
-              onClick={() => alert('Clinical draft approved and committed to electronic health record with doctor signature.')}
-              className="px-5 py-2.5 rounded-xl bg-teal-600 hover:bg-teal-700 text-white font-bold text-xs shadow-md transition-colors"
+              type="button"
+              disabled={copilotMutation.isPending}
+              onClick={() => copilotMutation.mutate()}
+              className="px-4 py-2 rounded-xl bg-teal-600 text-white text-xs font-bold"
             >
-              Doctor Approve & Commit Note
+              {copilotMutation.isPending ? 'Drafting...' : 'Generate SOAP Draft from Chat'}
             </button>
           </div>
+          {copilotNote && (
+            <div className="space-y-3 text-xs">
+              {(['subjective', 'objective', 'assessment', 'plan'] as const).map((k) => (
+                <div key={k} className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800">
+                  <span className="font-bold uppercase text-teal-600 text-[10px]">{k}</span>
+                  <p className="mt-1">{copilotNote[k]}</p>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
     </div>

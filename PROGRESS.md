@@ -23,8 +23,15 @@
 
 ---
 
+## Slice 3: Realtime & Consultation — COMPLETED & VERIFIED
+- [x] **Fail-Fast Single `JWT_SECRET` & Secrets Validation (`env.schema.ts`, `env.spec.ts`)**: Removed hardcoded default secrets (`COOKIE_SECRET`, `LIVEKIT_*`, `MINIO_*`, webhook secret); fail-fast Zod validation enforces explicit non-empty secrets at boot (3/3 `env.spec.ts` passed).
+- [x] **Socket.IO Redis Adapter & Cross-Instance Auth (`redis-io.adapter.ts`, `realtime.service.ts`, gateways)**: Authenticated sockets with `JwtPayload.sub` and strict CORS origin allowlist; `ConsultationGateway` & `AmbulanceGateway` verify DB participation before joining `consult:<id>` or `ambulance:<id>`; personal `user:<sub >` rooms broadcast across multiple Fastify instances via Redis Pub/Sub.
+- [x] **LiveKit Join Window, Consent & Prescriptions (`consultation/[id]/page.tsx`, `prescription.service.ts`, `@Inject(AuditService)`)**: Web client integrates `livekit-client`, Socket.IO chat, MinIO upload/download, and immutable versioned prescriptions. Fixed NestJS constructor `@Inject(...)` metadata across `PrescriptionService`, `RolesGuard`, `AuditService`, and `MetricsController`.
+- [x] **Real Testcontainers Verification (8/8 PASSED)**: `slice3-realtime-consultation.spec.ts` (4/4: 2-instance Redis adapter isolation + booking notification, socket chat persistence & unauthorized room rejection, LiveKit join window + consent + immutable prescription versions, real MinIO `bitnamilegacy/minio:latest` presigned PUT/GET), `rate-limit.spec.ts` (1/1 real Redis `/api/auth/login` 429), `env.spec.ts` (3/3).
+
+---
+
 ## Remaining Slices (In Progress)
-- [ ] **Slice 3**: Single `JWT_SECRET` everywhere (fail-fast), Socket.IO Redis adapter, DB participation checks on room join, strict CORS, cross-instance isolation tests, `livekit-client` in web, MinIO signed URL attachments.
 - [ ] **Slice 4**: End-to-end ambulance dispatch, 20s timeout reassignment, atomic accept, Leaflet live tracking + driver simulator.
 - [ ] **Slice 5**: Real pgvector + tsvector hybrid RAG with embeddings, LLM provider abstraction (Ollama + deterministic mock), ML emergency classifier (>=150 labeled texts, held-out eval >=0.97 recall), golden Q&A >=100 in `docs/AI_EVALS.md`, booking agent using user JWT.
 - [ ] **Slice 6**: Compose port hardening, fail-fast env secrets, Nginx routes, real `grafana/k6` load tests in `docs/LOAD_TEST.md`, CI overhaul (pnpm lint/typecheck/test/build + Playwright + AI evals), final docs honesty pass.

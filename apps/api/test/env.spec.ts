@@ -1,17 +1,24 @@
 import { describe, it, expect } from 'vitest';
 import { EnvSchema } from '../src/common/config/env.schema';
 
-describe('Environment Schema Validation', () => {
-  it('validates a complete and correct configuration', () => {
-    const validConfig = {
-      NODE_ENV: 'test',
-      PORT: '4000',
-      DATABASE_URL: 'postgresql://postgres:password@localhost:5432/medibook',
-      REDIS_URL: 'redis://localhost:6379',
-      JWT_SECRET: 'a_very_long_and_secure_jwt_secret_32_characters_minimum',
-    };
+describe('Environment Schema Validation (Fail-Fast)', () => {
+  const baseValid = {
+    NODE_ENV: 'test',
+    PORT: '4000',
+    DATABASE_URL: 'postgresql://postgres:password@localhost:5432/medibook',
+    REDIS_URL: 'redis://localhost:6379',
+    JWT_SECRET: 'a_very_long_and_secure_jwt_secret_32_characters_minimum',
+    COOKIE_SECRET: 'a_very_secure_cookie_secret_16_plus',
+    PAYMENT_PROVIDER: 'FAKE',
+    PAYMENT_WEBHOOK_SECRET: 'fake_webhook_secret_123',
+    LIVEKIT_API_KEY: 'devkey',
+    LIVEKIT_API_SECRET: 'livekit_secret_32_characters_minimum',
+    MINIO_ACCESS_KEY: 'minioadmin',
+    MINIO_SECRET_KEY: 'minioadmin',
+  };
 
-    const parsed = EnvSchema.safeParse(validConfig);
+  it('validates a complete and correct configuration', () => {
+    const parsed = EnvSchema.safeParse(baseValid);
     expect(parsed.success).toBe(true);
     if (parsed.success) {
       expect(parsed.data.PORT).toBe(4000);
@@ -20,29 +27,25 @@ describe('Environment Schema Validation', () => {
     }
   });
 
-  it('fails when JWT_SECRET is less than 32 characters', () => {
-    const invalidConfig = {
-      DATABASE_URL: 'postgresql://postgres:password@localhost:5432/medibook',
-      JWT_SECRET: 'short_secret',
-    };
+  it('fails fast when JWT_SECRET or COOKIE_SECRET or LIVEKIT_API_SECRET is missing or too short', () => {
+    expect(
+      EnvSchema.safeParse({ ...baseValid, JWT_SECRET: 'short_secret' }).success,
+    ).toBe(false);
 
-    const parsed = EnvSchema.safeParse(invalidConfig);
-    expect(parsed.success).toBe(false);
-    if (!parsed.success) {
-      expect(parsed.error.flatten().fieldErrors.JWT_SECRET).toBeDefined();
-    }
+    const noCookie = { ...baseValid } as any;
+    delete noCookie.COOKIE_SECRET;
+    expect(EnvSchema.safeParse(noCookie).success).toBe(false);
+
+    const noLivekitSecret = { ...baseValid } as any;
+    delete noLivekitSecret.LIVEKIT_API_SECRET;
+    expect(EnvSchema.safeParse(noLivekitSecret).success).toBe(false);
   });
 
   it('fails when DATABASE_URL is not a valid URL', () => {
-    const invalidConfig = {
+    const parsed = EnvSchema.safeParse({
+      ...baseValid,
       DATABASE_URL: 'not-a-valid-url',
-      JWT_SECRET: 'a_very_long_and_secure_jwt_secret_32_characters_minimum',
-    };
-
-    const parsed = EnvSchema.safeParse(invalidConfig);
+    });
     expect(parsed.success).toBe(false);
-    if (!parsed.success) {
-      expect(parsed.error.flatten().fieldErrors.DATABASE_URL).toBeDefined();
-    }
   });
 });

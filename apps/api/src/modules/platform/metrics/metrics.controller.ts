@@ -1,4 +1,4 @@
-import { Controller, Get, Res } from '@nestjs/common';
+import { Controller, Get, Inject, Res } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
 import { MetricsService } from './metrics.service';
 import type { FastifyReply } from 'fastify';
@@ -6,7 +6,9 @@ import type { FastifyReply } from 'fastify';
 @ApiTags('Observability')
 @Controller('metrics')
 export class MetricsController {
-  constructor(private readonly metricsService: MetricsService) {}
+  constructor(
+    @Inject(MetricsService) private readonly metricsService: MetricsService,
+  ) {}
 
   @Get()
   @ApiOperation({ summary: 'Prometheus metrics scrape endpoint' })

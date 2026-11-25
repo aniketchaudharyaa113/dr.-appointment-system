@@ -16,6 +16,7 @@ import {
 } from '../providers/payment-provider.interface';
 import { FakePaymentProvider } from '../providers/fake.provider';
 import { LedgerService } from './ledger.service';
+import { RealtimeService } from '../../platform/realtime/realtime.service';
 import { env } from '../../../common/config/env.schema';
 
 @Injectable()
@@ -27,6 +28,7 @@ export class PaymentService {
     @Inject(RedisService) private readonly redis: RedisService,
     @Inject(PAYMENT_PROVIDER) private readonly provider: PaymentProvider,
     @Inject(LedgerService) private readonly ledgerService: LedgerService,
+    @Inject(RealtimeService) private readonly realtime: RealtimeService,
   ) {}
 
   /**
@@ -180,7 +182,7 @@ export class PaymentService {
     }
 
     // 4. Process event in ONE DB transaction with FOR UPDATE row locks
-    return this.prisma.$transaction(async (tx) => {
+    const result = await this.prisma.$transaction(async (tx) => {
       const paymentRows = await tx.$queryRaw<
         Array<{
           id: string;
@@ -394,8 +396,19 @@ export class PaymentService {
         status: 'CAPTURED',
         paymentId: payment.id,
         appointmentId: appointment.id,
+        patientId: appointment.patient_id,
       };
     });
+
+    if (result.status === 'CAPTURED' && (result as any).patientId) {
+      this.realtime.emitToUser((result as any).patientId, 'booking_updated', {
+        appointmentId: (result as any).appointmentId,
+        paymentId: (result as any).paymentId,
+        status: 'CONFIRMED',
+      });
+    }
+
+    return result;
   }
 
   /**

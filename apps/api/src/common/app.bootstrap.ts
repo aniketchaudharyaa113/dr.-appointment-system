@@ -11,6 +11,7 @@ import { randomUUID } from 'crypto';
 import { AppModule } from '../app.module';
 import { env } from './config/env.schema';
 import { AllExceptionsFilter } from './filters/http-exception.filter';
+import { RedisIoAdapter } from './adapters/redis-io.adapter';
 
 export async function createConfiguredApp(): Promise<NestFastifyApplication> {
   const adapter = new FastifyAdapter({
@@ -56,6 +57,11 @@ export async function createConfiguredApp(): Promise<NestFastifyApplication> {
   await app.register(fastifyCookie as any, {
     secret: env.COOKIE_SECRET,
   });
+
+  // Socket.IO Redis Adapter + strict CORS
+  const redisIoAdapter = new RedisIoAdapter(app);
+  await redisIoAdapter.connectToRedis();
+  app.useWebSocketAdapter(redisIoAdapter);
 
   // Global /api prefix (metrics remains internal at /metrics)
   app.setGlobalPrefix('api', { exclude: ['metrics'] });
