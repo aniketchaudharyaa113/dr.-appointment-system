@@ -95,7 +95,7 @@ export class AmbulanceService implements OnModuleDestroy {
     @Inject(PrismaService) private readonly prisma: PrismaService,
     @Inject(RedisService) private readonly redis: RedisService,
     @Inject(RealtimeService) private readonly realtime: RealtimeService,
-  ) {}
+  ) { }
 
   onModuleDestroy() {
     for (const timer of this.offerTimers.values()) {
@@ -984,9 +984,9 @@ export class AmbulanceService implements OnModuleDestroy {
     const a =
       Math.sin(dLat / 2) * Math.sin(dLat / 2) +
       Math.cos((lat1 * Math.PI) / 180) *
-        Math.cos((lat2 * Math.PI) / 180) *
-        Math.sin(dLon / 2) *
-        Math.sin(dLon / 2);
+      Math.cos((lat2 * Math.PI) / 180) *
+      Math.sin(dLon / 2) *
+      Math.sin(dLon / 2);
     const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
     return parseFloat((R * c).toFixed(2));
   }

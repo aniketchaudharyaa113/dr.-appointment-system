@@ -47,90 +47,45 @@ export function AiDrawer() {
     setMessages((prev) => [...prev, userMsg]);
     setLoading(true);
 
-    // Immediate client-side safety guard for life-threatening emergencies
-    const lower = userText.toLowerCase();
-    const isEmergency =
-      lower.includes('chest pain') ||
-      lower.includes('heart attack') ||
-      lower.includes('cannot breathe') ||
-      lower.includes('unconscious') ||
-      lower.includes('severe bleeding') ||
-      lower.includes('stroke') ||
-      lower.includes('breathless');
-
-    if (isEmergency) {
-      setTimeout(() => {
-        setMessages((prev) => [
-          ...prev,
-          {
-            id: `a-${Date.now()}`,
-            sender: 'assistant',
-            isEmergency: true,
-            content:
-              'CRITICAL ALERT: Your reported symptoms indicate a potential life-threatening emergency. Do not wait for online consultation.',
-            citations: ['National Emergency Response Protocol 112', 'WHO EMS Triage Level 1'],
-            suggestedAction: {
-              type: 'EMERGENCY_AMBULANCE',
-              label: 'Dispatch Emergency Ambulance (112)',
-              href: '/emergency',
-            },
-          },
-        ]);
-        setLoading(false);
-      }, 400);
-      return;
-    }
-
     try {
       const token = getAuthToken();
-      const res = await fetch(`${API_URL}/ai/chat`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        },
-        body: JSON.stringify({ query: userText }),
-      });
-
-      if (res.ok) {
-        const data = await res.json();
-        setMessages((prev) => [
-          ...prev,
-          {
-            id: `a-${Date.now()}`,
-            sender: 'assistant',
-            content: data.reply || data.answer || 'Consultation guidance generated.',
-            citations: data.citations || ['MediBook Clinical Guidelines'],
-            suggestedAction: data.suggestedSpecialist
-              ? {
-                  type: 'BOOK_DOCTOR',
-                  label: `Consult ${data.suggestedSpecialist}`,
-                  href: `/doctors?specialty=${encodeURIComponent(data.suggestedSpecialist)}`,
-                }
-              : undefined,
+      if (token) {
+        const res = await fetch(`${API_URL}/ai/chat`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
           },
-        ]);
-      } else {
-        throw new Error('Fallback to local assistant');
-      }
-    } catch {
-      // Graceful offline fallback
-      setTimeout(() => {
-        let reply =
-          'Thank you for providing your symptoms. For safe medical guidance, we recommend speaking with a verified specialist on MediBook.';
-        let specialist = 'General Physician';
-        if (lower.includes('fever') || lower.includes('cough') || lower.includes('cold')) {
-          reply =
-            'For acute seasonal fever, adequate hydration and rest are recommended. If fever persists over 48 hours or temperature exceeds 102°F, consult a physician.';
-          specialist = 'General Physician';
-        } else if (lower.includes('skin') || lower.includes('rash') || lower.includes('itching')) {
-          reply =
-            'Dermatological symptoms such as persistent rash or itching benefit from a high-resolution video consultation with a dermatologist.';
-          specialist = 'Dermatologist';
-        } else if (lower.includes('headache') || lower.includes('migraine')) {
-          reply =
-            'Tension headaches can often be relieved with rest, fluid intake, and reduced screen exposure. Persistent unilateral or severe headaches warrant neurological evaluation.';
-          specialist = 'Neurologist';
+          body: JSON.stringify({ message: userText }),
+        });
+        if (!res.ok) throw new Error(`AI API returned ${res.status}`);
+        const data = await res.json();
+
+        const citationLabels = Array.isArray(data.citations)
+          ? data.citations.map((c: any) =>
+              typeof c === 'string' ? c : `${c.source}${c.title ? ` (${c.title})` : ''}`,
+            )
+          : [];
+
+        let suggestedAction: Message['suggestedAction'];
+        if (data.isEmergency) {
+          suggestedAction = {
+            type: 'EMERGENCY_AMBULANCE',
+            label: 'Dispatch Emergency Ambulance (112)',
+            href: '/emergency',
+          };
+        } else if (data.toolCall?.arguments?.doctorId) {
+          suggestedAction = {
+            type: 'BOOK_DOCTOR',
+            label: `Book ${data.toolCall.arguments.doctorName || data.recommendedSpecialty || 'Doctor'}`,
+            href: `/doctors/${data.toolCall.arguments.doctorId}`,
+          };
+        } else if (data.recommendedSpecialty) {
+          suggestedAction = {
+            type: 'BOOK_DOCTOR',
+            label: `Consult ${data.recommendedSpecialty}`,
+            href: `/doctors?specialty=${encodeURIComponent(data.recommendedSpecialty)}`,
+          };
         }
 
         setMessages((prev) => [
@@ -138,16 +93,63 @@ export function AiDrawer() {
           {
             id: `a-${Date.now()}`,
             sender: 'assistant',
-            content: reply,
-            citations: ['MOHFW Telemedicine Practice Guidelines', 'National Health Portal'],
-            suggestedAction: {
-              type: 'BOOK_DOCTOR',
-              label: `Book ${specialist}`,
-              href: `/doctors?specialty=${encodeURIComponent(specialist)}`,
-            },
+            isEmergency: Boolean(data.isEmergency),
+            content: data.reply,
+            citations: citationLabels,
+            suggestedAction,
           },
         ]);
-      }, 500);
+      } else {
+        const res = await fetch(`${API_URL}/ai/triage`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ query: userText }),
+        });
+        if (!res.ok) throw new Error(`Triage API returned ${res.status}`);
+        const data = await res.json();
+
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: `a-${Date.now()}`,
+            sender: 'assistant',
+            isEmergency: Boolean(data.isEmergency),
+            content: data.isEmergency
+              ? data.emergencyCard?.instructions ||
+                'CRITICAL ALERT: Potential emergency detected. Dial 112 / 108 immediately.'
+              : `Triage Urgency: ${data.urgencyLevel}. Recommended Specialty: ${data.recommendedSpecialty || 'General Medicine'}. Sign in to ask full RAG policy questions or use the live booking agent.`,
+            citations: ['MediBook Clinical Triage Engine'],
+            suggestedAction: data.isEmergency
+              ? {
+                  type: 'EMERGENCY_AMBULANCE',
+                  label: 'Dispatch Emergency Ambulance (112)',
+                  href: '/emergency',
+                }
+              : data.recommendedSpecialty
+                ? {
+                    type: 'BOOK_DOCTOR',
+                    label: `Browse ${data.recommendedSpecialty} Doctors`,
+                    href: `/doctors?specialty=${encodeURIComponent(data.recommendedSpecialty)}`,
+                  }
+                : undefined,
+          },
+        ]);
+      }
+    } catch {
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: `a-${Date.now()}`,
+          sender: 'assistant',
+          content:
+            'The AI assistant service is temporarily unavailable. If this is an emergency, dial 112 immediately; otherwise you can browse verified specialists directly.',
+          suggestedAction: {
+            type: 'BOOK_DOCTOR',
+            label: 'Browse Verified Doctors',
+            href: '/doctors',
+          },
+        },
+      ]);
     } finally {
       setLoading(false);
     }

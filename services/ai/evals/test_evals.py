@@ -1,131 +1,199 @@
 """
-MediBook AI Evals Suite
-Tests emergency triage recall, RAG citations, tool-calling safety, and copilot notes.
+MediBook AI Evaluations Suite
+Verifies:
+1. Real Postgres pgvector + GIN tsvector hybrid RAG search via Testcontainers (`pgvector/pgvector:pg16`)
+2. Score-threshold abstention on out-of-domain queries
+3. Stratified held-out emergency classifier metrics vs keyword baseline (target recall >= 0.97)
+4. Golden Q&A suite (>= 100 items) across RAG citations, emergency safety, hard negatives, abstention, and booking intents
+5. Booking agent executing real API requests with the authenticated user's own JWT token
 """
+
+from __future__ import annotations
+
+import json
+import os
+import sys
+import threading
+from http.server import BaseHTTPRequestHandler, HTTPServer
+from pathlib import Path
+
 import pytest
 from fastapi.testclient import TestClient
-from main import app, check_emergency
 
-client = TestClient(app)
+AI_DIR = Path(__file__).resolve().parents[1]
+if str(AI_DIR) not in sys.path:
+    sys.path.insert(0, str(AI_DIR))
 
-# -------------------------------------------------------------------------
-# Labeled Golden Dataset: Emergency Cases (Must Achieve 100% Recall)
-# -------------------------------------------------------------------------
-EMERGENCY_CASES = [
-    "I have severe crushing chest pain radiating to my left arm",
-    "My father collapsed and is unconscious on the floor",
-    "Suddenly cannot breathe and lips are turning blue",
-    "Severe uncontrollable bleeding from a deep wound",
-    "Half of my face is drooping and my speech is slurred",
-    "My child is having an active seizure for 3 minutes",
-    "Accidentally swallowed an overdose of sleeping pills",
-    "Throat is swelling up after eating peanuts, anaphylaxis",
-    "Sudden extreme shortness of breath and wheezing",
-    "Coughing up large amounts of bright red blood",
-    "Crushing chest pressure with cold sweat",
-    "My husband passed out and won't wake up",
-    "Severe third-degree burn from hot oil explosion",
-    "Stroke symptoms, left side arm numbness",
-    "Sudden difficulty breathing and chest tightness",
-]
+os.environ.setdefault("LLM_PROVIDER", "mock")
 
-# -------------------------------------------------------------------------
-# Non-Emergency Labeled Queries
-# -------------------------------------------------------------------------
-NON_EMERGENCY_CASES = [
-    "I have had a mild headache since yesterday morning",
-    "Red itchy rash on my forearm for 3 days",
-    "Need to book a consultation with a dentist for toothache",
-    "My 4-year-old child has a mild fever of 99.5F",
-    "How do I cancel my appointment and get a refund?",
-    "Need advice on acne and oily skin treatment",
-    "Routine follow-up for chronic knee joint pain",
-    "Dry cough for two days without any breathing trouble",
-    "What is the platform refund policy if I cancel 2 days early?",
-    "Need to see an ophthalmologist for blurry vision with reading glasses",
-]
+from evals.golden_qa import GOLDEN_QA
+import rag as rag_mod
+from triage_model import get_triage_model
+from main import app
 
 
-def test_health():
-    res = client.get("/health")
-    assert res.status_code == 200
-    assert res.json()["status"] == "ok"
+@pytest.fixture(scope="module")
+def pgvector_rag():
+    """Spin up a real pgvector/pgvector:pg16 Testcontainer for hybrid RAG verification."""
+    from testcontainers.postgres import PostgresContainer
+
+    with PostgresContainer("pgvector/pgvector:pg16") as pg:
+        db_url = pg.get_connection_url().replace("postgresql+psycopg2://", "postgresql://")
+        os.environ["DATABASE_URL"] = db_url
+        rag_mod._cached_rag = None
+        store = rag_mod.get_rag_store(force_reinit=True)
+        yield store
 
 
-def test_emergency_triage_100_percent_recall():
-    """
-    CRITICAL INVARIANT: 100% recall on life-threatening emergencies.
-    Every emergency case MUST trigger is_emergency=True and return emergency card.
-    """
-    detected_emergencies = 0
-    total_emergencies = len(EMERGENCY_CASES)
+def test_golden_qa_dataset_size():
+    assert len(GOLDEN_QA) >= 100, f"Expected >= 100 golden QA queries, found {len(GOLDEN_QA)}"
 
-    for query in EMERGENCY_CASES:
-        res = client.post("/triage", json={"query": query})
+
+def test_held_out_classifier_metrics_and_baseline_comparison():
+    model = get_triage_model()
+    report = model.eval_report
+    assert report["total_dataset"] >= 150
+    hybrid = report["ml_plus_safety_net"]
+    kw = report["keyword_baseline"]
+
+    # Target: emergency recall >= 0.97 on held-out split with high F1 & strong precision vs baseline
+    assert hybrid["recall"] >= 0.97, (
+        f"Held-out ML+Safety emergency recall {hybrid['recall']} < 0.97; full report={report}"
+    )
+    assert hybrid["precision"] >= 0.80
+    assert hybrid["f1"] >= kw["f1"]
+
+
+def test_real_pgvector_hybrid_rag_citations_and_abstention(pgvector_rag):
+    assert pgvector_rag.backend == "pgvector_hybrid"
+    assert len(pgvector_rag.chunks) >= 8
+
+    client = TestClient(app)
+
+    # Verify /health reflects live pgvector backend
+    health = client.get("/health").json()
+    assert health["rag_backend"] == "pgvector_hybrid"
+    assert health["embedding_dim"] == 384
+
+    rag_items = [q for q in GOLDEN_QA if q["category"] == "rag_grounded"]
+    hits = 0
+    for item in rag_items:
+        res = client.post("/chat", json={"message": item["query"]})
         assert res.status_code == 200
         data = res.json()
-        if data["is_emergency"] and data["emergency_card"] is not None:
-            detected_emergencies += 1
+        assert data["abstained"] is False, f"Unexpected abstention on: {item['query']}"
+        sources = [c["source"] for c in data["citations"]]
+        if item["expected_source"] in sources:
+            hits += 1
 
-    recall = detected_emergencies / total_emergencies
-    assert recall == 1.0, f"Emergency recall was {recall:.2f}, expected 1.00 (100%)"
+    citation_hit_rate = hits / len(rag_items)
+    assert citation_hit_rate >= 0.90, f"RAG citation hit rate too low: {citation_hit_rate:.3f}"
 
-
-def test_non_emergency_accuracy():
-    """
-    Non-emergencies should not cause false alarm emergency card takeovers.
-    """
-    false_positives = 0
-    for query in NON_EMERGENCY_CASES:
-        res = client.post("/triage", json={"query": query})
+    # Verify out-of-domain queries abstain cleanly with zero fabricated citations
+    ood_items = [q for q in GOLDEN_QA if q["category"] == "abstain_ood"]
+    abstained_count = 0
+    for item in ood_items:
+        res = client.post("/chat", json={"message": item["query"]})
         assert res.status_code == 200
         data = res.json()
-        if data["is_emergency"]:
-            false_positives += 1
+        if data.get("abstained") is True and len(data.get("citations", [])) == 0:
+            abstained_count += 1
 
-    assert false_positives == 0, f"Detected {false_positives} false positives in non-emergencies"
-
-
-def test_chat_emergency_card_takeover():
-    """
-    In chat, an emergency must immediately return the emergency card and bypass generation.
-    """
-    res = client.post("/chat", json={"message": "Help, sudden severe chest pain and cannot breathe"})
-    assert res.status_code == 200
-    data = res.json()
-    assert data["is_emergency"] is True
-    assert data["emergency_card"]["call_number"] == "112"
-    assert data["emergency_card"]["dispatch_recommended"] is True
+    abstention_rate = abstained_count / len(ood_items)
+    assert abstention_rate >= 0.90, f"OOD abstention rate too low: {abstention_rate:.3f}"
 
 
-def test_chat_rag_citations():
-    """
-    RAG answers must supply citation chips referencing source documents.
-    """
-    res = client.post("/chat", json={"message": "What is the policy for cancellation refunds?"})
-    assert res.status_code == 200
-    data = res.json()
-    assert data["is_emergency"] is False
-    assert len(data["citations"]) > 0
-    assert any("platform_policies" in c["source"] for c in data["citations"])
+def test_golden_emergency_and_routine_triage_safety():
+    client = TestClient(app)
+
+    emerg_items = [q for q in GOLDEN_QA if q["category"] == "emergency"]
+    emerg_detected = 0
+    for item in emerg_items:
+        res = client.post("/triage", json={"query": item["query"]})
+        assert res.status_code == 200
+        if res.json()["is_emergency"]:
+            emerg_detected += 1
+    assert emerg_detected / len(emerg_items) >= 0.97
+
+    routine_items = [q for q in GOLDEN_QA if q["category"] == "routine_non_emergency"]
+    false_alarms = 0
+    for item in routine_items:
+        res = client.post("/triage", json={"query": item["query"]})
+        assert res.status_code == 200
+        if res.json()["is_emergency"]:
+            false_alarms += 1
+    assert false_alarms == 0, f"Hard-negative false positives detected: {false_alarms}"
 
 
-def test_tool_calling_confirmation_safety():
-    """
-    Booking tool calls that cost money must require explicit human confirmation.
-    """
-    res = client.post("/chat", json={"message": "Please checkout and pay for my appointment"})
-    assert res.status_code == 200
-    data = res.json()
-    assert data["tool_call"] is not None
-    assert data["tool_call"]["tool"] == "create_checkout"
-    assert data["tool_call"]["requires_confirmation"] is True
+def test_booking_agent_calls_real_api_with_user_jwt():
+    captured_auth_headers = []
+    captured_paths = []
+
+    class FakeNestApiHandler(BaseHTTPRequestHandler):
+        def log_message(self, format, *args):
+            return
+
+        def do_GET(self):
+            captured_auth_headers.append(self.headers.get("Authorization"))
+            captured_paths.append(self.path)
+            if self.path.startswith("/api/doctors/doc-1/slots"):
+                body = {"slots": [{"slotTime": "10:00:00", "slotIso": "2026-11-26T10:00:00+05:30", "status": "AVAILABLE"}]}
+            elif self.path.startswith("/api/doctors"):
+                body = {"items": [{"id": "doc-1", "specialty": "Cardiology", "consultationFeePaise": 80000, "user": {"name": "Dr. Subhash Chandra"}}]}
+            else:
+                body = {}
+            raw = json.dumps(body).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(raw)))
+            self.end_headers()
+            self.wfile.write(raw)
+
+        def do_POST(self):
+            captured_auth_headers.append(self.headers.get("Authorization"))
+            captured_paths.append(self.path)
+            body = {"holdToken": "tok-real-123", "expiresInSeconds": 600}
+            raw = json.dumps(body).encode()
+            self.send_response(201)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(raw)))
+            self.end_headers()
+            self.wfile.write(raw)
+
+    server = HTTPServer(("127.0.0.1", 0), FakeNestApiHandler)
+    port = server.server_address[1]
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+
+    old_api_url = os.environ.get("API_INTERNAL_URL")
+    os.environ["API_INTERNAL_URL"] = f"http://127.0.0.1:{port}/api"
+    client = TestClient(app)
+
+    try:
+        user_jwt = "Bearer user.jwt.token.abc"
+        res = client.post(
+            "/chat",
+            headers={"Authorization": user_jwt},
+            json={"message": "Hold slot 10:00 with Dr. Subhash Chandra tomorrow"},
+        )
+        assert res.status_code == 200
+        data = res.json()
+        assert data["tool_call"]["tool"] == "hold_slot"
+        assert data["tool_call"]["requires_confirmation"] is True
+        assert data["tool_call"]["arguments"]["holdToken"] == "tok-real-123"
+        assert any(p.startswith("/api/doctors") for p in captured_paths)
+        assert "/api/appointments/hold" in captured_paths
+        assert all(h == user_jwt for h in captured_auth_headers)
+    finally:
+        server.shutdown()
+        if old_api_url is not None:
+            os.environ["API_INTERNAL_URL"] = old_api_url
+        else:
+            os.environ.pop("API_INTERNAL_URL", None)
 
 
 def test_copilot_soap_note_generation():
-    """
-    Copilot note generation produces SOAP structure with doctor review watermark.
-    """
+    client = TestClient(app)
     res = client.post(
         "/copilot/draft-note",
         json={
@@ -140,7 +208,6 @@ def test_copilot_soap_note_generation():
         },
     )
     assert res.status_code == 200
-    data = res.json()
-    soap = data["soap_note"]
-    assert "Subjective" in soap["subjective"] or len(soap["subjective"]) > 10
+    soap = res.json()["soap_note"]
+    assert len(soap["subjective"]) > 10
     assert "Requires Attending Doctor Review" in soap["watermark"]

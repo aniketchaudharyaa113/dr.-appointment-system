@@ -8,10 +8,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libpq-dev \
     && rm -rf /var/lib/apt/lists/*
 
-COPY services/ai/pyproject.toml services/ai/main.py ./
-
 RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir fastapi uvicorn pydantic pydantic-settings httpx
+    pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cpu torch && \
+    pip install --no-cache-dir fastapi uvicorn pydantic pydantic-settings httpx numpy psycopg2-binary pgvector scikit-learn sentence-transformers
+
+COPY services/ai /app
+
+ENV HF_HOME=/app/.hf_cache
+RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('all-MiniLM-L6-v2')"
 
 RUN useradd -m -u 1001 appuser && chown -R appuser:appuser /app
 USER appuser

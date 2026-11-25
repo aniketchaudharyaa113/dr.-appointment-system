@@ -1,50 +1,26 @@
-# MediBook AI Evaluation & Clinical Safety Report
+# MediBook AI Evaluation Report
 
-## 1. Executive Summary & Quality Gates
-The MediBook AI service implements a safety-first, multi-stage architecture:
-1. **Zero-Latency Emergency Guardrail**: A deterministic, rule-based and multi-condition lexical classifier executes **before** any generative LLM inference. Life-threatening symptoms immediately trigger the Emergency Card (direct 112 hotline + ambulance dispatch CTA) and abort LLM generation.
-2. **Clinical RAG Architecture**: Curated from public-health guidelines (WHO, MoHFW India, MediBook operational policies) with hybrid retrieval and mandatory citation chips.
-3. **Safety Fallback**: If retrieval confidence falls below threshold, the assistant falls back to a standardized disclaimer and directs the patient to an appropriate specialist.
-4. **Tool-Calling Security**: Booking tools operate under the caller's JWT scope; payment and checkout require explicit human confirmation.
-5. **Doctor Copilot**: Draft notes (SOAP format) are generated strictly for doctor review; no AI model can write directly to medical records.
+Generated from live execution against PostgreSQL `pgvector_hybrid` (`12` indexed corpus chunks, `all-MiniLM-L6-v2` 384-d embeddings + `tsvector` GIN full-text RRF fusion).
 
----
+## 1. Emergency Triage Held-Out Evaluation (30% Stratified Split)
 
-## 2. Evaluation Results on 100-Sample Labeled Benchmark
+- **Dataset size:** 190 labeled texts (`emergency`, `urgent`, `routine` across English paraphrases, hard negatives, Hinglish, and Bengali-romanized phrases)
+- **Train / Held-out Test Split:** 133 train / 57 held-out
+- **3-Class Classifier Accuracy (LogisticRegression on 384-d embeddings):** 0.8070
 
-| Benchmark Category | Metric Target | Result | Status |
-| :--- | :--- | :--- | :--- |
-| **Emergency Triage Recall** | **100.0%** (0 false negatives on critical conditions) | **100.0%** | **PASSED** |
-| **Non-Emergency Precision** | $\ge 95.0\%$ | **98.2%** | **PASSED** |
-| **RAG Retrieval Hit-Rate** | $\ge 90.0\%$ | **94.5%** | **PASSED** |
-| **Citation Attribution Rate**| 100.0% of verified assertions | **100.0%** | **PASSED** |
-| **Tool Calling Safety Gate** | 100% of payment tools require confirmation | **100.0%** | **PASSED** |
+| Detector | Precision | Recall | F1 | Accuracy | False Positives | False Negatives |
+| :--- | :---: | :---: | :---: | :---: | :---: | :---: |
+| **Keyword Baseline** | 0.8000 | 0.2000 | 0.3200 | 0.7018 | 1 | 16 |
+| **Pure ML Classifier (`p >= 0.42`)** | 0.7895 | 0.7500 | 0.7692 | 0.8421 | 4 | 5 |
+| **ML Classifier + Multi-Lingual Rule Safety Net** | **0.8333** | **1.0000** | **0.9091** | **0.9298** | 4 | 0 |
 
----
+## 2. Golden Q&A Benchmark (105 Queries)
 
-## 3. Classifier vs Keyword Baseline Comparison
-
-| Model Architecture | Emergency Recall | Non-Emergency Precision | Inference Latency |
-| :--- | :--- | :--- | :--- |
-| **Simple Exact Keyword Match** | 66.7% | 99.0% | < 1 ms |
-| **Multi-Condition Rule Classifier (MediBook)** | **100.0%** | **98.2%** | **< 2 ms** |
-| **Zero-Shot LLM Prompting** | 94.2% | 91.5% | 850 - 1500 ms |
-
-> [!IMPORTANT]
-> A critical failure of LLM-only triage is latency and hallucination risk under network strain. MediBook's multi-condition classifier executes in < 2 ms on the local CPU, guaranteeing immediate triage even during network degradation or provider outages.
-
----
-
-## 4. Architectural Decision: Why RAG Over Model Fine-Tuning
-
-### Context
-In clinical telehealth platforms, there is often a temptation to "fine-tune" a language model on past medical transcripts or symptom datasets.
-
-### Decision
-MediBook strictly uses **Retrieval-Augmented Generation (RAG)** for its patient assistant, and limits fine-tuning strictly to small offline classification heads.
-
-### Rationale
-1. **Elimination of Hallucination Drift**: Fine-tuned weights "bake in" clinical facts that cannot be updated in real time. RAG grounds answers in version-controlled markdown documents in `services/ai/corpus/`.
-2. **Auditability & Traceability**: Telemedicine practice guidelines require clinical traceability. Every RAG answer outputs citation links (`[1]`, `[2]`) to the underlying guideline document.
-3. **Real-Time Platform State**: Doctor availability, consultation fees, and leave schedules change every minute. A fine-tuned model cannot know that Dr. Sharma is on leave today; RAG and tool calling query live PostgreSQL and Redis state.
-4. **Data Privacy (Zero PHI Leakage)**: Fine-tuning on patient records risks weight extraction attacks. RAG retrieves only within the active user's authorized JWT boundary.
+| Benchmark Slice | Passed / Total | Rate |
+| :--- | :---: | :---: |
+| **RAG Grounded Citations (`pgvector` + `tsvector` RRF)** | 32 / 32 | 100.0% |
+| **Out-of-Domain Abstention (< Cosine/RRF Threshold)** | 18 / 20 | 90.0% |
+| **Emergency Golden Recall (EN / Hinglish / Bengali)** | 25 / 25 | 100.0% |
+| **Routine & Hard Negatives (0 False Alarms)** | 20 / 20 | 100.0% |
+| **Booking Intent Confirmation Safety (`requires_confirmation`)** | 8 / 8 | 100.0% |
+| **Total Golden Q&A** | **103 / 105** | **98.1%** |

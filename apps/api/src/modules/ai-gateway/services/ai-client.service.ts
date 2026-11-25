@@ -17,7 +17,9 @@ export interface ChatResult {
   isEmergency: boolean;
   emergencyCard?: any;
   reply: string;
-  citations: Array<{ source: string; title: string; snippet: string }>;
+  citations: Array<{ source: string; title: string; snippet: string; score?: number }>;
+  abstained?: boolean;
+  searchBackend?: string;
   recommendedSpecialty?: string;
   toolCall?: {
     tool: string;
@@ -100,19 +102,27 @@ export class AiClientService {
     message: string,
     userId?: string,
     history: Array<{ sender: string; content: string }> = [],
+    authHeader?: string,
   ): Promise<ChatResult> {
     const redacted = this.redactPii(message);
 
     try {
-      const res = await this.fetchWithTimeout(`${this.baseUrl}/chat`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          message: redacted,
-          user_id: userId,
-          conversation_history: history,
-        }),
-      });
+      const res = await this.fetchWithTimeout(
+        `${this.baseUrl}/chat`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(authHeader ? { Authorization: authHeader } : {}),
+          },
+          body: JSON.stringify({
+            message: redacted,
+            user_id: userId,
+            conversation_history: history,
+          }),
+        },
+        8000,
+      );
 
       if (!res.ok) throw new Error(`AI service returned ${res.status}`);
       const data = await res.json();
@@ -121,6 +131,8 @@ export class AiClientService {
         emergencyCard: data.emergency_card,
         reply: data.reply,
         citations: data.citations || [],
+        abstained: Boolean(data.abstained),
+        searchBackend: data.search_backend,
         recommendedSpecialty: data.recommended_specialty,
         toolCall: data.tool_call
           ? {

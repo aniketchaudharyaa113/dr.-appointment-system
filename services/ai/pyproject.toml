@@ -1,9 +1,9 @@
 [project]
 name = "medibook-ai"
-version = "0.1.0"
-description = "MediBook Telehealth AI Service (Triage, RAG, Booking Agent, Doctor Copilot)"
+version = "0.2.0"
+description = "MediBook Telehealth AI Service (Hybrid pgvector+tsvector RAG, ML Emergency Triage, Booking Agent, Doctor Copilot)"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 dependencies = [
     "fastapi>=0.115.0",
     "uvicorn[standard]>=0.32.0",
@@ -14,6 +14,7 @@ dependencies = [
     "psycopg2-binary>=2.9.9",
     "pgvector>=0.3.0",
     "scikit-learn>=1.5.0",
+    "sentence-transformers>=3.0.0",
 ]
 
 [build-system]

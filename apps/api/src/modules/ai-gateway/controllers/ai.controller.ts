@@ -4,6 +4,7 @@ import {
   Body,
   UseGuards,
   Inject,
+  Headers,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../../identity/guards/jwt-auth.guard';
@@ -37,23 +38,34 @@ export class AiController {
   @Post('chat')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
-  @ApiOperation({ summary: 'Clinical conversational RAG assistant & booking agent' })
+  @ApiOperation({
+    summary: 'Clinical conversational RAG assistant & booking agent',
+  })
   async chat(
     @CurrentUser() user: JwtPayload,
+    @Headers('authorization') authHeader: string | undefined,
     @Body(new ZodValidationPipe(AiChatQuerySchema))
     body: {
       message: string;
       history?: Array<{ sender: string; content: string }>;
     },
   ) {
-    return this.aiService.chat(body.message, user.sub, body.history);
+    return this.aiService.chat(
+      body.message,
+      user.sub,
+      body.history,
+      authHeader,
+    );
   }
 
   @Post('copilot/draft-note')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles('DOCTOR')
   @ApiBearerAuth()
-  @ApiOperation({ summary: 'Doctor copilot: summarize consultation transcript into SOAP draft note' })
+  @ApiOperation({
+    summary:
+      'Doctor copilot: summarize consultation transcript into SOAP draft note',
+  })
   async generateCopilotNote(
     @CurrentUser() user: JwtPayload,
     @Body(new ZodValidationPipe(AiCopilotNoteSchema))

@@ -38,6 +38,13 @@
 
 ---
 
+## Slice 5: Honest AI Service (pgvector RAG, ML Triage, Booking Agent) — COMPLETED & VERIFIED
+- [x] **Real Hybrid RAG (`services/ai/rag.py`, `embeddings.py`, `migrations/3_ai_rag_pgvector`)**: Replaced word-overlap with 384-d `SentenceTransformer('all-MiniLM-L6-v2')` embeddings persisted in PostgreSQL `ai_knowledge_chunks` (`vector(384)` HNSW index + `tsvector` GIN index); RRF hybrid search merges cosine similarity and `ts_rank_cd`, returns source citations (`32/32` Golden hit rate), and abstains cleanly below threshold (`18/20` OOD abstention).
+- [x] **LLM Provider Abstraction (`services/ai/llm_provider.py`)**: Implemented `OllamaLLMProvider` (local Ollama / `qwen2.5:latest`) with `DeterministicMockLLMProvider` for CI/offline deterministic grounded generation & SOAP note drafting.
+- [x] **ML Triage Classifier + Safety Net (`services/ai/dataset.py`, `triage_model.py`)**: Curated 190-item dataset (`emergency` / `urgent` / `routine` with paraphrases, hard negatives, Hinglish, Bengali-romanized); trained `LogisticRegression` on sentence embeddings + lexical TF-IDF features on stratified 70/30 held-out split (`1.0000` recall, `0.8333` precision, `0.9091` F1 vs Keyword baseline `0.2000` recall, `0.3200` F1). Full benchmark recorded in `docs/AI_EVALS.md` (`103/105` Golden Q&A).
+- [x] **Booking Agent & Frontend AI Drawer (`services/ai/booking_agent.py`, `ai.controller.ts`, `ai-client.service.ts`, `ai-drawer.tsx`)**: Forwarded user JWT `Authorization` securely from NestJS Gateway; `RealBookingAgent` queries `/api/doctors`, `/api/doctors/:id/slots`, and `/api/appointments/hold` using the user's own JWT; removed fake hardcoded client-side AI answers. Verified via `pytest services/ai/evals/test_evals.py` (`6/6 PASSED`) and `ai-gateway.spec.ts` (`4/4 PASSED`).
+
+---
+
 ## Remaining Slices (In Progress)
-- [ ] **Slice 5**: Real pgvector + tsvector hybrid RAG with embeddings, LLM provider abstraction (Ollama + deterministic mock), ML emergency classifier (>=150 labeled texts, held-out eval >=0.97 recall), golden Q&A >=100 in `docs/AI_EVALS.md`, booking agent using user JWT.
 - [ ] **Slice 6**: Compose port hardening, fail-fast env secrets, Nginx routes, real `grafana/k6` load tests in `docs/LOAD_TEST.md`, CI overhaul (pnpm lint/typecheck/test/build + Playwright + AI evals), final docs honesty pass.
