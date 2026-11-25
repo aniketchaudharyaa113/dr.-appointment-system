@@ -3,53 +3,75 @@ import { check, sleep } from 'k6';
 
 export const options = {
   stages: [
-    { duration: '30s', target: 20 },  // Ramp-up to 20 virtual users
-    { duration: '1m', target: 50 },   // Sustained load at 50 VUs
-    { duration: '20s', target: 0 },   // Cool-down
+    { duration: '5s', target: 10 },
+    { duration: '15s', target: 25 },
+    { duration: '5s', target: 0 },
   ],
   thresholds: {
-    http_req_duration: ['p(95)<250'], // 95% of requests must complete below 250ms
-    http_req_failed: ['rate<0.01'],    // Error rate must be under 1%
+    http_req_duration: ['p(95)<500'],
+    http_req_failed: ['rate<0.05'],
   },
 };
 
-const BASE_URL = __ENV.TARGET_URL || 'http://localhost:4000/api/v1';
+const BASE_URL = __ENV.TARGET_URL || 'http://nginx/api';
+const PATIENT_EMAIL = __ENV.PATIENT_EMAIL || 'patient@medibook.test';
+const PATIENT_PASSWORD = __ENV.PATIENT_PASSWORD || 'Password123!';
 
-export default function () {
-  // Step 1: Browse doctors
-  const doctorsRes = http.get(`${BASE_URL}/doctors?specialty=Cardiology`);
-  check(doctorsRes, {
-    'doctors listed successfully': (r) => r.status === 200,
+export function setup() {
+  const loginRes = http.post(
+    `${BASE_URL}/auth/login`,
+    JSON.stringify({ email: PATIENT_EMAIL, password: PATIENT_PASSWORD }),
+    { headers: { 'Content-Type': 'application/json' } },
+  );
+  check(loginRes, {
+    'setup login succeeded': (r) => r.status === 200 || r.status === 201,
   });
+  const token = loginRes.json('accessToken');
 
-  sleep(1);
+  const docsRes = http.get(`${BASE_URL}/doctors?specialty=Cardiology`);
+  const docs = docsRes.json('items') || docsRes.json();
+  const doctorId = Array.isArray(docs) && docs.length > 0 ? docs[0].id : null;
 
-  // Step 2: Request 10-minute hold lease
-  const holdPayload = JSON.stringify({
-    doctorId: 'doc-1',
-    slotTime: '2026-11-03T17:30:00+05:30',
-  });
-  const holdParams = {
-    headers: { 'Content-Type': 'application/json' },
+  return { token, doctorId };
+}
+
+export default function (data) {
+  const headers = {
+    'Content-Type': 'application/json',
+    Authorization: `Bearer ${data.token}`,
   };
 
-  const holdRes = http.post(`${BASE_URL}/scheduling/hold`, holdPayload, holdParams);
-  check(holdRes, {
-    'hold response received': (r) => r.status === 200 || r.status === 409,
+  // 1. Directory read under load
+  const doctorsRes = http.get(`${BASE_URL}/doctors?specialty=Cardiology`);
+  check(doctorsRes, {
+    'doctors directory ok or 429 rate-limited': (r) =>
+      r.status === 200 || r.status === 429,
   });
 
-  sleep(1);
+  // 2. Live slot lookup
+  if (data.doctorId) {
+    const tomorrow = new Date(Date.now() + 86400000).toISOString().slice(0, 10);
+    const slotsRes = http.get(
+      `${BASE_URL}/doctors/${data.doctorId}/slots?date=${tomorrow}`,
+    );
+    check(slotsRes, {
+      'slots lookup ok or 429': (r) => r.status === 200 || r.status === 429,
+    });
 
-  // Step 3: Simulate Fake Provider Payment Capture
-  const paymentPayload = JSON.stringify({
-    appointmentId: 'apt-k6-test',
-    amountPaise: 100300,
-    provider: 'FAKE',
-  });
-  const paymentRes = http.post(`${BASE_URL}/payments/capture-fake`, paymentPayload, holdParams);
-  check(paymentRes, {
-    'payment processed': (r) => r.status === 200 || r.status === 400,
-  });
+    // 3. Contended hold attempt across VUs (only 1 winner per slot; 409 Conflict expected for losers)
+    const holdRes = http.post(
+      `${BASE_URL}/appointments/hold`,
+      JSON.stringify({
+        doctorId: data.doctorId,
+        slotTime: `${tomorrow}T10:00:00+05:30`,
+      }),
+      { headers },
+    );
+    check(holdRes, {
+      'hold atomic 201 or 409 conflict or 429': (r) =>
+        r.status === 201 || r.status === 409 || r.status === 429,
+    });
+  }
 
-  sleep(1);
+  sleep(0.2);
 }

@@ -1,6 +1,8 @@
 /**
- * MediBook High-Concurrency Benchmark & Load Validation Harness
- * Executes high-volume concurrent races against the core domain engines.
+ * IN-PROCESS JS MICRO-BENCHMARK ONLY (NOT REAL HTTP / POSTGRES / REDIS THROUGHPUT).
+ * Simulates in-memory Mutex / Set semantics with synthetic timers for local baseline math only.
+ * For real network + Postgres + Redis + Nginx load tests, use `grafana/k6` with
+ * `load/k6-booking-flow.js` and `load/k6-webhook-flood.js`.
  */
 
 interface LatencyStats {
@@ -141,7 +143,7 @@ async function runSymptomSearchBenchmark(queryCount = 1000): Promise<LatencyStat
 }
 
 async function main() {
-  console.log('=== MediBook Performance & Concurrency Benchmark ===\n');
+  console.log('=== MediBook In-Process JS Micro-Benchmark (Synthetic Set/Promise Timings) ===\n');
 
   console.log('1. Executing 50-Parallel Slot Booking Race...');
   const slotStats = await runSlotRaceBenchmark(50);

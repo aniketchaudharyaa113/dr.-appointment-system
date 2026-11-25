@@ -7,8 +7,6 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgrespassword}
       POSTGRES_DB: ${POSTGRES_DB:-medibook}
-    ports:
-      - "5434:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -22,8 +20,6 @@ services:
     container_name: medibook-redis
     restart: unless-stopped
     command: redis-server --appendonly yes
-    ports:
-      - "6379:6379"
     volumes:
       - redis_data:/data
     healthcheck:
@@ -76,15 +72,20 @@ services:
       dockerfile: services/ai/Dockerfile
     container_name: medibook-ai
     restart: unless-stopped
-    ports:
-      - "8000:8000"
     environment:
       PORT: 8000
+      DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgrespassword}@postgres:5432/${POSTGRES_DB:-medibook}
+      API_INTERNAL_URL: http://nginx/api
+      LLM_PROVIDER: ${LLM_PROVIDER:-ollama}
+      OLLAMA_URL: ${OLLAMA_URL:-http://host.docker.internal:11434}
+    depends_on:
+      postgres:
+        condition: service_healthy
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://localhost:8000/health || exit 1"]
       interval: 10s
       timeout: 5s
-      retries: 3
+      retries: 5
 
   api-1:
     build:
