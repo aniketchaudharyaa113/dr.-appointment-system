@@ -38,12 +38,48 @@ export class AmbulanceController {
   ) {}
 
   @Get('emergency')
-  @ApiOperation({ summary: 'Get emergency hotlines and nearby hospitals (public, works with 0 drivers)' })
+  @ApiOperation({
+    summary:
+      'Get emergency hotlines and nearby hospitals (public, works with 0 drivers)',
+  })
   getEmergencyInfo(
     @Query(new ZodValidationPipe(EmergencyQuerySchema))
     query: { lat?: number; lng?: number },
   ) {
     return this.ambulanceService.getEmergencyInfo(query.lat, query.lng);
+  }
+
+  @Get('drivers/online')
+  @ApiOperation({
+    summary:
+      'List active ambulance units with live Redis GEO coordinates and heartbeats',
+  })
+  getOnlineDrivers(
+    @Query(new ZodValidationPipe(EmergencyQuerySchema))
+    query: { lat?: number; lng?: number },
+  ) {
+    return this.ambulanceService.getOnlineDrivers(query.lat, query.lng);
+  }
+
+  @Get('requests/active')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary: 'Get current active emergency ambulance request for the signed-in user',
+  })
+  getActiveRequest(@CurrentUser() user: JwtPayload) {
+    return this.ambulanceService.getActiveRequest(user.sub);
+  }
+
+  @Get('requests/:id')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Get ambulance request status & driver info' })
+  getRequest(
+    @Param('id', new ZodValidationPipe(UuidSchema)) requestId: string,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.ambulanceService.getRequestById(requestId, user.sub, user.role);
   }
 
   @Post('requests')
@@ -52,7 +88,8 @@ export class AmbulanceController {
   @ApiOperation({ summary: 'Patient initiates emergency ambulance dispatch' })
   async createRequest(
     @CurrentUser() user: JwtPayload,
-    @Body(new ZodValidationPipe(AmbulanceRequestSchema)) body: AmbulanceRequestInput,
+    @Body(new ZodValidationPipe(AmbulanceRequestSchema))
+    body: AmbulanceRequestInput,
   ) {
     return this.ambulanceService.createRequest(
       user.sub,
@@ -60,6 +97,17 @@ export class AmbulanceController {
       body.pickupLng,
       body.pickupAddress,
     );
+  }
+
+  @Post('requests/:id/cancel')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Patient or Admin cancels an active ambulance request' })
+  async cancelRequest(
+    @Param('id', new ZodValidationPipe(UuidSchema)) requestId: string,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.ambulanceService.cancelRequest(requestId, user.sub, user.role);
   }
 
   @Post('requests/:id/accept')
@@ -78,35 +126,65 @@ export class AmbulanceController {
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles('DRIVER')
   @ApiBearerAuth()
-  @ApiOperation({ summary: 'Driver updates trip status (EN_ROUTE, ARRIVED, COMPLETED)' })
+  @ApiOperation({
+    summary: 'Driver updates trip status (EN_ROUTE, ARRIVED, COMPLETED)',
+  })
   async updateTripStatus(
     @Param('id', new ZodValidationPipe(UuidSchema)) requestId: string,
     @CurrentUser() user: JwtPayload,
     @Body(new ZodValidationPipe(UpdateTripStatusSchema))
     body: { status: 'EN_ROUTE' | 'ARRIVED' | 'COMPLETED' },
   ) {
-    return this.ambulanceService.updateTripStatus(requestId, user.sub, body.status);
+    return this.ambulanceService.updateTripStatus(
+      requestId,
+      user.sub,
+      body.status,
+    );
+  }
+
+  @Get('driver/offers')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('DRIVER')
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Driver fetches pending offers and assigned trips' })
+  async getDriverOffers(@CurrentUser() user: JwtPayload) {
+    return this.ambulanceService.getDriverOffers(user.sub);
   }
 
   @Post('driver/telemetry')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles('DRIVER')
   @ApiBearerAuth()
-  @ApiOperation({ summary: 'Driver streams location and heartbeat to Redis GEO' })
+  @ApiOperation({
+    summary: 'Driver streams location and heartbeat to Redis GEO',
+  })
   async updateDriverTelemetry(
     @CurrentUser() user: JwtPayload,
     @Body(new ZodValidationPipe(DriverTelemetrySchema))
     body: {
       latitude: number;
       longitude: number;
-      isOnline: boolean;
+      isOnline?: boolean;
     },
   ) {
     return this.ambulanceService.updateDriverLocation(
       user.sub,
       body.latitude,
       body.longitude,
-      body.isOnline,
+      body.isOnline ?? true,
     );
+  }
+
+  @Post('dev/requests/:id/simulate-trip')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary:
+      'FAKE-mode helper that runs a real driver accept + live telemetry stream for the request',
+  })
+  async simulateTrip(
+    @Param('id', new ZodValidationPipe(UuidSchema)) requestId: string,
+  ) {
+    return this.ambulanceService.simulateDriverTrip(requestId);
   }
 }

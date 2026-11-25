@@ -1,29 +1,37 @@
 import { test, expect } from '@playwright/test';
 
-test.describe('Emergency Ambulance Dispatch E2E Journey', () => {
-  test('Emergency Screen -> 112 Hotline -> Request Ambulance -> Live GPS Tracking', async ({
+test.describe('Emergency SOS & Real Ambulance Dispatch E2E Flow', () => {
+  test('Emergency page loads real hotlines + Leaflet map and dispatches live simulated ambulance', async ({
     page,
   }) => {
-    // 1. Visit emergency screen
+    // 1. Public view works immediately (hotlines + hospitals from /api/ambulance/emergency + Leaflet map)
     await page.goto('/emergency');
-    await expect(page.locator('h1')).toContainText('Emergency Medical Service (EMS)');
+    await expect(page.locator('h1')).toContainText('Emergency SOS');
+    await expect(page.locator('text=Call 112')).toBeVisible();
+    await expect(page.locator('text=SSKM Government Hospital')).toBeVisible();
+    await expect(page.getByTestId('emergency-leaflet-map')).toBeVisible();
 
-    // 2. Verify emergency call hotlines are present
-    const call112 = page.locator('a[href="tel:112"]');
-    await expect(call112).toBeVisible();
+    // 2. Login as seeded patient
+    await page.goto('/auth/login');
+    await page.click('button:has-text("Patient (Anita Roy)")');
+    await expect(page).toHaveURL(/\/doctors/);
 
-    // 3. Verify Kolkata designated trauma centers list
-    await expect(page.locator('text=SSKM Hospital (IPGMER)')).toBeVisible();
+    // 3. Dispatch real ambulance request via UI -> API -> Postgres + Redis
+    await page.goto('/emergency');
+    await page.click('button:has-text("Request Emergency Ambulance")');
+    await expect(page.getByTestId('ambulance-status-badge')).toBeVisible();
 
-    // 4. Request emergency ambulance
-    await page.click('button:has-text("Request Ambulance Now")');
+    // 4. Trigger real driver simulator telemetry and watch live arrival updates over Socket.IO
+    await page.click('button:has-text("Simulate Live Driver Telemetry (Dev)")');
+    await expect(page.getByTestId('ambulance-status-badge')).toContainText(
+      /EN_ROUTE|ARRIVED/,
+      { timeout: 10000 },
+    );
+    await expect(page.getByTestId('ambulance-status-badge')).toContainText(
+      'ARRIVED',
+      { timeout: 15000 },
+    );
 
-    // 5. Verify status progresses to REQUESTED / OFFERED / ACCEPTED
-    await expect(page.locator('text=Status: REQUESTED')).toBeVisible();
-
-    // Wait for driver accept
-    await expect(page.locator('text=Driver accepted!')).toBeVisible({ timeout: 6000 });
-    await expect(page.locator('text=Rajesh Karmakar')).toBeVisible();
-    await expect(page.locator('text=WB-02-AX-8910')).toBeVisible();
+    // 5. Cancel / close out clean or verify status persisted
   });
 });

@@ -186,16 +186,41 @@ async function main() {
 
   await prisma.ambulanceDriverProfile.upsert({
     where: { userId: driverUser.id },
-    update: { isOnline: true },
+    update: { isOnline: true, lastLat: 22.5512, lastLng: 88.3524 },
     create: {
       userId: driverUser.id,
       vehicleNumber: 'WB-01-AMB-112',
       isOnline: true,
-      lastLat: 22.5726,
-      lastLng: 88.3639,
+      lastLat: 22.5512,
+      lastLng: 88.3524,
     },
   });
-  console.log('✓ Ambulance Driver seeded:', driverUser.email);
+  console.log('✓ Ambulance Driver 1 seeded:', driverUser.email);
+
+  const driverUser2 = await prisma.user.upsert({
+    where: { email: 'driver2@medibook.test' },
+    update: {},
+    create: {
+      email: 'driver2@medibook.test',
+      passwordHash,
+      name: 'Rajib Das',
+      phone: '+919876543214',
+      role: 'DRIVER',
+    },
+  });
+
+  await prisma.ambulanceDriverProfile.upsert({
+    where: { userId: driverUser2.id },
+    update: { isOnline: true, lastLat: 22.5804, lastLng: 88.4378 },
+    create: {
+      userId: driverUser2.id,
+      vehicleNumber: 'WB-02-AMB-204',
+      isOnline: true,
+      lastLat: 22.5804,
+      lastLng: 88.4378,
+    },
+  });
+  console.log('✓ Ambulance Driver 2 seeded:', driverUser2.email);
 
   // 5. Seed Common Symptoms
   const symptoms = [

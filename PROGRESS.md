@@ -31,7 +31,13 @@
 
 ---
 
+## Slice 4: Ambulance Dispatch End-to-End — COMPLETED & VERIFIED
+- [x] **End-to-End State Machine & 20s Timeout Cascade (`ambulance.service.ts`, `ambulance.controller.ts`)**: Redis GEO nearest-driver matching, 30s heartbeat eviction + lazy purge, non-repeating `ambulance:tried:<id>` exclusion set, automatic timer + Redis-locked 20s timeout reassignment, atomic conditional `updateMany({ where: { id, status: 'OFFERED', driverId } })` single-winner claim, live trip status transitions (`ACCEPTED -> EN_ROUTE -> ARRIVED -> COMPLETED`), and patient cancel/active/driver-offers APIs.
+- [x] **Real-Time Socket.IO & Leaflet Map (`ambulance.gateway.ts`, `emergency/page.tsx`, `emergency-map.tsx`)**: Wired `/ambulance` namespace room authorization + `ambulance_offer` / `ambulance_status` / `ambulance_location` live updates to an interactive Leaflet map with live moving ambulance markers, pickup pin, trauma hospitals, route polyline, and real driver simulator (`scripts/simulate-drivers.ts` + FAKE-mode trip simulator).
+- [x] **Real Testcontainers & Playwright Verification**: `slice4-ambulance.spec.ts` 4/4 PASSED (stale driver eviction + cancel, automatic multi-driver timeout cascade -> EXPIRED, 10x parallel atomic accept race, `/ambulance` socket isolation + live location stream). Slice 4 mutation proof recorded in `docs/AUDIT.md`. `e2e/emergency-flow.spec.ts` & `e2e/patient-flow.spec.ts` PASSED (2/2) against live Compose + Nginx stack.
+
+---
+
 ## Remaining Slices (In Progress)
-- [ ] **Slice 4**: End-to-end ambulance dispatch, 20s timeout reassignment, atomic accept, Leaflet live tracking + driver simulator.
 - [ ] **Slice 5**: Real pgvector + tsvector hybrid RAG with embeddings, LLM provider abstraction (Ollama + deterministic mock), ML emergency classifier (>=150 labeled texts, held-out eval >=0.97 recall), golden Q&A >=100 in `docs/AI_EVALS.md`, booking agent using user JWT.
 - [ ] **Slice 6**: Compose port hardening, fail-fast env secrets, Nginx routes, real `grafana/k6` load tests in `docs/LOAD_TEST.md`, CI overhaul (pnpm lint/typecheck/test/build + Playwright + AI evals), final docs honesty pass.

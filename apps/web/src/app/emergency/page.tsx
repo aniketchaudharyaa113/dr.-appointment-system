@@ -1,300 +1,562 @@
 'use client';
 
-import React, { useState } from 'react';
-import { useI18n } from '@/lib/i18n';
+import { useState, useEffect } from 'react';
+import Link from 'next/link';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { io, Socket } from 'socket.io-client';
 import {
-  ShieldAlert,
   PhoneCall,
-  MapPin,
+  AlertTriangle,
   Ambulance,
+  MapPin,
   Clock,
+  ShieldAlert,
   Navigation,
-  Building,
+  Activity,
+  XCircle,
 } from 'lucide-react';
+import { fetchApi, getAuthToken, getCurrentUser } from '@/lib/api';
+import { EmergencyMap } from '@/components/emergency-map';
 
-interface Hospital {
-  name: string;
-  distanceKm: number;
-  phone: string;
-  hasTraumaICU: boolean;
-  address: string;
+interface EmergencyInfo {
+  emergencyHotlines: { name: string; number: string; description: string }[];
+  hospitals: {
+    id: string;
+    name: string;
+    address: string;
+    phone: string;
+    emergencyPhone: string;
+    latitude: number;
+    longitude: number;
+    distanceKm?: number;
+    hasTraumaCenter: boolean;
+  }[];
 }
 
-const kolkataHospitals: Hospital[] = [
-  {
-    name: 'SSKM Hospital (IPGMER) - Level 1 Trauma Care',
-    distanceKm: 2.1,
-    phone: '033-2223-1589',
-    hasTraumaICU: true,
-    address: '244 AJC Bose Road, Bhowanipore, Kolkata 700020',
-  },
-  {
-    name: 'Calcutta Medical College & Hospital',
-    distanceKm: 3.4,
-    phone: '033-2255-1600',
-    hasTraumaICU: true,
-    address: '88 College Street, College Square, Kolkata 700073',
-  },
-  {
-    name: 'Apollo Gleneagles Multispeciality Hospital',
-    distanceKm: 4.8,
-    phone: '033-2320-3040',
-    hasTraumaICU: true,
-    address: '58 Canal Circular Rd, Kankurgachi, Kolkata 700054',
-  },
-  {
-    name: 'Fortis Hospital Anandapur - 24/7 Cardiac Emergency',
-    distanceKm: 6.2,
-    phone: '033-6628-4444',
-    hasTraumaICU: true,
-    address: '730 Anandapur, E.M. Bypass Road, Kolkata 700107',
-  },
-];
+interface OnlineUnit {
+  driverId: string;
+  vehicleNumber: string;
+  driverName: string;
+  latitude: number | null;
+  longitude: number | null;
+  distanceKm: number | null;
+}
 
-type DispatchStatus = 'IDLE' | 'REQUESTED' | 'OFFERED' | 'ACCEPTED' | 'EN_ROUTE' | 'ARRIVED';
+interface AmbulanceTrip {
+  id: string;
+  status: string;
+  pickupLat: number | string;
+  pickupLng: number | string;
+  pickupAddress: string;
+  etaSeconds: number | null;
+  driver?: {
+    id: string;
+    vehicleNumber: string;
+    lastLat?: number | string | null;
+    lastLng?: number | string | null;
+    user?: { name: string; phone?: string };
+  } | null;
+}
 
 export default function EmergencyPage() {
-  const { t } = useI18n();
-  const [status, setStatus] = useState<DispatchStatus>('IDLE');
-  const [etaMinutes, setEtaMinutes] = useState<number>(8);
-  const [driverInfo, setDriverInfo] = useState<{
-    name: string;
-    vehicleNo: string;
-    phone: string;
+  const queryClient = useQueryClient();
+  const [pickupLat, setPickupLat] = useState(22.5512);
+  const [pickupLng, setPickupLng] = useState(88.3524);
+  const [pickupAddress, setPickupAddress] = useState(
+    'Park Street Crossing, Kolkata',
+  );
+  const [activeTrip, setActiveTrip] = useState<AmbulanceTrip | null>(null);
+  const [liveCoords, setLiveCoords] = useState<{
+    lat: number;
+    lng: number;
+    distanceKm?: number;
   } | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [hasSession, setHasSession] = useState(false);
 
-  const [coords, setCoords] = useState<{ lat: number; lng: number }>({
-    lat: 22.5726,
-    lng: 88.3639, // Central Kolkata
-  });
-
-  const handleCaptureLocation = () => {
-    if (typeof window !== 'undefined' && 'geolocation' in navigator) {
+  useEffect(() => {
+    setHasSession(Boolean(getAuthToken() && getCurrentUser()));
+    if (typeof window !== 'undefined' && navigator.geolocation) {
       navigator.geolocation.getCurrentPosition(
         (pos) => {
-          setCoords({ lat: pos.coords.latitude, lng: pos.coords.longitude });
-          alert(`Location captured: ${pos.coords.latitude.toFixed(4)}, ${pos.coords.longitude.toFixed(4)}`);
+          // Keep Kolkata fallback unless user is reasonably near Kolkata or explicitly allows
+          if (pos.coords.latitude && pos.coords.longitude) {
+            setPickupLat(Number(pos.coords.latitude.toFixed(5)));
+            setPickupLng(Number(pos.coords.longitude.toFixed(5)));
+          }
         },
         () => {
-          alert('GPS permission not granted. Defaulting to Central Kolkata epicenter.');
-        }
+          // Silent fallback to default Park Street coordinates
+        },
+        { timeout: 2500 },
       );
     }
-  };
+  }, []);
 
-  const handleRequestDispatch = () => {
-    setStatus('REQUESTED');
-    // Simulate offer countdown and driver accept
-    setTimeout(() => {
-      setStatus('OFFERED');
-      setTimeout(() => {
-        setStatus('ACCEPTED');
-        setDriverInfo({
-          name: 'Rajesh Karmakar',
-          vehicleNo: 'WB-02-AX-8910 (Advanced Cardiac Life Support)',
-          phone: '+91 98301 22910',
+  const emergencyInfoQuery = useQuery<EmergencyInfo>({
+    queryKey: ['emergency-info', pickupLat, pickupLng],
+    queryFn: () =>
+      fetchApi<EmergencyInfo>(
+        `/ambulance/emergency?lat=${pickupLat}&lng=${pickupLng}`,
+      ),
+  });
+
+  const onlineDriversQuery = useQuery<OnlineUnit[]>({
+    queryKey: ['online-ambulance-drivers', pickupLat, pickupLng],
+    queryFn: () =>
+      fetchApi<OnlineUnit[]>(
+        `/ambulance/drivers/online?lat=${pickupLat}&lng=${pickupLng}`,
+      ),
+    refetchInterval: 5000,
+  });
+
+  const activeTripQuery = useQuery<AmbulanceTrip | null>({
+    queryKey: ['active-ambulance-request'],
+    enabled: hasSession,
+    queryFn: () => fetchApi<AmbulanceTrip | null>('/ambulance/requests/active'),
+  });
+
+  useEffect(() => {
+    if (activeTripQuery.data) {
+      setActiveTrip(activeTripQuery.data);
+      if (
+        activeTripQuery.data.driver?.lastLat &&
+        activeTripQuery.data.driver?.lastLng
+      ) {
+        setLiveCoords({
+          lat: Number(activeTripQuery.data.driver.lastLat),
+          lng: Number(activeTripQuery.data.driver.lastLng),
         });
-        setEtaMinutes(7);
-        setTimeout(() => {
-          setStatus('EN_ROUTE');
-          setEtaMinutes(4);
-        }, 3000);
-      }, 2000);
-    }, 1500);
-  };
+      }
+    }
+  }, [activeTripQuery.data]);
 
-  const handleCancelDispatch = () => {
-    setStatus('IDLE');
-    setDriverInfo(null);
-  };
+  // Real Socket.IO /ambulance subscription
+  useEffect(() => {
+    const token = getAuthToken();
+    if (!token || !activeTrip?.id) return;
+
+    const socketOrigin =
+      process.env.NEXT_PUBLIC_SOCKET_URL ||
+      (typeof window !== 'undefined' ? window.location.origin : '');
+    const socket: Socket = io(`${socketOrigin}/ambulance`, {
+      auth: { token },
+      transports: ['websocket', 'polling'],
+    });
+
+    socket.on('connect', () => {
+      socket.emit('join_tracking', { requestId: activeTrip.id });
+    });
+
+    socket.on('ambulance_status', (payload: any) => {
+      if (payload.requestId !== activeTrip.id) return;
+      setActiveTrip((prev) =>
+        prev
+          ? {
+              ...prev,
+              status: payload.status ?? prev.status,
+              etaSeconds:
+                payload.etaSeconds !== undefined
+                  ? payload.etaSeconds
+                  : prev.etaSeconds,
+              driver: payload.driver !== undefined ? payload.driver : prev.driver,
+            }
+          : prev,
+      );
+      if (payload.driver?.lastLat && payload.driver?.lastLng) {
+        setLiveCoords({
+          lat: Number(payload.driver.lastLat),
+          lng: Number(payload.driver.lastLng),
+        });
+      }
+    });
+
+    socket.on('ambulance_location', (payload: any) => {
+      if (payload.requestId !== activeTrip.id) return;
+      setLiveCoords({
+        lat: Number(payload.latitude),
+        lng: Number(payload.longitude),
+        distanceKm: payload.distanceKm,
+      });
+      if (payload.etaSeconds !== undefined) {
+        setActiveTrip((prev) =>
+          prev ? { ...prev, etaSeconds: payload.etaSeconds } : prev,
+        );
+      }
+    });
+
+    return () => {
+      socket.disconnect();
+    };
+  }, [activeTrip?.id]);
+
+  const dispatchMutation = useMutation({
+    mutationFn: () =>
+      fetchApi<{ request: AmbulanceTrip; matchedDriver: any }>(
+        '/ambulance/requests',
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            pickupLat,
+            pickupLng,
+            pickupAddress,
+          }),
+        },
+      ),
+    onSuccess: (res) => {
+      setActionError(null);
+      setActiveTrip(res.request);
+      if (res.request.driver?.lastLat && res.request.driver?.lastLng) {
+        setLiveCoords({
+          lat: Number(res.request.driver.lastLat),
+          lng: Number(res.request.driver.lastLng),
+        });
+      }
+      queryClient.invalidateQueries({ queryKey: ['active-ambulance-request'] });
+    },
+    onError: (err: Error) => {
+      setActionError(err.message);
+    },
+  });
+
+  const simulateTripMutation = useMutation({
+    mutationFn: (requestId: string) =>
+      fetchApi<{ started: boolean }>(
+        `/ambulance/dev/requests/${requestId}/simulate-trip`,
+        { method: 'POST', body: JSON.stringify({}) },
+      ),
+    onError: (err: Error) => {
+      setActionError(err.message);
+    },
+  });
+
+  const cancelMutation = useMutation({
+    mutationFn: (requestId: string) =>
+      fetchApi<AmbulanceTrip>(`/ambulance/requests/${requestId}/cancel`, {
+        method: 'POST',
+        body: JSON.stringify({}),
+      }),
+    onSuccess: (updated) => {
+      setActiveTrip(updated);
+      setLiveCoords(null);
+      queryClient.invalidateQueries({ queryKey: ['active-ambulance-request'] });
+    },
+    onError: (err: Error) => {
+      setActionError(err.message);
+    },
+  });
+
+  const hotlines = emergencyInfoQuery.data?.emergencyHotlines ?? [];
+  const hospitals = emergencyInfoQuery.data?.hospitals ?? [];
+  const onlineUnits = onlineDriversQuery.data ?? [];
+
+  const isTerminal =
+    activeTrip &&
+    ['COMPLETED', 'CANCELLED', 'EXPIRED'].includes(activeTrip.status);
 
   return (
-    <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8">
-      {/* Top Banner Alert */}
-      <div className="p-6 rounded-3xl bg-rose-600 text-white shadow-xl flex flex-col sm:flex-row items-center justify-between gap-6">
-        <div className="flex items-center gap-4">
-          <div className="w-16 h-16 rounded-2xl bg-white/20 backdrop-blur-md flex items-center justify-center shrink-0">
-            <ShieldAlert className="w-10 h-10 text-white animate-pulse" />
-          </div>
-          <div>
-            <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-rose-800 text-rose-100 text-xs font-bold uppercase mb-1">
-              Priority 1 Emergency Response
+    <div className="min-h-screen bg-slate-50 dark:bg-slate-950 p-4 sm:p-6">
+      <div className="max-w-5xl mx-auto space-y-6">
+        {/* Emergency Banner */}
+        <div className="bg-red-600 text-white rounded-2xl p-6 shadow-xl flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+          <div className="flex items-center gap-4">
+            <div className="p-3 bg-white/20 rounded-xl animate-pulse">
+              <ShieldAlert className="w-8 h-8 text-white" />
             </div>
-            <h1 className="text-2xl sm:text-3xl font-extrabold">{t.emergency.title}</h1>
-            <p className="text-xs sm:text-sm text-rose-100 mt-1 max-w-xl">{t.emergency.subtitle}</p>
+            <div>
+              <h1 className="text-2xl font-bold tracking-tight">
+                24/7 Emergency SOS & Ambulance Dispatch
+              </h1>
+              <p className="text-red-100 text-sm">
+                Instant Redis GEO nearest-unit dispatch, 20-second timeout
+                cascade & real-time Leaflet GPS tracking.
+              </p>
+            </div>
+          </div>
+          <div className="flex gap-3">
+            <a
+              href="tel:112"
+              className="px-5 py-2.5 bg-white text-red-600 font-bold rounded-xl shadow flex items-center gap-2 hover:bg-red-50 transition-colors"
+            >
+              <PhoneCall className="w-4 h-4" /> Call 112
+            </a>
+            <a
+              href="tel:108"
+              className="px-5 py-2.5 bg-red-800 text-white font-bold rounded-xl shadow flex items-center gap-2 hover:bg-red-900 transition-colors"
+            >
+              <PhoneCall className="w-4 h-4" /> Call 108
+            </a>
           </div>
         </div>
 
-        {/* Immediate Call Buttons */}
-        <div className="flex flex-col sm:flex-row gap-3 w-full sm:w-auto shrink-0">
-          <a
-            href="tel:112"
-            className="flex items-center justify-center gap-2 px-5 py-3 rounded-xl bg-white text-rose-700 font-extrabold text-sm shadow-md hover:bg-rose-50 transition-colors"
-          >
-            <PhoneCall className="w-4 h-4" />
-            <span>Call 112 (National)</span>
-          </a>
-          <a
-            href="tel:108"
-            className="flex items-center justify-center gap-2 px-5 py-3 rounded-xl bg-rose-800 hover:bg-rose-900 text-white font-extrabold text-sm shadow-md transition-colors"
-          >
-            <PhoneCall className="w-4 h-4" />
-            <span>Call 108 (EMS)</span>
-          </a>
-        </div>
-      </div>
-
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-        {/* Left Column: Live Dispatch Panel */}
-        <div className="lg:col-span-2 space-y-6">
-          <div className="p-6 rounded-3xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm space-y-6">
+        {/* Live Leaflet Map + Dispatch Card */}
+        <div className="grid grid-cols-1 lg:grid-cols-5 gap-6">
+          <div className="lg:col-span-3 bg-white dark:bg-slate-900 rounded-2xl p-5 border border-slate-200 dark:border-slate-800 shadow-sm space-y-3">
             <div className="flex items-center justify-between">
-              <h2 className="text-lg font-bold text-slate-900 dark:text-white flex items-center gap-2">
-                <Ambulance className="w-5 h-5 text-rose-600" /> Live Ambulance Dispatch
+              <h2 className="font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                <Navigation className="w-5 h-5 text-red-600" /> Live Dispatch
+                Map (Kolkata)
               </h2>
-              <button
-                onClick={handleCaptureLocation}
-                className="text-xs font-semibold text-teal-600 dark:text-teal-400 hover:underline flex items-center gap-1"
-              >
-                <Navigation className="w-3.5 h-3.5" /> Recalibrate GPS
-              </button>
-            </div>
-
-            {/* GPS Location Banner */}
-            <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200/60 dark:border-slate-700/60 flex items-center justify-between text-xs">
-              <div className="flex items-center gap-2.5">
-                <MapPin className="w-4 h-4 text-rose-600" />
-                <div>
-                  <span className="font-bold text-slate-800 dark:text-slate-200 block">
-                    Location: Kolkata EMS Cluster
-                  </span>
-                  <span className="text-slate-400 font-mono">
-                    {coords.lat.toFixed(4)}° N, {coords.lng.toFixed(4)}° E
-                  </span>
-                </div>
-              </div>
-              <span className="text-[11px] font-bold text-emerald-600 bg-emerald-50 dark:bg-emerald-950 px-2 py-0.5 rounded">
-                GPS Locked
+              <span className="text-xs px-2.5 py-1 rounded-full bg-emerald-100 text-emerald-700 font-semibold">
+                {onlineUnits.length} Online Unit{onlineUnits.length === 1 ? '' : 's'}
               </span>
             </div>
+            <EmergencyMap
+              pickup={{
+                lat: pickupLat,
+                lng: pickupLng,
+                label: pickupAddress,
+              }}
+              ambulance={
+                liveCoords && activeTrip && !isTerminal
+                  ? {
+                      lat: liveCoords.lat,
+                      lng: liveCoords.lng,
+                      vehicleNumber: activeTrip.driver?.vehicleNumber,
+                    }
+                  : null
+              }
+              hospitals={hospitals}
+              onlineUnits={onlineUnits}
+            />
+          </div>
 
-            {/* Status Timeline */}
-            {status !== 'IDLE' ? (
-              <div className="space-y-6">
-                <div className="p-5 rounded-2xl bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-900 space-y-3">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-extrabold uppercase tracking-wider text-rose-700 dark:text-rose-300 flex items-center gap-2">
-                      <span className="w-2.5 h-2.5 rounded-full bg-rose-600 animate-ping" />
-                      Status: {status}
-                    </span>
-                    <span className="text-sm font-bold text-slate-900 dark:text-white flex items-center gap-1">
-                      <Clock className="w-4 h-4 text-rose-600" /> ETA: {etaMinutes} Mins
-                    </span>
+          <div className="lg:col-span-2 bg-white dark:bg-slate-900 rounded-2xl p-6 border border-slate-200 dark:border-slate-800 shadow-sm flex flex-col justify-between space-y-4">
+            {!activeTrip || isTerminal ? (
+              <div className="space-y-4">
+                <div className="flex items-center gap-3">
+                  <div className="w-12 h-12 bg-red-100 dark:bg-red-900/30 rounded-full flex items-center justify-center">
+                    <Ambulance className="w-6 h-6 text-red-600 dark:text-red-400" />
                   </div>
+                  <div>
+                    <h2 className="text-lg font-bold text-slate-900 dark:text-white">
+                      Dispatch Nearest Ambulance
+                    </h2>
+                    <p className="text-xs text-slate-500">
+                      Atomic single-winner claim & 20s cascade reassignment.
+                    </p>
+                  </div>
+                </div>
 
-                  <p className="text-xs text-rose-900 dark:text-rose-200 leading-relaxed">
-                    {status === 'REQUESTED' && t.emergency.statusRequested}
-                    {status === 'OFFERED' && t.emergency.statusOffered}
-                    {status === 'ACCEPTED' && t.emergency.statusAccepted}
-                    {status === 'EN_ROUTE' && t.emergency.statusEnRoute}
-                    {status === 'ARRIVED' && t.emergency.statusArrived}
+                {activeTrip && isTerminal && (
+                  <div className="p-3 rounded-xl bg-slate-100 dark:bg-slate-800 text-xs text-slate-700 dark:text-slate-300">
+                    Previous request ended with status:{' '}
+                    <strong>{activeTrip.status}</strong>
+                  </div>
+                )}
+
+                <div className="space-y-2">
+                  <label className="block text-xs font-medium text-slate-600 dark:text-slate-400">
+                    Pickup Address
+                  </label>
+                  <input
+                    type="text"
+                    value={pickupAddress}
+                    onChange={(e) => setPickupAddress(e.target.value)}
+                    className="w-full px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 text-sm text-slate-900 dark:text-white"
+                  />
+                </div>
+
+                <div className="grid grid-cols-2 gap-2 text-xs text-slate-500">
+                  <div>
+                    <span className="block font-medium">Latitude</span>
+                    <span className="font-mono">{pickupLat}</span>
+                  </div>
+                  <div>
+                    <span className="block font-medium">Longitude</span>
+                    <span className="font-mono">{pickupLng}</span>
+                  </div>
+                </div>
+
+                {actionError && (
+                  <p className="text-xs text-red-600 bg-red-50 dark:bg-red-900/20 p-2.5 rounded-lg">
+                    {actionError}
                   </p>
+                )}
 
-                  {driverInfo && (
-                    <div className="pt-3 border-t border-rose-200/80 dark:border-rose-900/80 grid grid-cols-2 gap-2 text-xs">
-                      <div>
-                        <span className="text-slate-500 block">Driver:</span>
-                        <span className="font-bold text-slate-800 dark:text-slate-100">{driverInfo.name}</span>
-                      </div>
-                      <div>
-                        <span className="text-slate-500 block">Vehicle:</span>
-                        <span className="font-bold text-slate-800 dark:text-slate-100">{driverInfo.vehicleNo}</span>
-                      </div>
-                    </div>
-                  )}
-                </div>
-
-                {/* Leaflet/OSM Simulation Frame */}
-                <div className="h-64 rounded-2xl bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 relative overflow-hidden flex items-center justify-center">
-                  <div className="absolute inset-0 bg-[radial-gradient(#cbd5e1_1px,transparent_1px)] [background-size:16px_16px] opacity-40 dark:opacity-20" />
-                  <div className="relative text-center space-y-2">
-                    <div className="w-12 h-12 rounded-full bg-rose-600 text-white flex items-center justify-center mx-auto shadow-lg animate-bounce">
-                      <Ambulance className="w-6 h-6" />
-                    </div>
-                    <p className="text-xs font-bold text-slate-700 dark:text-slate-300">
-                      Ambulance En Route via E.M. Bypass
-                    </p>
-                    <p className="text-[11px] text-slate-400">
-                      Telemetry streaming to Redis GEO at 1.0 Hz (Haversine Distance: 2.8 km)
-                    </p>
-                  </div>
-                </div>
-
-                <button
-                  onClick={handleCancelDispatch}
-                  className="w-full py-2.5 px-4 rounded-xl border border-rose-300 dark:border-rose-800 text-rose-600 dark:text-rose-400 text-xs font-semibold hover:bg-rose-50 dark:hover:bg-rose-950/40 transition-colors"
-                >
-                  {t.emergency.cancel}
-                </button>
+                {hasSession ? (
+                  <button
+                    onClick={() => dispatchMutation.mutate()}
+                    disabled={dispatchMutation.isPending}
+                    className="w-full py-3.5 bg-red-600 hover:bg-red-700 text-white font-bold rounded-xl shadow-lg transition-all text-base disabled:opacity-60"
+                  >
+                    {dispatchMutation.isPending
+                      ? 'Searching Nearest Unit...'
+                      : 'Request Emergency Ambulance'}
+                  </button>
+                ) : (
+                  <Link
+                    href="/auth/login"
+                    className="block w-full text-center py-3.5 bg-red-600 hover:bg-red-700 text-white font-bold rounded-xl shadow-lg transition-all text-sm"
+                  >
+                    Sign In to Dispatch Ambulance
+                  </Link>
+                )}
               </div>
             ) : (
-              <div className="text-center py-8 space-y-4">
-                <div className="w-16 h-16 rounded-full bg-rose-100 dark:bg-rose-950 text-rose-600 dark:text-rose-400 flex items-center justify-center mx-auto">
-                  <Ambulance className="w-8 h-8" />
+              <div className="space-y-4">
+                <div className="flex items-center justify-between">
+                  <span
+                    data-testid="ambulance-status-badge"
+                    className="px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300 flex items-center gap-1.5"
+                  >
+                    <Activity className="w-3.5 h-3.5" /> {activeTrip.status}
+                  </span>
+                  <span className="text-xs font-mono text-slate-500">
+                    #{activeTrip.id.slice(0, 8)}
+                  </span>
                 </div>
-                <div className="max-w-md mx-auto">
-                  <h3 className="font-bold text-base text-slate-900 dark:text-white">
-                    Need Emergency Ambulance in Kolkata?
+
+                <div>
+                  <h3 className="font-bold text-slate-900 dark:text-white text-base">
+                    {activeTrip.driver?.user?.name ||
+                      'Searching / Awaiting Unit Assignment'}
                   </h3>
-                  <p className="text-xs text-slate-500 mt-1">
-                    Dispatches the nearest available Advanced Cardiac Life Support (ACLS) ambulance from our 20-vehicle network.
+                  <p className="text-xs text-slate-500">
+                    Vehicle:{' '}
+                    <span className="font-mono font-semibold text-slate-700 dark:text-slate-300">
+                      {activeTrip.driver?.vehicleNumber || 'Pending offer...'}
+                    </span>
                   </p>
                 </div>
-                <button
-                  onClick={handleRequestDispatch}
-                  className="w-full sm:w-auto px-8 py-4 rounded-2xl bg-rose-600 hover:bg-rose-700 text-white font-extrabold text-sm shadow-xl shadow-rose-600/30 transition-all transform hover:-translate-y-0.5"
-                >
-                  {t.emergency.requestAmbulance}
-                </button>
+
+                <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 space-y-2 text-sm">
+                  <div className="flex justify-between">
+                    <span className="text-slate-500 flex items-center gap-1.5">
+                      <Clock className="w-4 h-4 text-emerald-600" /> Estimated
+                      Arrival
+                    </span>
+                    <span className="font-bold text-slate-900 dark:text-white">
+                      {activeTrip.etaSeconds !== null
+                        ? activeTrip.etaSeconds === 0
+                          ? 'Arrived'
+                          : `${Math.max(1, Math.ceil(activeTrip.etaSeconds / 60))} mins`
+                        : 'Calculating...'}
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-slate-500 flex items-center gap-1.5">
+                      <MapPin className="w-4 h-4 text-red-500" /> Driver GPS
+                    </span>
+                    <span className="font-mono text-xs text-slate-700 dark:text-slate-300">
+                      {liveCoords
+                        ? `${liveCoords.lat.toFixed(4)}, ${liveCoords.lng.toFixed(4)}`
+                        : 'Awaiting telemetry'}
+                    </span>
+                  </div>
+                </div>
+
+                {actionError && (
+                  <p className="text-xs text-red-600 bg-red-50 dark:bg-red-900/20 p-2.5 rounded-lg">
+                    {actionError}
+                  </p>
+                )}
+
+                <div className="flex flex-col gap-2">
+                  <button
+                    onClick={() => simulateTripMutation.mutate(activeTrip.id)}
+                    disabled={
+                      simulateTripMutation.isPending ||
+                      activeTrip.status === 'ARRIVED'
+                    }
+                    className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold rounded-xl text-sm disabled:opacity-50 transition-colors"
+                  >
+                    {simulateTripMutation.isPending
+                      ? 'Starting Live Driver Simulator...'
+                      : 'Simulate Live Driver Telemetry (Dev)'}
+                  </button>
+                  <button
+                    onClick={() => cancelMutation.mutate(activeTrip.id)}
+                    disabled={cancelMutation.isPending}
+                    className="w-full py-2.5 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 font-semibold rounded-xl text-sm flex items-center justify-center gap-1.5"
+                  >
+                    <XCircle className="w-4 h-4" /> Cancel Request
+                  </button>
+                </div>
               </div>
             )}
           </div>
         </div>
 
-        {/* Right Column: Nearest Designated Trauma Centers */}
-        <div className="space-y-6">
-          <div className="p-6 rounded-3xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm space-y-4">
-            <h3 className="text-base font-bold text-slate-900 dark:text-white flex items-center gap-2">
-              <Building className="w-4 h-4 text-teal-600" />
-              {t.emergency.nearbyHospitals}
-            </h3>
-
-            <div className="space-y-3">
-              {kolkataHospitals.map((hosp) => (
-                <div
-                  key={hosp.name}
-                  className="p-3.5 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200/60 dark:border-slate-700/60 space-y-2 text-xs"
-                >
-                  <div className="flex items-start justify-between gap-2">
-                    <span className="font-bold text-slate-900 dark:text-white leading-snug">{hosp.name}</span>
-                    <span className="text-[11px] font-bold text-rose-600 shrink-0">{hosp.distanceKm} km</span>
-                  </div>
-                  <p className="text-[11px] text-slate-500">{hosp.address}</p>
-                  <div className="flex items-center justify-between pt-1">
-                    <span className="text-[10px] bg-teal-50 dark:bg-teal-950 text-teal-700 dark:text-teal-300 font-semibold px-2 py-0.5 rounded">
-                      24/7 Trauma ICU
-                    </span>
-                    <a
-                      href={`tel:${hosp.phone}`}
-                      className="text-xs font-bold text-teal-600 dark:text-teal-400 hover:underline flex items-center gap-1"
-                    >
-                      <PhoneCall className="w-3 h-3" /> {hosp.phone}
-                    </a>
-                  </div>
-                </div>
-              ))}
+        {/* Emergency Hotlines */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          {hotlines.map((h) => (
+            <div
+              key={h.number}
+              className="bg-white dark:bg-slate-900 p-4 rounded-xl border border-slate-200 dark:border-slate-800 flex items-center justify-between shadow-sm"
+            >
+              <div>
+                <p className="text-xs font-semibold text-red-600 uppercase tracking-wider">
+                  {h.name}
+                </p>
+                <p className="text-2xl font-bold text-slate-900 dark:text-white">
+                  {h.number}
+                </p>
+                <p className="text-xs text-slate-500">{h.description}</p>
+              </div>
+              <a
+                href={`tel:${h.number}`}
+                className="p-3 bg-red-50 dark:bg-red-900/20 text-red-600 rounded-xl hover:bg-red-100 transition-colors"
+              >
+                <PhoneCall className="w-5 h-5" />
+              </a>
             </div>
+          ))}
+        </div>
+
+        {/* Nearest Hospitals */}
+        <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden">
+          <div className="px-6 py-4 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between">
+            <h2 className="font-bold text-slate-900 dark:text-white flex items-center gap-2">
+              <MapPin className="w-5 h-5 text-red-600" /> Nearest Trauma Centres &
+              Hospitals
+            </h2>
+            <span className="text-xs text-slate-500">
+              {emergencyInfoQuery.isLoading ? 'Loading...' : 'Sorted by proximity'}
+            </span>
           </div>
+          <div className="divide-y divide-slate-200 dark:divide-slate-800">
+            {hospitals.map((hosp) => (
+              <div
+                key={hosp.id}
+                className="p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4 hover:bg-slate-50 dark:hover:bg-slate-800/40 transition-colors"
+              >
+                <div className="space-y-1">
+                  <div className="flex items-center gap-2">
+                    <h3 className="font-bold text-slate-900 dark:text-white">
+                      {hosp.name}
+                    </h3>
+                    {hosp.hasTraumaCenter && (
+                      <span className="px-2 py-0.5 text-[10px] font-bold bg-amber-100 text-amber-700 rounded uppercase">
+                        Trauma Unit
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-sm text-slate-600 dark:text-slate-400">
+                    {hosp.address}
+                  </p>
+                  <p className="text-xs text-slate-500">
+                    {hosp.distanceKm !== undefined ? `${hosp.distanceKm} km away • ` : ''}
+                    Direct: {hosp.phone}
+                  </p>
+                </div>
+                <a
+                  href={`tel:${hosp.emergencyPhone}`}
+                  className="px-4 py-2 bg-slate-900 dark:bg-slate-800 hover:bg-slate-800 text-white text-sm font-medium rounded-xl flex items-center gap-1.5 self-start sm:self-center"
+                >
+                  <PhoneCall className="w-3.5 h-3.5" /> Call ({hosp.emergencyPhone})
+                </a>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className="p-4 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-xl flex gap-3 text-sm text-amber-800 dark:text-amber-300">
+          <AlertTriangle className="w-5 h-5 shrink-0" />
+          <p>
+            <strong>Medical Disclaimer:</strong> In life-threatening
+            emergencies, call local emergency services (112 / 108) directly.
+          </p>
         </div>
       </div>
     </div>

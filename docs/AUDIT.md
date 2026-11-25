@@ -66,3 +66,26 @@ AssertionError: expected 201 to be 403 // Object.is equality
 ```
 - **Output AFTER restoring guard (PASS):**
   Verified in `slice1-booking-race.spec.ts` (unowned hold token rejected with 403, valid hold transitions to `PENDING_PAYMENT`).
+
+---
+
+## Slice 4 Mutation Proofs
+
+### 4. Atomic Conditional Update (`status: 'OFFERED'`) — Prevents Multi-Accept Race on Ambulance Dispatch
+
+- **Test:** `test/slice4-ambulance.spec.ts` → `guarantees atomic single winner across 10 parallel acceptRequest attempts`
+- **Mutation:** Temporarily commented out `status: 'OFFERED'` in `AmbulanceService.acceptRequest`'s `updateMany` `where` clause.
+- **Output WITHOUT guard (FAIL):**
+```text
+ ❯ test/slice4-ambulance.spec.ts (4 tests | 1 failed | 3 skipped) 1598ms
+   × Slice 4: Real Ambulance Dispatch, 20s Timeout Reassignment, Atomic Accept, Heartbeat Eviction & Live Socket Tracking > guarantees atomic single winner across 10 parallel acceptRequest attempts 1415ms
+     → expected [ { raw: { …(2) }, …(10) }, …(9) ] to have a length of 1 but got 10
+
+FAIL  test/slice4-ambulance.spec.ts > Slice 4: Real Ambulance Dispatch, 20s Timeout Reassignment, Atomic Accept, Heartbeat Eviction & Live Socket Tracking > guarantees atomic single winner across 10 parallel acceptRequest attempts
+AssertionError: expected [ { raw: { …(2) }, …(10) }, …(9) ] to have a length of 1 but got 10
+- Expected: 1
++ Received: 10
+ ❯ test/slice4-ambulance.spec.ts:277:22
+```
+- **Output AFTER restoring guard (PASS):**
+  Verified in `slice4-ambulance.spec.ts` (4/4 passed against real `pgvector/pgvector:pg16` + `redis:7-alpine`: 1 accepted `201`, 10 conflicting/unoffered rejected `409`).
