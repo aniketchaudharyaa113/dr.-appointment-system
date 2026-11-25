@@ -1,146 +1,24 @@
-# MediBook Rebuild Progress Checklist
+# MediBook Rebuild Progress Checklist (Honest Verification Log)
 
-#### Current Status: All Phases (Step 0 through Phase 9) Complete — Production Ready
-- **Branch**: `rebuild/nest-next`
-- **Active Phase**: All Phases Completed (Definition of Done Met)
-
+- **Active Branch**: `main` (rebuilt NestJS + Next.js monorepo)
+- **Verification Standard**: Zero Prisma/Redis/Postgres mocks in integration tests (Testcontainers `pgvector/pgvector:pg16` + `redis:7-alpine` with real Prisma migrations). Mutation proofs recorded in `docs/AUDIT.md`.
 
 ---
 
-## Step 0: Deep Planning & Architecture
-- [x] Create `docs/ARCHITECTURE.md` (C4 context & container diagrams, module map, 6 end-to-end data flows)
-- [x] Create `docs/DECISIONS.md` (8 ADRs: Modular Monolith, Next.js, Prisma, Outbox, Payments, RAG, LiveKit, Redis GEO)
-- [x] Create `docs/DOMAIN.md` (Mermaid ERD, state machines transition tables, 10 core domain invariants)
-- [x] Create `docs/RISKS.md` (Top 15 production risks, mitigations, and specific proof tests)
-- [x] Create `docs/UX.md` (Personas, top journeys, IA, design tokens, component inventory, WCAG 2.2 AA)
-- [x] Create `docs/TEST_STRATEGY.md` (Test pyramid, Testcontainers, Playwright, CI quality gates)
-- [x] Create `PROGRESS.md`
-- [x] Create `docs/plans/phase-1.md`
-- [x] Create `docs/plans/phase-2.md`
-- [x] Create `docs/plans/phase-3.md`
-- [x] Create `docs/plans/phase-4.md`
-- [x] Create `docs/plans/phase-5.md`
-- [x] Create `docs/plans/phase-6.md`
+## Slice 1: Book and Pay for Real — COMPLETED & VERIFIED
+- [x] **Repo Cleanup & Standardization**: Removed legacy `backend/`, `frontend/`, duplicate `nginx/`, `monitoring/`, `.pyc` files; updated `.gitignore` & `.dockerignore`; standardized all routes under global `/api` prefix (`metrics` excluded, internal-only in Nginx); standardized `JwtPayload.sub` everywhere (`user.userId` removed); Zod validation pipes on all routes; `tsconfig.build.json` emitting `dist/main.js`.
+- [x] **State Machine & Redis Hold Token**: Booking creates `PENDING_PAYMENT` (never `CONFIRMED`). Unguessable 48-hex-char hold token stored via `SET hold:{doctor}:{slot} {token}:{patient} NX EX 600`, verified at booking, released atomically via Lua script. 24h Redis idempotency key on booking and checkout. Expiry job (`releaseExpiredPendingAppointments`) releases unpaid `PENDING_PAYMENT` appointments using `FOR UPDATE SKIP LOCKED`.
+- [x] **Raw Body HMAC Webhook & Double-Entry Ledger**: Fastify `{ rawBody: true }` captures exact raw bytes; `POST /api/payments/webhook` verifies HMAC-SHA256 on raw bytes, inserts into `payment_events` (`UNIQUE(provider_event_id)`), acquires `FOR UPDATE` row locks on `payments` and `appointments`, confirms booking, posts zero-sum double-entry ledger (`ESCROW`, `DOCTOR_PAYABLE`, `PLATFORM_REVENUE`), and writes outbox events in one DB transaction.
+- [x] **Payment Authorization & Atomic Refunds**: `GET /api/payments/:id` and `POST /api/payments/:id/refund` enforce owner/doctor/admin authorization; refund takes `FOR UPDATE` row lock, verifies `CAPTURED` status inside transaction, records `Refund` (`PENDING`), reverses ledger, and emits `PAYMENT_REFUND_REQUESTED` outbox event for idempotent post-commit provider execution.
+- [x] **Asia/Kolkata Timezone**: Wall-clock slot generation, alignment validation, leave bounds, and `MB-YYYYMMDD-NNN` midnight IST rollover in `apps/api/src/common/utils/ist-time.ts`.
+- [x] **Real Testcontainers Tests (14/14 PASSED)**: `slice1-booking-race.spec.ts` (5), `slice1-payments-webhook.spec.ts` (5), `slice1-identity-leave-waitlist.spec.ts` (4). Mutation proofs recorded in `docs/AUDIT.md`.
+- [x] **Real Frontend + Playwright E2E (PASSED)**: `/auth/login`, `/doctors`, `/doctors/[id]`, `/checkout/[id]` (with FakeProvider signed-webhook simulate button), `/appointments/[id]/confirmed`, `/appointments` all wired to real APIs via TanStack Query (`0` occurrences of `Dr. Arindam` in `apps/web/src`). `e2e/patient-flow.spec.ts` passed against Nginx + Compose stack (`http://localhost`).
 
 ---
 
-## Phase 1: Foundation
-- [x] Monorepo scaffolding with pnpm workspaces & Turborepo (`apps/api`, `apps/worker`, `apps/web`, `services/ai`, `packages/shared`, `infra`)
-- [x] Docker Compose setup (PostgreSQL 16 + pgvector, Redis 7, MinIO, Mailpit, LiveKit, API x2, Worker, Web, Nginx, AI)
-- [x] Environment schema validation (strict Zod validation at startup)
-- [x] Prisma setup + hand-written migration baseline (pgcrypto, pg_trgm, vector, partial indexes)
-- [x] NestJS modular monolith core (`apps/api` with Fastify adapter, request-id middleware, Pino logging)
-- [x] Health check endpoints (`/health/live`, `/health/ready` verifying DB, Redis, BullMQ)
-- [x] OpenAPI Swagger documentation setup (`/api/docs`)
-- [x] Global validation pipe with Zod + unified error exception filter
-- [x] Integration test harness with Testcontainers (first passing test)
-- [x] Phase 1 verification gate: `pnpm lint && pnpm typecheck && pnpm test && pnpm build` (PASSED)
-- [x] Git commit & update PROGRESS.md
-
----
-
-## Phase 2: Identity & Security
-- [x] User and doctor authentication (Argon2id password hashing)
-- [x] Short-lived access JWT (15m) + rotating hashed refresh tokens in httpOnly cookies with revocation
-- [x] RBAC guards (`PATIENT | DOCTOR | ADMIN | DRIVER`)
-- [x] Redis-backed rate limiting (IP + email login throttler)
-- [x] Security headers (Helmet, strict CORS)
-- [x] Doctor verification workflow (Admin approve/reject with audit logging)
-- [x] Immutable audit logging service (recording all mutations and PHI reads)
-- [x] Phase 2 tests: token rotation reuse detection, RBAC matrix, rate limit (PASSED)
-- [x] Phase 2 verification gate & commit
-
----
-
-## Phase 3: Scheduling Core
-- [x] Doctor availability models, slot generation grid, timezone rules (`Asia/Kolkata`)
-- [x] Slot hold mechanism (Redis 10-minute hold leases with WebSocket events)
-- [x] Atomic booking with partial unique index `(doctor_id, slot_time)`
-- [x] Atomic daily reference generator (`MB-YYYYMMDD-NNN`)
-- [x] Doctor leave management with dry-run conflict check & cascade cancellation
-- [x] Waitlist management with automated 15-minute claim offer chain
-- [x] pg_trgm symptom-to-specialty search and multi-facet doctor filtering
-- [x] Phase 3 tests: 50-parallel booking race, cancel-then-rebook, slot-grid, leave cascade, hold expiry, idempotency replay, waitlist offer chain (19 tests PASSED)
-- [x] Phase 3 verification gate & commit
-
----
-
-## Phase 4: Payments (Razorpay & Double-Entry Ledger)
-- [x] `PaymentProvider` interface with `RazorpayProvider`, `FakeProvider`, and `StripeProvider` stub
-- [x] Integer paise representation for all monetary values
-- [x] Appointment payment state machine (`HELD -> PENDING_PAYMENT -> CAPTURED -> SETTLED | REFUNDED`)
-- [x] Webhook inbox table with raw HMAC-SHA256 signature verification & `UNIQUE(provider_event_id)`
-- [x] Worker processor with `SELECT ... FOR UPDATE` row locks and double-entry ledger balancing
-- [x] Late-payment protection with automated refund fallback
-- [x] Automated payment reconciliation job for stuck transactions
-- [x] Phase 4 tests: 10x webhook replay flood, out-of-order events, invalid signature rejection, late payment auto-refund, reconciliation recovery, ledger zero-sum balance (27 tests PASSED)
-- [x] Phase 4 verification gate & commit
-
----
-
-## Phase 5: Consultation (Video + Chat)
-- [x] Consultation modes (`IN_CLINIC | VIDEO | CHAT`) and session state machine
-- [x] LiveKit service minting scoped JWT join tokens strictly within join window (-10m/+30m)
-- [x] NestJS WebSocket gateway for consultation chat (`consult:<id>` rooms)
-- [x] Chat message persistence, delivery/read receipts, typing indicators
-- [x] MinIO signed URL generation for encrypted medical attachments
-- [x] Patient telemedicine consent logging with timestamp
-- [x] Versioned immutable prescription workflow and PDF generation
-- [x] Phase 5 tests: join-window enforcement, non-participant rejection, message ordering, signed-URL scope (43 tests PASSED)
-- [x] Phase 5 verification gate & commit
-
----
-
-## Phase 6: Ambulance Dispatch
-- [x] Emergency ambulance screen with one-tap location and click-to-call 112/108
-- [x] Ambulance driver telemetry stream to Redis GEO with heartbeat TTL eviction
-- [x] Dispatch state machine (`REQUESTED -> OFFERED -> ACCEPTED -> EN_ROUTE -> ARRIVED -> COMPLETED`)
-- [x] 20-second offer countdown with automatic cascading reassignment to next nearest driver
-- [x] Atomic single-winner claim mechanism (Redis Lua / PostgreSQL conditional update)
-- [x] Live tracking map over WebSockets with dynamic Haversine ETA calculation
-- [x] Driver simulation script (`scripts/simulate-drivers.ts` moving 20 drivers around Kolkata)
-- [x] Phase 6 tests: concurrent accept single-winner race, timeout reassignment chain, stale driver eviction, socket isolation (50 tests PASSED)
-- [x] Phase 6 verification gate & commit
-
-
----
-
-## Phase 7: AI Service & Gateway
-- [x] Python FastAPI service in `services/ai` with uv/pip and Pydantic schemas
-- [x] Safety-first emergency triage detector (rules + classifier) intercepting before LLM
-- [x] Clinical RAG pipeline with curated public health corpus in `services/ai/corpus/`
-- [x] Hybrid search with pgvector + pg_trgm and explicit citation generation
-- [x] Booking agent with tool calling executing strictly with end-user JWT permissions
-- [x] Doctor clinical note copilot summarizing consultation transcripts into draft prescriptions
-- [x] LLM provider abstraction (Ollama local, Mock LLM for CI, PII redaction)
-- [x] Quantitative symptom-to-specialty classifier evaluation (`docs/AI_EVALS.md`)
-- [x] Phase 7 tests & evals: golden Q&A suite, retrieval hit rate, emergency 100% recall (53 tests + 7 pytest suites PASSED)
-- [x] Phase 7 verification gate & commit
-
-
----
-
-## Phase 8: Next.js Frontend with Better UI/UX
-- [x] Tailwind CSS design system with custom medical color palette and shadcn/ui tokens
-- [x] Multilingual support with `next-intl` (English, Hindi, Bengali)
-- [x] Patient journeys: landing page, symptom search, doctor profiles, slot picker, checkout with hold countdown, confirmation card
-- [x] Consultation room: split-screen LiveKit video, device check, chat side-panel, prescription view
-- [x] Emergency SOS screen: one-tap dispatch, click-to-call 112, live Leaflet tracking map
-- [x] Doctor workspace: day-view queue, one-click consult start, availability/leave manager with dry-run preview, earnings Recharts
-- [x] Admin dashboard: doctor verification queue, ledger reconciliation, audit logs viewer, Bull Board queue monitoring
-- [x] Client component tests and Playwright E2E test suite + Axe WCAG 2.2 AA audit
-- [x] Phase 8 verification gate: `pnpm lint && pnpm typecheck && pnpm test && pnpm build` (PASSED)
-- [x] Git commit & update PROGRESS.md
-
----
-
-## Phase 9: Observability, Hardening, Load, & Final Docs
-- [x] Prometheus metrics endpoints (`/metrics`) + Grafana dashboard provisioning (`infra/grafana/dashboards/medibook.json`)
-- [x] k6 load test scripts (booking and webhook flood) with real benchmark results in `docs/LOAD_TEST.md`
-- [x] Chaos resilience validation (Redis drop, worker kill, webhook flood)
-- [x] Production Dockerfiles with multi-stage builds and non-root users
-- [x] Nginx configuration with rate limits, CSP, and security headers
-- [x] Updated `README.md`, `docs/SYSTEM_DESIGN.md`, and `docs/INTERVIEW_GUIDE.md` (20 toughest questions)
-- [x] Security review checklist (`docs/SECURITY_REVIEW.md` mapping OWASP Top 10 to code)
-- [x] Final verification gate: `pnpm lint && pnpm typecheck && pnpm test && pnpm build` (PASSED)
-- [x] Git commit & comprehensive final report
+## Remaining Slices (In Progress)
+- [ ] **Slice 2**: Outbox relay (`FOR UPDATE SKIP LOCKED`), BullMQ workers, in-app notifications, Nodemailer → Mailpit, 24h/1h reminders + cancel cleanup, retries/backoff + DLQ, real failure tests.
+- [ ] **Slice 3**: Single `JWT_SECRET` everywhere (fail-fast), Socket.IO Redis adapter, DB participation checks on room join, strict CORS, cross-instance isolation tests, `livekit-client` in web, MinIO signed URL attachments.
+- [ ] **Slice 4**: End-to-end ambulance dispatch, 20s timeout reassignment, atomic accept, Leaflet live tracking + driver simulator.
+- [ ] **Slice 5**: Real pgvector + tsvector hybrid RAG with embeddings, LLM provider abstraction (Ollama + deterministic mock), ML emergency classifier (>=150 labeled texts, held-out eval >=0.97 recall), golden Q&A >=100 in `docs/AI_EVALS.md`, booking agent using user JWT.
+- [ ] **Slice 6**: Compose port hardening, fail-fast env secrets, Nginx routes, real `grafana/k6` load tests in `docs/LOAD_TEST.md`, CI overhaul (pnpm lint/typecheck/test/build + Playwright + AI evals), final docs honesty pass.

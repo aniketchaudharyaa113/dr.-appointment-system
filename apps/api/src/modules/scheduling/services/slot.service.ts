@@ -1,10 +1,16 @@
 import { Injectable, BadRequestException, Inject } from '@nestjs/common';
 import { PrismaService } from '../../platform/database/prisma.service';
 import { RedisService } from '../../platform/redis/redis.service';
+import {
+  getIstDateString,
+  getIstDayBoundsUtc,
+  getIstDayOfWeek,
+  istWallClockToUtcDate,
+} from '../../../common/utils/ist-time';
 
 export interface GeneratedSlot {
-  slotTime: string; // ISO string
-  displayTime: string; // HH:mm
+  slotTime: string; // ISO string (UTC instant corresponding to IST wall clock)
+  displayTime: string; // HH:mm in Asia/Kolkata
   isAvailable: boolean;
   isHeld: boolean;
   isBooked: boolean;
@@ -20,21 +26,17 @@ export class SlotService {
 
   /**
    * Generates discrete slot times aligned to doctor's duration grid for a given date
-   * Using clinic timezone (Asia/Kolkata).
+   * using clinic timezone (Asia/Kolkata).
    */
   async getDoctorSlotsForDate(
     doctorId: string,
-    dateStr: string, // YYYY-MM-DD
+    dateStr: string, // YYYY-MM-DD in Asia/Kolkata
   ): Promise<GeneratedSlot[]> {
-    // 1. Verify doctor availability for this day of week
-    const targetDate = new Date(`${dateStr}T00:00:00.000Z`);
-    if (isNaN(targetDate.getTime())) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
       throw new BadRequestException('Invalid date format. Expected YYYY-MM-DD');
     }
 
-    // Day of week in Asia/Kolkata
-    // (0 = Sunday, 1 = Monday, ..., 6 = Saturday)
-    const dayOfWeek = targetDate.getUTCDay();
+    const dayOfWeek = getIstDayOfWeek(dateStr);
 
     const availabilityList = await this.prisma.availability.findMany({
       where: { doctorId, dayOfWeek },
@@ -44,18 +46,16 @@ export class SlotService {
       return [];
     }
 
-    // 2. Check doctor leaves on this date
+    const targetDateOnly = new Date(`${dateStr}T00:00:00.000Z`);
     const onLeave = await this.prisma.doctorLeave.findFirst({
       where: {
         doctorId,
-        startDate: { lte: targetDate },
-        endDate: { gte: targetDate },
+        startDate: { lte: targetDateOnly },
+        endDate: { gte: targetDateOnly },
       },
     });
 
-    // 3. Fetch existing active bookings on this date
-    const startOfDay = new Date(`${dateStr}T00:00:00.000Z`);
-    const endOfDay = new Date(`${dateStr}T23:59:59.999Z`);
+    const { start: startOfDay, end: endOfDay } = getIstDayBoundsUtc(dateStr);
 
     const existingAppointments = await this.prisma.appointment.findMany({
       where: {
@@ -84,11 +84,12 @@ export class SlotService {
         const hour = Math.floor(currentMinutes / 60);
         const min = currentMinutes % 60;
         const displayTime = `${String(hour).padStart(2, '0')}:${String(min).padStart(2, '0')}`;
-        const slotTimeIso = `${dateStr}T${displayTime}:00.000Z`;
+        const slotDateUtc = istWallClockToUtcDate(dateStr, displayTime);
+        const slotTimeIso = slotDateUtc.toISOString();
 
         const isBooked = bookedIsoSet.has(slotTimeIso);
-        const heldBy = await this.redis.getSlotHold(doctorId, slotTimeIso);
-        const isHeld = !!heldBy;
+        const held = await this.redis.getSlotHold(doctorId, slotTimeIso);
+        const isHeld = !!held;
         const isOnLeave = !!onLeave;
 
         const isAvailable = !isBooked && !isHeld && !isOnLeave;
@@ -106,34 +107,46 @@ export class SlotService {
       }
     }
 
+    slots.sort((a, b) => a.slotTime.localeCompare(b.slotTime));
     return slots;
   }
 
   /**
-   * Caches and returns next available slot for a doctor
+   * Caches and returns next available slot for a doctor in Asia/Kolkata
    */
   async getNextAvailableSlot(doctorId: string): Promise<string | null> {
     const cacheKey = `cache:next_slot:${doctorId}`;
     const client = this.redis.getClient();
 
     if (client) {
-      const cached = await client.get(cacheKey);
-      if (cached) return cached;
+      try {
+        const cached = await client.get(cacheKey);
+        if (cached) return cached;
+      } catch {
+        // Ignore Redis cache miss errors
+      }
     }
 
-    // Look ahead 7 days
-    const now = new Date();
+    const nowMs = Date.now();
+    const todayIst = getIstDateString(new Date(nowMs));
+    const baseUtcNoon = new Date(`${todayIst}T12:00:00.000+05:30`);
+
     for (let dayOffset = 0; dayOffset < 7; dayOffset++) {
-      const d = new Date(now);
-      d.setDate(d.getDate() + dayOffset);
-      const dateStr = d.toISOString().split('T')[0];
+      const d = new Date(baseUtcNoon.getTime() + dayOffset * 24 * 60 * 60 * 1000);
+      const dateStr = getIstDateString(d);
 
       const slots = await this.getDoctorSlotsForDate(doctorId, dateStr);
-      const available = slots.find((s) => s.isAvailable);
+      const available = slots.find(
+        (s) => s.isAvailable && new Date(s.slotTime).getTime() > nowMs,
+      );
 
       if (available) {
         if (client) {
-          await client.set(cacheKey, available.slotTime, 'EX', 60); // 60s cache
+          try {
+            await client.set(cacheKey, available.slotTime, 'EX', 60);
+          } catch {
+            // Ignore Redis cache write errors
+          }
         }
         return available.slotTime;
       }
@@ -143,24 +156,25 @@ export class SlotService {
   }
 
   /**
-   * Validates if a proposed slotTime aligns with doctor's working schedule
+   * Validates if a proposed slotTime aligns with doctor's working schedule in Asia/Kolkata
    */
   async validateSlotAlignment(
     doctorId: string,
     slotTime: Date,
   ): Promise<{ isValid: boolean; reason?: string }> {
-    const dateStr = slotTime.toISOString().split('T')[0];
-    const targetIso = slotTime.toISOString();
+    const dateStr = getIstDateString(slotTime);
+    const targetMs = slotTime.getTime();
 
     const slots = await this.getDoctorSlotsForDate(doctorId, dateStr);
     const matchingSlot = slots.find(
-      (s) => new Date(s.slotTime).getTime() === new Date(targetIso).getTime(),
+      (s) => new Date(s.slotTime).getTime() === targetMs,
     );
 
     if (!matchingSlot) {
       return {
         isValid: false,
-        reason: 'Slot time is outside doctor working hours or misaligned to slot duration grid',
+        reason:
+          'Slot time is outside doctor working hours or misaligned to slot duration grid',
       };
     }
 

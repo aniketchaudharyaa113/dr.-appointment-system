@@ -1,6 +1,7 @@
 import { Injectable, BadRequestException, Inject } from '@nestjs/common';
 import { PrismaService } from '../../platform/database/prisma.service';
 import { AuditService } from '../../platform/audit/audit.service';
+import { getIstDayBoundsUtc } from '../../../common/utils/ist-time';
 
 @Injectable()
 export class LeaveService {
@@ -10,15 +11,15 @@ export class LeaveService {
   ) {}
 
   /**
-   * Dry-run preview of existing bookings that would be impacted by a planned leave
+   * Dry-run preview of existing bookings that would be impacted by a planned leave (Asia/Kolkata bounds)
    */
   async previewLeaveImpact(
     doctorId: string,
     startDateStr: string,
     endDateStr: string,
   ) {
-    const startDate = new Date(`${startDateStr}T00:00:00.000Z`);
-    const endDate = new Date(`${endDateStr}T23:59:59.999Z`);
+    const { start: startDate } = getIstDayBoundsUtc(startDateStr);
+    const { end: endDate } = getIstDayBoundsUtc(endDateStr);
 
     if (startDate > endDate) {
       throw new BadRequestException('startDate cannot be after endDate');
@@ -59,25 +60,23 @@ export class LeaveService {
     reason = 'Doctor planned leave',
     actorUserId?: string,
   ) {
-    const startDate = new Date(`${startDateStr}T00:00:00.000Z`);
-    const endDate = new Date(`${endDateStr}T23:59:59.999Z`);
+    const { start: startDate } = getIstDayBoundsUtc(startDateStr);
+    const { end: endDate } = getIstDayBoundsUtc(endDateStr);
 
     if (startDate > endDate) {
       throw new BadRequestException('startDate cannot be after endDate');
     }
 
     const result = await this.prisma.$transaction(async (tx) => {
-      // 1. Create doctor leave record
       const leave = await tx.doctorLeave.create({
         data: {
           doctorId,
-          startDate: new Date(startDateStr),
-          endDate: new Date(endDateStr),
+          startDate: new Date(`${startDateStr}T00:00:00.000Z`),
+          endDate: new Date(`${endDateStr}T00:00:00.000Z`),
           reason,
         },
       });
 
-      // 2. Find all active bookings impacted
       const activeAppointments = await tx.appointment.findMany({
         where: {
           doctorId,
@@ -86,7 +85,6 @@ export class LeaveService {
         },
       });
 
-      // 3. Cascade cancellations and emit outbox events for 100% automated refund
       for (const appt of activeAppointments) {
         await tx.appointment.update({
           where: { id: appt.id },
@@ -107,7 +105,7 @@ export class LeaveService {
               patientId: appt.patientId,
               slotTime: appt.slotTime.toISOString(),
               reason,
-              refundPercent: 100, // Doctor cancellation is ALWAYS 100% full refund
+              refundPercent: 100,
             },
           },
         });

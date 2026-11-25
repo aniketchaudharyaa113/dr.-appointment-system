@@ -100,7 +100,7 @@ services:
       REDIS_URL: redis://redis:6379
       JWT_SECRET: ${JWT_SECRET:-medibook-production-jwt-secret-key-32chars-min}
       COOKIE_SECRET: ${COOKIE_SECRET:-medibook-super-secure-cookie-secret-32-chars}
-      CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost:3000}
+      CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost,http://localhost:3000}
       NODE_ENV: production
       AI_SERVICE_URL: http://ai:8000
     depends_on:
@@ -109,7 +109,7 @@ services:
       redis:
         condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:4000/health/ready || exit 1"]
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:4000/api/health/ready || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -128,7 +128,7 @@ services:
       REDIS_URL: redis://redis:6379
       JWT_SECRET: ${JWT_SECRET:-medibook-production-jwt-secret-key-32chars-min}
       COOKIE_SECRET: ${COOKIE_SECRET:-medibook-super-secure-cookie-secret-32-chars}
-      CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost:3000}
+      CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost,http://localhost:3000}
       NODE_ENV: production
       AI_SERVICE_URL: http://ai:8000
     depends_on:
@@ -139,7 +139,7 @@ services:
       redis:
         condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:4000/health/ready || exit 1"]
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:4000/api/health/ready || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 5

@@ -5,13 +5,18 @@ import {
   BadRequestException,
   NotFoundException,
   ConflictException,
+  ForbiddenException,
 } from '@nestjs/common';
+import * as crypto from 'crypto';
 import { PrismaService } from '../../platform/database/prisma.service';
+import { RedisService } from '../../platform/redis/redis.service';
 import {
   PaymentProvider,
   PAYMENT_PROVIDER,
 } from '../providers/payment-provider.interface';
+import { FakePaymentProvider } from '../providers/fake.provider';
 import { LedgerService } from './ledger.service';
+import { env } from '../../../common/config/env.schema';
 
 @Injectable()
 export class PaymentService {
@@ -19,32 +24,44 @@ export class PaymentService {
 
   constructor(
     @Inject(PrismaService) private readonly prisma: PrismaService,
+    @Inject(RedisService) private readonly redis: RedisService,
     @Inject(PAYMENT_PROVIDER) private readonly provider: PaymentProvider,
-    private readonly ledgerService: LedgerService,
+    @Inject(LedgerService) private readonly ledgerService: LedgerService,
   ) {}
 
   /**
-   * Initiates payment order for an appointment.
+   * Initiates payment order for an appointment in PENDING_PAYMENT state.
    */
   async createCheckout(
     patientId: string,
     appointmentId: string,
     idempotencyKey: string,
   ) {
-    // Check idempotency first
+    const redisIdemKey = `checkout:${patientId}:${idempotencyKey}`;
+    const cached = await this.redis.getIdempotency<any>(redisIdemKey);
+    if (cached) {
+      return cached;
+    }
+
     const existingPayment = await this.prisma.payment.findUnique({
       where: { idempotencyKey },
       include: { appointment: true },
     });
 
     if (existingPayment) {
-      return {
+      if (existingPayment.appointment.patientId !== patientId) {
+        throw new ForbiddenException('Unauthorized payment access');
+      }
+      const res = {
         paymentId: existingPayment.id,
         providerOrderId: existingPayment.providerOrderId,
         amountPaise: existingPayment.amountPaise,
         currency: existingPayment.currency,
         status: existingPayment.status,
+        provider: existingPayment.provider,
       };
+      await this.redis.setIdempotency(redisIdemKey, res, 86400);
+      return res;
     }
 
     const appointment = await this.prisma.appointment.findUnique({
@@ -60,20 +77,34 @@ export class PaymentService {
     }
 
     if (appointment.patientId !== patientId) {
-      throw new BadRequestException('Unauthorized appointment access');
+      throw new ForbiddenException('Unauthorized appointment access');
     }
 
-    if (
-      appointment.status !== 'PENDING_PAYMENT' &&
-      appointment.status !== 'HELD'
-    ) {
+    if (appointment.status !== 'PENDING_PAYMENT') {
       throw new ConflictException(
         `Appointment is in state ${appointment.status}, cannot checkout`,
       );
     }
 
-    if (appointment.payment && appointment.payment.status === 'CAPTURED') {
-      throw new ConflictException('Appointment is already paid and captured');
+    if (appointment.payment) {
+      if (appointment.payment.status === 'CAPTURED') {
+        throw new ConflictException('Appointment is already paid and captured');
+      }
+      if (
+        appointment.payment.status === 'INITIATED' ||
+        appointment.payment.status === 'PENDING'
+      ) {
+        const res = {
+          paymentId: appointment.payment.id,
+          providerOrderId: appointment.payment.providerOrderId,
+          amountPaise: appointment.payment.amountPaise,
+          currency: appointment.payment.currency,
+          status: appointment.payment.status,
+          provider: appointment.payment.provider,
+        };
+        await this.redis.setIdempotency(redisIdemKey, res, 86400);
+        return res;
+      }
     }
 
     const amountPaise = appointment.doctor.consultationFeePaise;
@@ -94,22 +125,31 @@ export class PaymentService {
       },
     });
 
-    return {
+    const res = {
       paymentId: payment.id,
       providerOrderId: payment.providerOrderId,
       amountPaise: payment.amountPaise,
       currency: payment.currency,
       status: payment.status,
+      provider: payment.provider,
     };
+
+    await this.redis.setIdempotency(redisIdemKey, res, 86400);
+    return res;
   }
 
   /**
    * Processes incoming webhook from payment provider.
-   * Verifies HMAC signature, stores in inbox with unique constraint,
-   * performs FOR UPDATE row lock, handles late payment auto-refund or confirmation.
+   * Verifies HMAC signature on exact raw bytes, stores in inbox with UNIQUE(provider_event_id),
+   * performs SELECT ... FOR UPDATE row locks on payment & appointment,
+   * posts double-entry ledger + outbox events in one atomic transaction.
    */
   async processWebhook(rawBody: string | Buffer, signature: string) {
-    // 1. Signature Verification
+    if (!rawBody || (Buffer.isBuffer(rawBody) && rawBody.length === 0)) {
+      throw new BadRequestException('Raw webhook body is required');
+    }
+
+    // 1. Signature Verification on exact raw bytes
     const isValid = this.provider.verifyWebhookSignature(rawBody, signature);
     if (!isValid) {
       this.logger.warn('Rejected payment webhook due to invalid HMAC signature');
@@ -130,7 +170,6 @@ export class PaymentService {
         },
       });
     } catch (err: any) {
-      // Duplicate event id detected -> return 200 no-op
       if (err.code === 'P2002' || err.message?.includes('duplicate key')) {
         this.logger.log(
           `Duplicate webhook event ${parsed.eventId} received, treating as no-op`,
@@ -140,23 +179,54 @@ export class PaymentService {
       throw err;
     }
 
-    // 4. Process event in a transaction with row lock
+    // 4. Process event in ONE DB transaction with FOR UPDATE row locks
     return this.prisma.$transaction(async (tx) => {
-      // Find the payment record
-      const payment = await tx.payment.findUnique({
-        where: { providerOrderId: parsed.providerOrderId },
-        include: { appointment: true },
-      });
+      const paymentRows = await tx.$queryRaw<
+        Array<{
+          id: string;
+          appointment_id: string;
+          amount_paise: number;
+          status: string;
+          provider_payment_id: string | null;
+        }>
+      >`
+        SELECT id, appointment_id, amount_paise, status, provider_payment_id
+        FROM payments
+        WHERE provider_order_id = ${parsed.providerOrderId}
+        FOR UPDATE
+      `;
 
+      const payment = paymentRows[0];
       if (!payment) {
         this.logger.warn(
           `Payment record not found for providerOrderId: ${parsed.providerOrderId}`,
         );
+        await tx.paymentEvent.update({
+          where: { providerEventId: parsed.eventId },
+          data: { status: 'ORDER_NOT_FOUND', processedAt: new Date() },
+        });
         return { status: 'ORDER_NOT_FOUND' };
       }
 
-      // Idempotency: If payment is already captured, do nothing
-      if (payment.status === 'CAPTURED') {
+      const apptRows = await tx.$queryRaw<
+        Array<{
+          id: string;
+          patient_id: string;
+          doctor_id: string;
+          slot_time: Date;
+          booking_ref: string | null;
+          status: string;
+        }>
+      >`
+        SELECT id, patient_id, doctor_id, slot_time, booking_ref, status
+        FROM appointments
+        WHERE id = ${payment.appointment_id}::uuid
+        FOR UPDATE
+      `;
+      const appointment = apptRows[0];
+
+      // Idempotency inside lock
+      if (payment.status === 'CAPTURED' || payment.status === 'REFUNDED') {
         await tx.paymentEvent.update({
           where: { providerEventId: parsed.eventId },
           data: { status: 'PROCESSED', processedAt: new Date() },
@@ -164,7 +234,6 @@ export class PaymentService {
         return { status: 'ALREADY_CAPTURED', paymentId: payment.id };
       }
 
-      // If webhook notifies of payment failure
       if (parsed.status === 'FAILED') {
         await tx.payment.update({
           where: { id: payment.id },
@@ -177,25 +246,16 @@ export class PaymentService {
         return { status: 'PAYMENT_FAILED', paymentId: payment.id };
       }
 
-      // 5. Late payment after slot loss check
-      // Check if the appointment slot is still available or appointment was cancelled
-      const appointment = payment.appointment;
+      // 5. Late payment after slot loss / expiry check
       const isSlotLost =
+        !appointment ||
         appointment.status === 'CANCELLED' ||
         appointment.status === 'REFUNDED';
 
       if (isSlotLost) {
         this.logger.warn(
-          `Late payment detected for cancelled appointment ${appointment.id}. Executing auto-refund.`,
+          `Late payment detected for lost/expired appointment ${payment.appointment_id}. Recording auto-refund.`,
         );
-
-        // Call provider refund immediately
-        const refundRes = await this.provider.issueRefund({
-          paymentId: payment.id,
-          providerPaymentId: parsed.providerPaymentId,
-          amountPaise: payment.amountPaise,
-          reason: 'Late payment received after slot hold expired/cancelled',
-        });
 
         await tx.payment.update({
           where: { id: payment.id },
@@ -205,22 +265,49 @@ export class PaymentService {
           },
         });
 
-        await tx.refund.create({
+        const refund = await tx.refund.create({
           data: {
             paymentId: payment.id,
-            providerRefundId: refundRes.providerRefundId,
-            amountPaise: payment.amountPaise,
+            amountPaise: payment.amount_paise,
             reason: 'AUTO_REFUND_LATE_PAYMENT',
-            status: 'PROCESSED',
+            status: 'PENDING',
           },
         });
+
+        // Balance capture + immediate refund reversal in double-entry ledger
+        await this.ledgerService.recordPaymentCapture(
+          payment.id,
+          payment.amount_paise,
+          1000,
+          tx,
+        );
+        await this.ledgerService.recordRefund(
+          payment.id,
+          payment.amount_paise,
+          1000,
+          tx,
+        );
 
         await tx.paymentEvent.update({
           where: { providerEventId: parsed.eventId },
           data: { status: 'AUTO_REFUNDED', processedAt: new Date() },
         });
 
-        // Write outbox event
+        await tx.outboxEvent.create({
+          data: {
+            aggregateType: 'PAYMENT',
+            aggregateId: payment.id,
+            eventType: 'PAYMENT_REFUND_REQUESTED',
+            payload: {
+              refundId: refund.id,
+              paymentId: payment.id,
+              providerPaymentId: parsed.providerPaymentId,
+              amountPaise: payment.amount_paise,
+              reason: 'AUTO_REFUND_LATE_PAYMENT',
+            },
+          },
+        });
+
         await tx.outboxEvent.create({
           data: {
             aggregateType: 'PAYMENT',
@@ -228,8 +315,9 @@ export class PaymentService {
             eventType: 'PAYMENT_AUTO_REFUNDED',
             payload: {
               paymentId: payment.id,
-              appointmentId: appointment.id,
-              amountPaise: payment.amountPaise,
+              refundId: refund.id,
+              appointmentId: payment.appointment_id,
+              amountPaise: payment.amount_paise,
               reason: 'LATE_PAYMENT_SLOT_LOST',
             },
           },
@@ -239,10 +327,11 @@ export class PaymentService {
           status: 'AUTO_REFUNDED',
           reason: 'SLOT_EXPIRED_OR_LOST',
           paymentId: payment.id,
+          refundId: refund.id,
         };
       }
 
-      // 6. Normal capture flow: Update payment & appointment
+      // 6. Normal capture flow: Update payment & confirm appointment atomically
       await tx.payment.update({
         where: { id: payment.id },
         data: {
@@ -261,8 +350,8 @@ export class PaymentService {
       // 7. Post double-entry ledger entries
       await this.ledgerService.recordPaymentCapture(
         payment.id,
-        payment.amountPaise,
-        1000, // 10% commission
+        payment.amount_paise,
+        1000,
         tx,
       );
 
@@ -274,10 +363,10 @@ export class PaymentService {
           eventType: 'APPOINTMENT_CONFIRMED',
           payload: {
             appointmentId: appointment.id,
-            patientId: appointment.patientId,
-            doctorId: appointment.doctorId,
-            slotTime: appointment.slotTime.toISOString(),
-            bookingRef: appointment.bookingRef,
+            patientId: appointment.patient_id,
+            doctorId: appointment.doctor_id,
+            slotTime: new Date(appointment.slot_time).toISOString(),
+            bookingRef: appointment.booking_ref,
           },
         },
       });
@@ -290,7 +379,7 @@ export class PaymentService {
           payload: {
             paymentId: payment.id,
             appointmentId: appointment.id,
-            amountPaise: payment.amountPaise,
+            amountPaise: payment.amount_paise,
             providerPaymentId: parsed.providerPaymentId,
           },
         },
@@ -310,76 +399,89 @@ export class PaymentService {
   }
 
   /**
-   * Issues refund adhering to platform policy:
-   * > 24h before slot -> 100% full refund
-   * < 24h before slot -> 50% partial refund
-   * Doctor cancellation -> 100% full refund always
+   * Atomically records a refund inside a transaction with FOR UPDATE row lock,
+   * authorization check (owner/doctor/admin), and status check.
+   * Provider refund API call happens after commit via the outbox (idempotent).
    */
   async refundPayment(
     paymentId: string,
     reason: string,
-    forcedByDoctor = false,
+    actorId: string,
+    actorRole: string,
   ) {
-    const payment = await this.prisma.payment.findUnique({
-      where: { id: paymentId },
-      include: { appointment: true },
-    });
-
-    if (!payment) {
-      throw new NotFoundException(`Payment ${paymentId} not found`);
-    }
-
-    if (payment.status !== 'CAPTURED') {
-      throw new BadRequestException(
-        `Cannot refund payment in status ${payment.status}`,
-      );
-    }
-
-    let refundAmountPaise = payment.amountPaise;
-
-    if (!forcedByDoctor) {
-      const hoursUntilSlot =
-        (payment.appointment.slotTime.getTime() - Date.now()) / (1000 * 60 * 60);
-      if (hoursUntilSlot < 24) {
-        // Partial 50% refund policy
-        refundAmountPaise = Math.round(payment.amountPaise * 0.5);
-      }
-    }
-
-    const providerResult = await this.provider.issueRefund({
-      paymentId: payment.id,
-      providerPaymentId: payment.providerPaymentId || undefined,
-      amountPaise: refundAmountPaise,
-      reason,
-    });
-
     return this.prisma.$transaction(async (tx) => {
+      const paymentRows = await tx.$queryRaw<
+        Array<{
+          id: string;
+          appointment_id: string;
+          amount_paise: number;
+          status: string;
+          provider_payment_id: string | null;
+        }>
+      >`
+        SELECT id, appointment_id, amount_paise, status, provider_payment_id
+        FROM payments
+        WHERE id = ${paymentId}::uuid
+        FOR UPDATE
+      `;
+
+      const payment = paymentRows[0];
+      if (!payment) {
+        throw new NotFoundException(`Payment ${paymentId} not found`);
+      }
+
+      const appointment = await tx.appointment.findUnique({
+        where: { id: payment.appointment_id },
+        include: { doctor: true },
+      });
+      if (!appointment) {
+        throw new NotFoundException('Appointment not found for payment');
+      }
+
+      const isOwner = appointment.patientId === actorId;
+      const isDoctor = appointment.doctor.userId === actorId;
+      const isAdmin = actorRole === 'ADMIN';
+      if (!isOwner && !isDoctor && !isAdmin) {
+        throw new ForbiddenException('Not authorized to refund this payment');
+      }
+
+      if (payment.status !== 'CAPTURED') {
+        throw new BadRequestException(
+          `Cannot refund payment in status ${payment.status}`,
+        );
+      }
+
+      let refundAmountPaise = payment.amount_paise;
+      if (!isDoctor && !isAdmin) {
+        const hoursUntilSlot =
+          (appointment.slotTime.getTime() - Date.now()) / (1000 * 60 * 60);
+        if (hoursUntilSlot < 24) {
+          refundAmountPaise = Math.round(payment.amount_paise * 0.5);
+        }
+      }
+
       const refund = await tx.refund.create({
         data: {
           paymentId: payment.id,
-          providerRefundId: providerResult.providerRefundId,
           amountPaise: refundAmountPaise,
           reason,
-          status: 'PROCESSED',
+          status: 'PENDING',
         },
       });
 
       await tx.payment.update({
         where: { id: payment.id },
-        data: {
-          status: 'REFUNDED',
-        },
+        data: { status: 'REFUNDED' },
       });
 
       await tx.appointment.update({
-        where: { id: payment.appointmentId },
+        where: { id: payment.appointment_id },
         data: {
           status: 'REFUNDED',
           cancellationReason: reason,
         },
       });
 
-      // Post reversing ledger entries
       await this.ledgerService.recordRefund(
         payment.id,
         refundAmountPaise,
@@ -391,10 +493,27 @@ export class PaymentService {
         data: {
           aggregateType: 'PAYMENT',
           aggregateId: payment.id,
+          eventType: 'PAYMENT_REFUND_REQUESTED',
+          payload: {
+            refundId: refund.id,
+            paymentId: payment.id,
+            providerPaymentId: payment.provider_payment_id,
+            amountPaise: refundAmountPaise,
+            reason,
+          },
+        },
+      });
+
+      await tx.outboxEvent.create({
+        data: {
+          aggregateType: 'PAYMENT',
+          aggregateId: payment.id,
           eventType: 'PAYMENT_REFUNDED',
           payload: {
             paymentId: payment.id,
             refundId: refund.id,
+            appointmentId: appointment.id,
+            patientId: appointment.patientId,
             amountPaise: refundAmountPaise,
             reason,
           },
@@ -403,6 +522,100 @@ export class PaymentService {
 
       return refund;
     });
+  }
+
+  /**
+   * Idempotent post-commit refund execution against the payment provider.
+   * Invoked by the worker outbox processor (or reconciliation).
+   */
+  async executePendingRefund(refundId: string) {
+    const refund = await this.prisma.refund.findUnique({
+      where: { id: refundId },
+      include: { payment: true },
+    });
+
+    if (!refund) {
+      throw new NotFoundException(`Refund ${refundId} not found`);
+    }
+
+    if (refund.status === 'PROCESSED' && refund.providerRefundId) {
+      return refund;
+    }
+
+    const providerResult = await this.provider.issueRefund({
+      paymentId: refund.paymentId,
+      providerPaymentId: refund.payment.providerPaymentId || undefined,
+      amountPaise: refund.amountPaise,
+      reason: refund.reason || 'Refund requested',
+    });
+
+    return this.prisma.refund.update({
+      where: { id: refund.id },
+      data: {
+        providerRefundId: providerResult.providerRefundId,
+        status: providerResult.status === 'PROCESSED' ? 'PROCESSED' : 'PENDING',
+      },
+    });
+  }
+
+  /**
+   * Dev/Sandbox-only helper: constructs a Razorpay-style payload, signs raw JSON
+   * with the FakePaymentProvider HMAC secret, and processes it as a real webhook.
+   */
+  async devSimulateWebhook(params: {
+    paymentId?: string;
+    providerOrderId?: string;
+    event: 'payment.captured' | 'payment.failed';
+    actorId: string;
+    actorRole: string;
+  }) {
+    if (env.PAYMENT_PROVIDER !== 'FAKE') {
+      throw new ForbiddenException(
+        'Webhook simulation endpoint is only enabled when PAYMENT_PROVIDER=FAKE',
+      );
+    }
+
+    const payment = params.paymentId
+      ? await this.prisma.payment.findUnique({
+          where: { id: params.paymentId },
+          include: { appointment: true },
+        })
+      : await this.prisma.payment.findUnique({
+          where: { providerOrderId: params.providerOrderId },
+          include: { appointment: true },
+        });
+
+    if (!payment) {
+      throw new NotFoundException('Payment not found');
+    }
+
+    if (
+      payment.appointment.patientId !== params.actorId &&
+      params.actorRole !== 'ADMIN'
+    ) {
+      throw new ForbiddenException('Not authorized to simulate payment for this order');
+    }
+
+    const eventPayload = {
+      id: `evt_sim_${crypto.randomUUID().slice(0, 12)}`,
+      event: params.event,
+      payload: {
+        payment: {
+          entity: {
+            id: `pay_sim_${crypto.randomUUID().slice(0, 12)}`,
+            order_id: payment.providerOrderId,
+            amount: payment.amountPaise,
+            currency: payment.currency,
+          },
+        },
+      },
+    };
+
+    const rawBody = Buffer.from(JSON.stringify(eventPayload), 'utf8');
+    const fakeProvider = this.provider as FakePaymentProvider;
+    const signature = fakeProvider.generateSignature(rawBody);
+
+    return this.processWebhook(rawBody, signature);
   }
 
   /**
@@ -424,8 +637,19 @@ export class PaymentService {
       try {
         const remote = await this.provider.fetchPaymentStatus(p.providerOrderId);
         if (remote.status === 'CAPTURED') {
-          // Process capture retroactively
           await this.prisma.$transaction(async (tx) => {
+            const locked = await tx.$queryRaw<
+              Array<{ id: string; status: string; appointment_id: string; amount_paise: number }>
+            >`
+              SELECT id, status, appointment_id, amount_paise
+              FROM payments
+              WHERE id = ${p.id}::uuid
+              FOR UPDATE
+            `;
+            const cur = locked[0];
+            if (!cur || cur.status === 'CAPTURED' || cur.status === 'REFUNDED') {
+              return;
+            }
             await tx.payment.update({
               where: { id: p.id },
               data: {
@@ -460,7 +684,7 @@ export class PaymentService {
     return reconciledCount;
   }
 
-  async findById(paymentId: string) {
+  async findById(paymentId: string, actorId: string, actorRole: string) {
     const payment = await this.prisma.payment.findUnique({
       where: { id: paymentId },
       include: {
@@ -468,21 +692,29 @@ export class PaymentService {
           include: {
             doctor: {
               include: {
-                user: { select: { name: true, email: true } },
+                user: { select: { id: true, name: true, email: true } },
               },
             },
-            patient: { select: { name: true, email: true } },
+            patient: { select: { id: true, name: true, email: true } },
           },
         },
         refunds: true,
         ledgers: true,
       },
     });
+
     if (!payment) {
       throw new NotFoundException(`Payment ${paymentId} not found`);
     }
+
+    const isOwner = payment.appointment.patientId === actorId;
+    const isDoctor = payment.appointment.doctor.userId === actorId;
+    const isAdmin = actorRole === 'ADMIN';
+
+    if (!isOwner && !isDoctor && !isAdmin) {
+      throw new ForbiddenException('Not authorized to view this payment');
+    }
+
     return payment;
   }
-
 }
-

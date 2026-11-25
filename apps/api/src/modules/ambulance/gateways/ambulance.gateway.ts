@@ -10,6 +10,7 @@ import { Logger, Inject } from '@nestjs/common';
 import { Server, Socket } from 'socket.io';
 import * as jwt from 'jsonwebtoken';
 import { PrismaService } from '../../platform/database/prisma.service';
+import { env } from '../../../common/config/env.schema';
 
 @WebSocketGateway({
   cors: { origin: '*' },
@@ -23,7 +24,7 @@ export class AmbulanceGateway implements OnGatewayConnection {
   private readonly jwtSecret: string;
 
   constructor(@Inject(PrismaService) private readonly prisma: PrismaService) {
-    this.jwtSecret = process.env.JWT_ACCESS_SECRET || 'dev_jwt_access_secret_key_12345';
+    this.jwtSecret = env.JWT_SECRET;
   }
 
   handleConnection(client: Socket) {
@@ -40,7 +41,7 @@ export class AmbulanceGateway implements OnGatewayConnection {
 
       const decoded = jwt.verify(token, this.jwtSecret) as any;
       (client as any).user = decoded;
-      this.logger.log(`Ambulance client connected: ${decoded.userId}`);
+      this.logger.log(`Ambulance client connected: ${decoded.sub}`);
     } catch {
       client.disconnect();
     }
@@ -65,12 +66,12 @@ export class AmbulanceGateway implements OnGatewayConnection {
 
     if (!request) return { error: 'Request not found' };
 
-    const isPatient = request.patientId === user.userId;
-    const isDriver = request.driver?.userId === user.userId;
+    const isPatient = request.patientId === user.sub;
+    const isDriver = request.driver?.userId === user.sub;
 
     if (!isPatient && !isDriver && user.role !== 'ADMIN') {
       this.logger.warn(
-        `Socket isolation violation attempt by ${user.userId} for request ${data.requestId}`,
+        `Socket isolation violation attempt by ${user.sub} for request ${data.requestId}`,
       );
       return { error: 'Forbidden: You are not authorized to track this emergency request' };
     }

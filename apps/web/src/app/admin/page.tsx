@@ -61,7 +61,7 @@ export default function AdminPage() {
     {
       id: 'aud-1',
       action: 'PHI_RECORD_READ',
-      actor: 'Dr. Arindam Mukherjee (DOCTOR)',
+      actor: 'Dr. Subhash Chandra (DOCTOR)',
       resource: 'Prescription: rx-apt-101',
       patientId: 'usr-patient-1',
       timestamp: '2026-11-02 17:35:10',

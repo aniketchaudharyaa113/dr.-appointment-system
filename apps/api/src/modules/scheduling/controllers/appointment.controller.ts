@@ -1,5 +1,6 @@
 import {
   Controller,
+  Get,
   Post,
   Param,
   Body,
@@ -10,10 +11,20 @@ import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { BookingService } from '../services/booking.service';
 import { JwtAuthGuard } from '../../identity/guards/jwt-auth.guard';
 import { CurrentUser } from '../../identity/decorators/current-user.decorator';
-import { JwtPayload, ConsultationMode } from '@medibook/shared';
+import { ZodValidationPipe } from '../../../common/pipes/zod-validation.pipe';
+import {
+  JwtPayload,
+  HoldSlotSchema,
+  HoldSlotInput,
+  BookAppointmentSchema,
+  BookAppointmentInput,
+  CancelAppointmentSchema,
+  CancelAppointmentInput,
+  UuidSchema,
+} from '@medibook/shared';
 
 @ApiTags('Scheduling')
-@Controller('api/appointments')
+@Controller('appointments')
 @UseGuards(JwtAuthGuard)
 @ApiBearerAuth()
 export class AppointmentController {
@@ -21,47 +32,60 @@ export class AppointmentController {
     @Inject(BookingService) private readonly bookingService: BookingService,
   ) {}
 
-  @Post('hold')
-  @ApiOperation({ summary: 'Hold a slot for 10 minutes with Redis lease' })
-  async holdSlot(
-    @Body('doctorId') doctorId: string,
-    @Body('slotTime') slotTime: string,
+  @Get('mine')
+  @ApiOperation({ summary: 'List appointments for the authenticated user' })
+  async getMyAppointments(@CurrentUser() user: JwtPayload) {
+    return this.bookingService.getMyAppointments(user.sub, user.role);
+  }
+
+  @Get(':id')
+  @ApiOperation({ summary: 'Get appointment details by ID (owner, doctor, or admin)' })
+  async getAppointment(
+    @Param('id', new ZodValidationPipe(UuidSchema)) appointmentId: string,
     @CurrentUser() user: JwtPayload,
   ) {
-    return this.bookingService.holdSlot(doctorId, slotTime, user.sub);
+    return this.bookingService.getAppointmentById(appointmentId, user.sub, user.role);
+  }
+
+  @Post('hold')
+  @ApiOperation({ summary: 'Hold a slot for 10 minutes with Redis unguessable token lease' })
+  async holdSlot(
+    @Body(new ZodValidationPipe(HoldSlotSchema)) body: HoldSlotInput,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.bookingService.holdSlot(body.doctorId, body.slotTime, user.sub);
   }
 
   @Post('book')
-  @ApiOperation({ summary: 'Confirm booking with atomic daily reference MB-YYYYMMDD-NNN' })
+  @ApiOperation({ summary: 'Create PENDING_PAYMENT booking after verifying Redis hold token' })
   async bookAppointment(
-    @Body('doctorId') doctorId: string,
-    @Body('slotTime') slotTime: string,
-    @Body('consultationMode') consultationMode: ConsultationMode = 'VIDEO',
-    @Body('notes') notes: string | undefined,
-    @Body('idempotencyKey') idempotencyKey: string | undefined,
+    @Body(new ZodValidationPipe(BookAppointmentSchema)) body: BookAppointmentInput,
     @CurrentUser() user: JwtPayload,
   ) {
     return this.bookingService.bookAppointment(
-      doctorId,
-      slotTime,
+      body.doctorId,
+      body.slotTime,
       user.sub,
-      consultationMode,
-      notes,
-      idempotencyKey,
+      body.holdToken,
+      body.consultationMode,
+      body.notes,
+      body.idempotencyKey,
     );
   }
 
   @Post(':id/cancel')
   @ApiOperation({ summary: 'Cancel appointment and immediately free slot for rebooking' })
   async cancelAppointment(
-    @Param('id') appointmentId: string,
-    @Body('reason') reason: string | undefined,
+    @Param('id', new ZodValidationPipe(UuidSchema)) appointmentId: string,
+    @Body(new ZodValidationPipe(CancelAppointmentSchema.optional()))
+    body: CancelAppointmentInput | undefined,
     @CurrentUser() user: JwtPayload,
   ) {
     return this.bookingService.cancelAppointment(
       appointmentId,
       user.sub,
-      reason,
+      body?.reason,
+      user.role,
     );
   }
 }

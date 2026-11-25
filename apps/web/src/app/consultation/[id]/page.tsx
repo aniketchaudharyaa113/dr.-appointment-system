@@ -133,7 +133,7 @@ export default function ConsultationRoomPage() {
 
             <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200/60 dark:border-slate-700/60 text-xs text-slate-600 dark:text-slate-300 leading-relaxed space-y-2">
               <p>
-                By joining this remote consultation, you confirm that you are physically located in India and give consent for teleconsultation with Dr. Arindam Mukherjee (NMC WBMC/64921).
+                By joining this remote consultation, you confirm that you are physically located in India and give consent for teleconsultation with your attending physician.
               </p>
               <p>
                 Remote consultations are not suitable for emergency trauma, acute stroke, or severe respiratory failure. If in distress, immediately dial 112.
@@ -173,7 +173,7 @@ export default function ConsultationRoomPage() {
         <div>
           <div className="flex items-center gap-2">
             <h1 className="text-xl sm:text-2xl font-bold text-slate-900 dark:text-white">
-              Consultation Room with Dr. Arindam Mukherjee
+              Consultation Room
             </h1>
             <span className="text-[10px] font-bold bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300 px-2 py-0.5 rounded-full flex items-center gap-1">
               <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-ping" />
@@ -229,7 +229,7 @@ export default function ConsultationRoomPage() {
                 AM
               </div>
               <div className="text-center">
-                <p className="font-bold text-base">Dr. Arindam Mukherjee</p>
+                <p className="font-bold text-base">Attending Physician</p>
                 <p className="text-xs text-teal-400 font-medium">Senior Consultant Cardiologist</p>
               </div>
             </div>
@@ -361,7 +361,7 @@ export default function ConsultationRoomPage() {
             <div>
               <h2 className="text-2xl font-bold text-slate-900 dark:text-white">Official Telehealth Prescription</h2>
               <p className="text-xs text-slate-500 mt-1">
-                Issued by Dr. Arindam Mukherjee, MBBS, MD, DM • Reg: WBMC/64921
+                Issued via MediBook Telehealth Digital Rx
               </p>
             </div>
             <span className="text-xs font-mono font-bold bg-teal-100 text-teal-700 dark:bg-teal-900 dark:text-teal-300 px-3 py-1 rounded-full">

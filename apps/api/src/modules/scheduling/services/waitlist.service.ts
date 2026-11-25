@@ -5,9 +5,11 @@ import {
   ForbiddenException,
   Inject,
 } from '@nestjs/common';
+import { randomBytes } from 'crypto';
 import { PrismaService } from '../../platform/database/prisma.service';
 import { RedisService } from '../../platform/redis/redis.service';
 import { BookingService } from './booking.service';
+import { getIstDateString } from '../../../common/utils/ist-time';
 
 @Injectable()
 export class WaitlistService {
@@ -35,7 +37,9 @@ export class WaitlistService {
     });
 
     if (existing) {
-      throw new BadRequestException('You are already on the waitlist for this doctor on this date');
+      throw new BadRequestException(
+        'You are already on the waitlist for this doctor on this date',
+      );
     }
 
     return this.prisma.waitlist.create({
@@ -53,7 +57,8 @@ export class WaitlistService {
    * Cascading offer: When a slot is cancelled, offer it to the next patient in line
    */
   async offerCancelledSlotToNext(doctorId: string, slotTimeIso: string) {
-    const dateOnly = new Date(`${slotTimeIso.split('T')[0]}T00:00:00.000Z`);
+    const istDateStr = getIstDateString(new Date(slotTimeIso));
+    const dateOnly = new Date(`${istDateStr}T00:00:00.000Z`);
 
     const nextInLine = await this.prisma.waitlist.findFirst({
       where: {
@@ -68,14 +73,14 @@ export class WaitlistService {
       return null;
     }
 
-    // 15-minute claim lease (900 seconds)
     const claimExpiresAt = new Date(Date.now() + 15 * 60 * 1000);
-    const holdToken = `waitlist:${nextInLine.id}:${slotTimeIso}`;
+    const holdToken = randomBytes(24).toString('hex');
 
     await this.redis.acquireSlotHold(
       doctorId,
       slotTimeIso,
       nextInLine.patientId,
+      holdToken,
       900,
     );
 
@@ -86,10 +91,10 @@ export class WaitlistService {
         offeredAt: new Date(),
         claimExpiresAt,
         holdToken,
+        slotTime: slotTimeIso,
       },
     });
 
-    // Outbox notification
     await this.prisma.outboxEvent.create({
       data: {
         aggregateType: 'WAITLIST',
@@ -122,7 +127,9 @@ export class WaitlistService {
     }
 
     if (entry.status !== 'OFFERED') {
-      throw new BadRequestException(`Offer is not active (current status: ${entry.status})`);
+      throw new BadRequestException(
+        `Offer is not active (current status: ${entry.status})`,
+      );
     }
 
     if (entry.claimExpiresAt && new Date() > entry.claimExpiresAt) {
@@ -130,15 +137,20 @@ export class WaitlistService {
         where: { id: waitlistId },
         data: { status: 'EXPIRED' },
       });
-      throw new BadRequestException('Claim offer window (15 minutes) has expired');
+      throw new BadRequestException(
+        'Claim offer window (15 minutes) has expired',
+      );
     }
 
-    // Book the appointment
-    const slotTimeIso = entry.holdToken?.split(':')[2] || entry.slotDate.toISOString();
+    if (!entry.holdToken || !entry.slotTime) {
+      throw new BadRequestException('Waitlist offer is missing slot or hold token');
+    }
+
     const appointment = await this.bookingService.bookAppointment(
       entry.doctorId,
-      slotTimeIso,
+      entry.slotTime,
       patientId,
+      entry.holdToken,
       'VIDEO',
       'Booked via waitlist offer claim',
     );

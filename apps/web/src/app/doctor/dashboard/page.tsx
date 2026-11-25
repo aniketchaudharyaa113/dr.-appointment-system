@@ -96,7 +96,7 @@ export default function DoctorDashboardPage() {
               Doctor Clinical Workspace
             </h1>
             <span className="text-xs font-bold text-teal-600 bg-teal-50 dark:bg-teal-950 px-2.5 py-0.5 rounded-full">
-              Dr. Arindam Mukherjee
+              Attending Physician
             </span>
           </div>
           <p className="text-xs sm:text-sm text-slate-500 mt-1">

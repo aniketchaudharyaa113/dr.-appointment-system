@@ -14,12 +14,19 @@ export function Navbar() {
   const [isDark, setIsDark] = useState(false);
 
   useEffect(() => {
-    setUser(getCurrentUser());
+    const syncUser = () => setUser(getCurrentUser());
+    syncUser();
+    window.addEventListener('medibook-auth-change', syncUser);
+    window.addEventListener('storage', syncUser);
     if (typeof window !== 'undefined') {
       const darkMode = document.documentElement.classList.contains('dark') ||
         window.matchMedia('(prefers-color-scheme: dark)').matches;
       setIsDark(darkMode);
     }
+    return () => {
+      window.removeEventListener('medibook-auth-change', syncUser);
+      window.removeEventListener('storage', syncUser);
+    };
   }, []);
 
   const toggleTheme = () => {

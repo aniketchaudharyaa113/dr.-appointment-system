@@ -15,11 +15,12 @@ import { JwtAuthGuard } from '../identity/guards/jwt-auth.guard';
 import { RolesGuard } from '../identity/guards/roles.guard';
 import { Roles } from '../identity/decorators/roles.decorator';
 import { CurrentUser } from '../identity/decorators/current-user.decorator';
-import { JwtPayload } from '@medibook/shared';
+import { ZodValidationPipe } from '../../common/pipes/zod-validation.pipe';
+import { JwtPayload, VerifyDoctorSchema, UuidSchema } from '@medibook/shared';
 import { DoctorVerificationStatus } from '@prisma/client';
 
 @ApiTags('Admin')
-@Controller('api/admin')
+@Controller('admin')
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Roles('ADMIN')
 @ApiBearerAuth()
@@ -35,8 +36,9 @@ export class AdminController {
   @Post('doctors/:id/verify')
   @ApiOperation({ summary: 'Approve or reject doctor license' })
   async verifyDoctor(
-    @Param('id') doctorId: string,
-    @Body('status') status: DoctorVerificationStatus,
+    @Param('id', new ZodValidationPipe(UuidSchema)) doctorId: string,
+    @Body(new ZodValidationPipe(VerifyDoctorSchema))
+    body: { status: DoctorVerificationStatus },
     @CurrentUser() admin: JwtPayload,
     @Req() req: FastifyRequest,
   ) {
@@ -47,7 +49,7 @@ export class AdminController {
 
     return this.adminService.verifyDoctor(
       doctorId,
-      status,
+      body.status,
       admin.sub,
       ip,
       userAgent,

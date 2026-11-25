@@ -1,8 +1,11 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
-import { useParams, useRouter, useSearchParams } from 'next/navigation';
+import React, { useState, useEffect, useRef } from 'react';
+import { useParams, useRouter } from 'next/navigation';
+import Link from 'next/link';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useI18n } from '@/lib/i18n';
+import { fetchApi, formatIstDateTime } from '@/lib/api';
 import { formatPaise } from '@/lib/utils';
 import {
   CreditCard,
@@ -11,34 +14,150 @@ import {
   ArrowLeft,
   Sparkles,
   Lock,
+  AlertCircle,
 } from 'lucide-react';
-import Link from 'next/link';
+
+interface AppointmentDetail {
+  id: string;
+  bookingRef: string;
+  doctorId: string;
+  doctorName: string;
+  specialty: string;
+  consultationFeePaise: number;
+  slotTime: string;
+  consultationMode: 'VIDEO' | 'IN_CLINIC' | 'CHAT';
+  status: string;
+  createdAt: string;
+  payment: {
+    id: string;
+    status: string;
+    amountPaise: number;
+    provider: string;
+    providerOrderId: string;
+  } | null;
+}
+
+interface CheckoutResponse {
+  paymentId: string;
+  providerOrderId: string;
+  amountPaise: number;
+  currency: string;
+  status: string;
+  provider: string;
+}
 
 export default function CheckoutPage() {
   const { t } = useI18n();
   const params = useParams();
-  const searchParams = useSearchParams();
   const router = useRouter();
+  const queryClient = useQueryClient();
+  const appointmentId = params?.id as string;
 
-  const appointmentId = (params?.id as string) || 'apt-test-1';
-  const slotTime = searchParams.get('slot') || 'Today at 05:30 PM';
+  const idempotencyKeyRef = useRef<string>(
+    typeof crypto !== 'undefined' ? crypto.randomUUID() : `idem-${Date.now()}`,
+  );
 
-  const [holdTimer, setHoldTimer] = useState<number>(540); // 9 minutes left
-  const [processing, setProcessing] = useState(false);
-  const [selectedProvider, setSelectedProvider] = useState<'FAKE' | 'RAZORPAY'>('FAKE');
+  const [paymentOrder, setPaymentOrder] = useState<CheckoutResponse | null>(null);
+  const [secondsLeft, setSecondsLeft] = useState<number>(900);
+  const [checkoutError, setCheckoutError] = useState<string | null>(null);
 
-  // Integer paise amounts
-  const doctorFeePaise = 80000;
-  const platformFeePaise = 5000;
-  const gstPaise = Math.round((doctorFeePaise + platformFeePaise) * 0.18);
-  const totalPaise = doctorFeePaise + platformFeePaise + gstPaise;
+  const apptQuery = useQuery<AppointmentDetail>({
+    queryKey: ['appointment', appointmentId],
+    queryFn: () => fetchApi<AppointmentDetail>(`/appointments/${appointmentId}`),
+    enabled: !!appointmentId,
+  });
 
+  const createCheckoutMutation = useMutation({
+    mutationFn: () =>
+      fetchApi<CheckoutResponse>('/payments/checkout', {
+        method: 'POST',
+        body: JSON.stringify({
+          appointmentId,
+          idempotencyKey: idempotencyKeyRef.current,
+        }),
+      }),
+    onSuccess: (order) => {
+      setCheckoutError(null);
+      setPaymentOrder(order);
+    },
+    onError: (err: Error) => {
+      setCheckoutError(err.message);
+    },
+  });
+
+  // Automatically create payment order once PENDING_PAYMENT appointment loads
   useEffect(() => {
-    const interval = setInterval(() => {
-      setHoldTimer((prev) => (prev > 0 ? prev - 1 : 0));
-    }, 1000);
-    return () => clearInterval(interval);
-  }, []);
+    const appt = apptQuery.data;
+    if (!appt) return;
+
+    if (appt.status === 'CONFIRMED') {
+      router.replace(`/appointments/${appointmentId}/confirmed`);
+      return;
+    }
+
+    if (appt.payment && (appt.payment.status === 'INITIATED' || appt.payment.status === 'PENDING')) {
+      setPaymentOrder({
+        paymentId: appt.payment.id,
+        providerOrderId: appt.payment.providerOrderId,
+        amountPaise: appt.payment.amountPaise,
+        currency: 'INR',
+        status: appt.payment.status,
+        provider: appt.payment.provider,
+      });
+      return;
+    }
+
+    if (
+      appt.status === 'PENDING_PAYMENT' &&
+      !paymentOrder &&
+      !createCheckoutMutation.isPending &&
+      !createCheckoutMutation.isError
+    ) {
+      createCheckoutMutation.mutate();
+    }
+  }, [apptQuery.data, appointmentId, router, paymentOrder, createCheckoutMutation]);
+
+  // Countdown from appointment createdAt + 15 minutes
+  useEffect(() => {
+    const appt = apptQuery.data;
+    if (!appt) return;
+    const expiryMs = new Date(appt.createdAt).getTime() + 15 * 60 * 1000;
+    const update = () => {
+      setSecondsLeft(Math.max(0, Math.floor((expiryMs - Date.now()) / 1000)));
+    };
+    update();
+    const timer = setInterval(update, 1000);
+    return () => clearInterval(timer);
+  }, [apptQuery.data]);
+
+  const simulateWebhookMutation = useMutation({
+    mutationFn: (event: 'payment.captured' | 'payment.failed') => {
+      if (!paymentOrder) throw new Error('Payment order not initialized');
+      return fetchApi<{ status: string }>('/payments/dev/simulate-webhook', {
+        method: 'POST',
+        body: JSON.stringify({
+          paymentId: paymentOrder.paymentId,
+          event,
+        }),
+      });
+    },
+    onSuccess: (res, event) => {
+      if (event === 'payment.failed') {
+        setCheckoutError('Simulated payment failure: payment declined. You can retry payment before expiry.');
+        return;
+      }
+      if (res.status === 'CAPTURED' || res.status === 'ALREADY_CAPTURED') {
+        queryClient.invalidateQueries({ queryKey: ['appointment', appointmentId] });
+        queryClient.invalidateQueries({ queryKey: ['my-appointments'] });
+        router.push(`/appointments/${appointmentId}/confirmed`);
+      } else if (res.status === 'AUTO_REFUNDED') {
+        setCheckoutError('Slot expired before payment captured — automatic refund initiated.');
+      }
+    },
+    onError: (err: Error) => {
+      setCheckoutError(err.message);
+    },
+  });
 
   const formatTimer = (s: number) => {
     const mins = Math.floor(s / 60);
@@ -46,22 +165,30 @@ export default function CheckoutPage() {
     return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
   };
 
-  const handlePaySuccess = async () => {
-    setProcessing(true);
-    // Simulate webhook processing and double-entry ledger capture
-    setTimeout(() => {
-      setProcessing(false);
-      router.push(`/appointments/${appointmentId}/confirmed?slot=${encodeURIComponent(slotTime)}`);
-    }, 1200);
-  };
+  if (apptQuery.isLoading) {
+    return (
+      <div className="max-w-4xl mx-auto px-4 py-12 text-center text-sm text-slate-500">
+        Loading checkout details...
+      </div>
+    );
+  }
 
-  const handlePayFailure = () => {
-    setProcessing(true);
-    setTimeout(() => {
-      setProcessing(false);
-      alert('Simulated payment failure: Card declined by issuing bank (Insufficient funds). Your slot remains held.');
-    }, 800);
-  };
+  if (apptQuery.isError || !apptQuery.data) {
+    return (
+      <div className="max-w-3xl mx-auto px-4 py-12 text-center space-y-4">
+        <AlertCircle className="w-10 h-10 text-rose-500 mx-auto" />
+        <p className="text-sm font-bold text-rose-600">
+          {(apptQuery.error as Error)?.message || 'Unable to load appointment for checkout'}
+        </p>
+        <Link href="/doctors" className="text-xs font-semibold text-teal-600 underline">
+          Return to Doctors
+        </Link>
+      </div>
+    );
+  }
+
+  const appt = apptQuery.data;
+  const amountPaise = paymentOrder?.amountPaise ?? appt.consultationFeePaise;
 
   return (
     <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8">
@@ -74,116 +201,83 @@ export default function CheckoutPage() {
 
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
         <div>
-          <h1 className="text-2xl sm:text-3xl font-extrabold text-slate-900 dark:text-white">{t.checkout.title}</h1>
+          <h1 className="text-2xl sm:text-3xl font-extrabold text-slate-900 dark:text-white">
+            {t.checkout.title}
+          </h1>
           <p className="text-xs sm:text-sm text-slate-500 dark:text-slate-400 mt-1">
-            Appointment ID: <span className="font-mono font-semibold">{appointmentId}</span>
+            Booking Ref: <span className="font-mono font-semibold">{appt.bookingRef || appt.id}</span>
           </p>
         </div>
 
-        {/* Hold Countdown */}
         <div className="flex items-center gap-2 px-3.5 py-1.5 rounded-xl bg-amber-50 dark:bg-amber-950/60 border border-amber-200 dark:border-amber-800 text-amber-900 dark:text-amber-200 text-xs font-bold">
-          <Clock className="w-4 h-4 text-amber-600 animate-spin" style={{ animationDuration: '6s' }} />
-          <span>Slot Hold Time Remaining:</span>
+          <Clock className="w-4 h-4 text-amber-600" />
+          <span>Payment Window Remaining:</span>
           <span className="font-mono text-sm font-extrabold text-amber-700 dark:text-amber-300">
-            {formatTimer(holdTimer)}
+            {formatTimer(secondsLeft)}
           </span>
         </div>
       </div>
 
+      {checkoutError && (
+        <div
+          role="alert"
+          className="p-4 rounded-2xl bg-rose-50 dark:bg-rose-950/50 border border-rose-200 dark:border-rose-900 text-rose-700 dark:text-rose-300 text-xs font-medium flex items-center gap-2"
+        >
+          <AlertCircle className="w-4 h-4 shrink-0" />
+          <span>{checkoutError}</span>
+        </div>
+      )}
+
       <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
-        {/* Left Column: Payment Provider Selection */}
         <div className="md:col-span-2 space-y-6">
           <div className="p-6 rounded-3xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm space-y-6">
             <h2 className="text-base font-bold text-slate-900 dark:text-white flex items-center gap-2">
-              <CreditCard className="w-4 h-4 text-teal-600" /> Select Payment Method
+              <CreditCard className="w-4 h-4 text-teal-600" /> Payment Order Details
             </h2>
 
-            <div className="space-y-3">
-              <label
-                onClick={() => setSelectedProvider('FAKE')}
-                className={`flex items-start justify-between p-4 rounded-2xl border cursor-pointer transition-all ${
-                  selectedProvider === 'FAKE'
-                    ? 'border-teal-600 bg-teal-50/50 dark:bg-teal-950/40 ring-2 ring-teal-500/20'
-                    : 'border-slate-200 dark:border-slate-800 hover:border-slate-300'
-                }`}
-              >
-                <div className="flex items-start gap-3">
-                  <input
-                    type="radio"
-                    name="provider"
-                    checked={selectedProvider === 'FAKE'}
-                    onChange={() => setSelectedProvider('FAKE')}
-                    className="mt-1 accent-teal-600"
-                  />
-                  <div>
-                    <span className="font-bold text-sm text-slate-900 dark:text-white block">
-                      Fake Payment Provider (Test & Sandbox)
-                    </span>
-                    <span className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed block mt-0.5">
-                      Deterministic sandbox with 100% HMAC signature simulation, ledger balancing, and error cases.
-                    </span>
-                  </div>
+            {paymentOrder ? (
+              <div className="p-4 rounded-2xl border border-teal-600 bg-teal-50/50 dark:bg-teal-950/40 space-y-1 text-xs">
+                <div className="flex items-center justify-between">
+                  <span className="font-bold text-sm text-slate-900 dark:text-white">
+                    Provider: {paymentOrder.provider}
+                  </span>
+                  <span className="font-mono text-[11px] bg-teal-100 text-teal-700 dark:bg-teal-900 dark:text-teal-300 px-2 py-0.5 rounded font-bold">
+                    {paymentOrder.status}
+                  </span>
                 </div>
-                <span className="text-[10px] font-bold uppercase bg-teal-100 text-teal-700 dark:bg-teal-900 dark:text-teal-300 px-2 py-0.5 rounded">
-                  Recommended
-                </span>
-              </label>
+                <p className="text-slate-500 font-mono">Order ID: {paymentOrder.providerOrderId}</p>
+              </div>
+            ) : (
+              <div className="p-4 rounded-2xl border border-slate-200 dark:border-slate-800 text-xs text-slate-500">
+                Initializing payment order with backend...
+              </div>
+            )}
 
-              <label
-                onClick={() => setSelectedProvider('RAZORPAY')}
-                className={`flex items-start justify-between p-4 rounded-2xl border cursor-pointer transition-all ${
-                  selectedProvider === 'RAZORPAY'
-                    ? 'border-teal-600 bg-teal-50/50 dark:bg-teal-950/40 ring-2 ring-teal-500/20'
-                    : 'border-slate-200 dark:border-slate-800 hover:border-slate-300'
-                }`}
-              >
-                <div className="flex items-start gap-3">
-                  <input
-                    type="radio"
-                    name="provider"
-                    checked={selectedProvider === 'RAZORPAY'}
-                    onChange={() => setSelectedProvider('RAZORPAY')}
-                    className="mt-1 accent-teal-600"
-                  />
-                  <div>
-                    <span className="font-bold text-sm text-slate-900 dark:text-white block">
-                      Razorpay Checkout (UPI / Cards / NetBanking)
-                    </span>
-                    <span className="text-xs text-slate-500 dark:text-slate-400 block mt-0.5">
-                      Standard Indian payment gateway with test credentials (rzp_test_...).
-                    </span>
-                  </div>
-                </div>
-                <span className="text-[10px] font-bold uppercase bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400 px-2 py-0.5 rounded">
-                  Sandbox
-                </span>
-              </label>
-            </div>
-
-            {/* Test Actions */}
             <div className="pt-4 border-t border-slate-100 dark:border-slate-800 space-y-3">
               <button
-                disabled={processing || holdTimer === 0}
-                onClick={handlePaySuccess}
+                type="button"
+                disabled={!paymentOrder || simulateWebhookMutation.isPending || secondsLeft === 0}
+                onClick={() => simulateWebhookMutation.mutate('payment.captured')}
                 className="w-full py-3.5 px-4 rounded-xl bg-teal-600 hover:bg-teal-700 disabled:opacity-40 text-white font-bold text-sm shadow-md transition-all flex items-center justify-center gap-2"
               >
-                {processing ? (
+                {simulateWebhookMutation.isPending ? (
                   <>
-                    <Sparkles className="w-4 h-4 animate-spin" /> Verifying Webhook & Balancing Ledger...
+                    <Sparkles className="w-4 h-4 animate-spin" /> Verifying Signed Webhook & Balancing Ledger...
                   </>
                 ) : (
                   <>
-                    <Lock className="w-4 h-4" /> Pay {formatPaise(totalPaise)} & Confirm Booking
+                    <Lock className="w-4 h-4" /> Simulate Payment ({formatPaise(amountPaise)}) via Signed Webhook
                   </>
                 )}
               </button>
 
               <button
-                disabled={processing}
-                onClick={handlePayFailure}
+                type="button"
+                disabled={!paymentOrder || simulateWebhookMutation.isPending}
+                onClick={() => simulateWebhookMutation.mutate('payment.failed')}
                 className="w-full py-2.5 px-4 rounded-xl border border-slate-200 dark:border-slate-800 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-600 dark:text-slate-400 text-xs font-semibold transition-colors"
               >
-                Simulate Payment Failure (Declined Card)
+                Simulate Payment Failure (Signed Failure Webhook)
               </button>
             </div>
 
@@ -194,7 +288,7 @@ export default function CheckoutPage() {
           </div>
         </div>
 
-        {/* Right Column: Order Summary */}
+        {/* Order Summary */}
         <div className="space-y-6">
           <div className="p-6 rounded-3xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm space-y-4">
             <h2 className="text-base font-bold text-slate-900 dark:text-white">{t.checkout.orderSummary}</h2>
@@ -202,43 +296,35 @@ export default function CheckoutPage() {
             <div className="space-y-2 pb-4 border-b border-slate-100 dark:border-slate-800 text-xs">
               <div className="flex justify-between text-slate-600 dark:text-slate-400">
                 <span>Doctor:</span>
-                <span className="font-semibold text-slate-900 dark:text-white">Dr. Arindam Mukherjee</span>
+                <span className="font-semibold text-slate-900 dark:text-white">{appt.doctorName}</span>
               </div>
               <div className="flex justify-between text-slate-600 dark:text-slate-400">
-                <span>Slot:</span>
-                <span className="font-semibold text-slate-900 dark:text-white">{slotTime}</span>
+                <span>Specialty:</span>
+                <span className="font-semibold text-slate-900 dark:text-white">{appt.specialty}</span>
+              </div>
+              <div className="flex justify-between text-slate-600 dark:text-slate-400">
+                <span>Slot (IST):</span>
+                <span className="font-semibold text-slate-900 dark:text-white">
+                  {formatIstDateTime(appt.slotTime)}
+                </span>
               </div>
               <div className="flex justify-between text-slate-600 dark:text-slate-400">
                 <span>Mode:</span>
-                <span className="font-semibold text-teal-600 dark:text-teal-400">Encrypted HD Video</span>
+                <span className="font-semibold text-teal-600 dark:text-teal-400">{appt.consultationMode}</span>
               </div>
             </div>
 
-            {/* Financial Ledger Breakdown in Paise */}
             <div className="space-y-2 text-xs text-slate-600 dark:text-slate-400">
               <div className="flex justify-between">
                 <span>{t.checkout.consultationFee}</span>
-                <span className="font-medium text-slate-900 dark:text-white">{formatPaise(doctorFeePaise)}</span>
-              </div>
-              <div className="flex justify-between">
-                <span>{t.checkout.platformFee}</span>
-                <span className="font-medium text-slate-900 dark:text-white">{formatPaise(platformFeePaise)}</span>
-              </div>
-              <div className="flex justify-between">
-                <span>{t.checkout.gst}</span>
-                <span className="font-medium text-slate-900 dark:text-white">{formatPaise(gstPaise)}</span>
+                <span className="font-medium text-slate-900 dark:text-white">{formatPaise(amountPaise)}</span>
               </div>
               <div className="pt-3 border-t border-slate-200 dark:border-slate-800 flex justify-between items-baseline font-bold text-base text-slate-900 dark:text-white">
                 <span>{t.checkout.totalPayable}</span>
                 <span className="text-xl text-teal-600 dark:text-teal-400 font-extrabold">
-                  {formatPaise(totalPaise)}
+                  {formatPaise(amountPaise)}
                 </span>
               </div>
-            </div>
-
-            <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/60 text-[11px] text-slate-500 space-y-1">
-              <div className="font-semibold text-slate-700 dark:text-slate-300">Double-Entry Financial Rule:</div>
-              <p>All transactions debit patient balance and credit platform & doctor accounts in integer paise.</p>
             </div>
           </div>
         </div>

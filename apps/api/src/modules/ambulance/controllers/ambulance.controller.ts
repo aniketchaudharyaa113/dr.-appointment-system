@@ -6,29 +6,44 @@ import {
   Param,
   Query,
   UseGuards,
-  BadRequestException,
+  Inject,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
+import { z } from 'zod';
 import { JwtAuthGuard } from '../../identity/guards/jwt-auth.guard';
 import { RolesGuard } from '../../identity/guards/roles.guard';
 import { Roles } from '../../identity/decorators/roles.decorator';
 import { CurrentUser } from '../../identity/decorators/current-user.decorator';
+import { ZodValidationPipe } from '../../../common/pipes/zod-validation.pipe';
+import {
+  JwtPayload,
+  UuidSchema,
+  AmbulanceRequestSchema,
+  AmbulanceRequestInput,
+  UpdateTripStatusSchema,
+  DriverTelemetrySchema,
+} from '@medibook/shared';
 import { AmbulanceService } from '../services/ambulance.service';
+
+const EmergencyQuerySchema = z.object({
+  lat: z.coerce.number().min(-90).max(90).optional(),
+  lng: z.coerce.number().min(-180).max(180).optional(),
+});
 
 @ApiTags('Ambulance')
 @Controller('ambulance')
 export class AmbulanceController {
-  constructor(private readonly ambulanceService: AmbulanceService) {}
+  constructor(
+    @Inject(AmbulanceService) private readonly ambulanceService: AmbulanceService,
+  ) {}
 
   @Get('emergency')
   @ApiOperation({ summary: 'Get emergency hotlines and nearby hospitals (public, works with 0 drivers)' })
   getEmergencyInfo(
-    @Query('lat') lat?: string,
-    @Query('lng') lng?: string,
+    @Query(new ZodValidationPipe(EmergencyQuerySchema))
+    query: { lat?: number; lng?: number },
   ) {
-    const latNum = lat ? parseFloat(lat) : undefined;
-    const lngNum = lng ? parseFloat(lng) : undefined;
-    return this.ambulanceService.getEmergencyInfo(latNum, lngNum);
+    return this.ambulanceService.getEmergencyInfo(query.lat, query.lng);
   }
 
   @Post('requests')
@@ -36,19 +51,11 @@ export class AmbulanceController {
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Patient initiates emergency ambulance dispatch' })
   async createRequest(
-    @CurrentUser() user: any,
-    @Body()
-    body: {
-      pickupLat: number;
-      pickupLng: number;
-      pickupAddress: string;
-    },
+    @CurrentUser() user: JwtPayload,
+    @Body(new ZodValidationPipe(AmbulanceRequestSchema)) body: AmbulanceRequestInput,
   ) {
-    if (!body.pickupLat || !body.pickupLng || !body.pickupAddress) {
-      throw new BadRequestException('pickupLat, pickupLng, and pickupAddress are required');
-    }
     return this.ambulanceService.createRequest(
-      user.userId,
+      user.sub,
       body.pickupLat,
       body.pickupLng,
       body.pickupAddress,
@@ -61,10 +68,10 @@ export class AmbulanceController {
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Driver atomically accepts an offered ambulance request' })
   async acceptRequest(
-    @Param('id') requestId: string,
-    @CurrentUser() user: any,
+    @Param('id', new ZodValidationPipe(UuidSchema)) requestId: string,
+    @CurrentUser() user: JwtPayload,
   ) {
-    return this.ambulanceService.acceptRequest(requestId, user.userId);
+    return this.ambulanceService.acceptRequest(requestId, user.sub);
   }
 
   @Post('requests/:id/status')
@@ -73,12 +80,12 @@ export class AmbulanceController {
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Driver updates trip status (EN_ROUTE, ARRIVED, COMPLETED)' })
   async updateTripStatus(
-    @Param('id') requestId: string,
-    @CurrentUser() user: any,
-    @Body() body: { status: 'EN_ROUTE' | 'ARRIVED' | 'COMPLETED' },
+    @Param('id', new ZodValidationPipe(UuidSchema)) requestId: string,
+    @CurrentUser() user: JwtPayload,
+    @Body(new ZodValidationPipe(UpdateTripStatusSchema))
+    body: { status: 'EN_ROUTE' | 'ARRIVED' | 'COMPLETED' },
   ) {
-    if (!body.status) throw new BadRequestException('status is required');
-    return this.ambulanceService.updateTripStatus(requestId, user.userId, body.status);
+    return this.ambulanceService.updateTripStatus(requestId, user.sub, body.status);
   }
 
   @Post('driver/telemetry')
@@ -87,19 +94,16 @@ export class AmbulanceController {
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Driver streams location and heartbeat to Redis GEO' })
   async updateDriverTelemetry(
-    @CurrentUser() user: any,
-    @Body()
+    @CurrentUser() user: JwtPayload,
+    @Body(new ZodValidationPipe(DriverTelemetrySchema))
     body: {
       latitude: number;
       longitude: number;
       isOnline: boolean;
     },
   ) {
-    if (body.latitude === undefined || body.longitude === undefined || body.isOnline === undefined) {
-      throw new BadRequestException('latitude, longitude, and isOnline are required');
-    }
     return this.ambulanceService.updateDriverLocation(
-      user.userId,
+      user.sub,
       body.latitude,
       body.longitude,
       body.isOnline,

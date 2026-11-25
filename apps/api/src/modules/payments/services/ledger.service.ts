@@ -11,15 +11,14 @@ export interface LedgerPostingResult {
 @Injectable()
 export class LedgerService {
   private readonly logger = new Logger(LedgerService.name);
-  // Default platform commission: 10% (1000 basis points)
-  private readonly commissionBps = 1000;
+  private readonly commissionBps = 1000; // 10%
 
   constructor(@Inject(PrismaService) private readonly prisma: PrismaService) {}
 
   /**
    * Post double-entry records for a captured payment.
-   * Debit: GATEWAY_CLEARING (full amount)
-   * Credit: DOCTOR_RECEIVABLE (doctor's net share)
+   * Debit: ESCROW (full amount collected from patient via payment gateway)
+   * Credit: DOCTOR_PAYABLE (doctor's net share)
    * Credit: PLATFORM_REVENUE (platform fee)
    */
   async recordPaymentCapture(
@@ -33,7 +32,6 @@ export class LedgerService {
     const platformFeePaise = Math.round((totalAmountPaise * commissionBps) / 10000);
     const doctorSharePaise = totalAmountPaise - platformFeePaise;
 
-    // Invariant check: doctorShare + platformFee === totalAmountPaise
     if (doctorSharePaise + platformFeePaise !== totalAmountPaise) {
       throw new Error(
         `Ledger integrity error: ${doctorSharePaise} + ${platformFeePaise} !== ${totalAmountPaise}`,
@@ -44,17 +42,17 @@ export class LedgerService {
       data: [
         {
           transactionId,
-          accountType: 'GATEWAY_CLEARING',
+          accountType: 'ESCROW',
           entryType: 'DEBIT',
           amountPaise: totalAmountPaise,
-          description: `Patient payment received via gateway clearing`,
+          description: 'Patient payment captured into escrow clearing',
         },
         {
           transactionId,
-          accountType: 'DOCTOR_RECEIVABLE',
+          accountType: 'DOCTOR_PAYABLE',
           entryType: 'CREDIT',
           amountPaise: doctorSharePaise,
-          description: `Doctor consultation payout obligation`,
+          description: 'Doctor consultation payout obligation',
         },
         {
           transactionId,
@@ -67,6 +65,10 @@ export class LedgerService {
     });
 
     const isBalanced = await this.verifyZeroSum(transactionId, db);
+    if (!isBalanced) {
+      throw new Error(`Ledger zero-sum check failed for ${transactionId}`);
+    }
+
     return {
       transactionId,
       totalDebitPaise: totalAmountPaise,
@@ -77,9 +79,9 @@ export class LedgerService {
 
   /**
    * Post double-entry reversal records for a refund.
-   * Debit: DOCTOR_RECEIVABLE (reversing doctor payout)
+   * Debit: DOCTOR_PAYABLE (reversing doctor payout)
    * Debit: PLATFORM_REVENUE (reversing platform commission)
-   * Credit: GATEWAY_CLEARING (cash outflow)
+   * Credit: ESCROW (cash outflow back to patient)
    */
   async recordRefund(
     transactionId: string,
@@ -96,29 +98,33 @@ export class LedgerService {
       data: [
         {
           transactionId,
-          accountType: 'DOCTOR_RECEIVABLE',
+          accountType: 'DOCTOR_PAYABLE',
           entryType: 'DEBIT',
           amountPaise: doctorShareReversal,
-          description: `Reversal of doctor payout obligation due to refund`,
+          description: 'Reversal of doctor payout obligation due to refund',
         },
         {
           transactionId,
           accountType: 'PLATFORM_REVENUE',
           entryType: 'DEBIT',
           amountPaise: platformFeeReversal,
-          description: `Reversal of platform commission due to refund`,
+          description: 'Reversal of platform commission due to refund',
         },
         {
           transactionId,
-          accountType: 'GATEWAY_CLEARING',
+          accountType: 'ESCROW',
           entryType: 'CREDIT',
           amountPaise: refundAmountPaise,
-          description: `Refund cash outflow to patient`,
+          description: 'Refund cash outflow from escrow to patient',
         },
       ],
     });
 
     const isBalanced = await this.verifyZeroSum(transactionId, db);
+    if (!isBalanced) {
+      throw new Error(`Ledger zero-sum check failed for refund ${transactionId}`);
+    }
+
     return {
       transactionId,
       totalDebitPaise: doctorShareReversal + platformFeeReversal,

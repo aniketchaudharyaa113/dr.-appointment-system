@@ -10,6 +10,7 @@ import {
   HttpCode,
   HttpStatus,
   BadRequestException,
+  Inject,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { FastifyRequest } from 'fastify';
@@ -18,25 +19,34 @@ import { JwtAuthGuard } from '../../identity/guards/jwt-auth.guard';
 import { RolesGuard } from '../../identity/guards/roles.guard';
 import { Roles } from '../../identity/decorators/roles.decorator';
 import { CurrentUser } from '../../identity/decorators/current-user.decorator';
+import { ZodValidationPipe } from '../../../common/pipes/zod-validation.pipe';
+import {
+  JwtPayload,
+  CreatePaymentOrderSchema,
+  CreatePaymentOrderInput,
+  RefundPaymentSchema,
+  DevSimulateWebhookSchema,
+  UuidSchema,
+} from '@medibook/shared';
 
 @ApiTags('Payments')
 @Controller('payments')
 export class PaymentController {
-  constructor(private readonly paymentService: PaymentService) {}
+  constructor(
+    @Inject(PaymentService) private readonly paymentService: PaymentService,
+  ) {}
 
   @Post('checkout')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
-  @ApiOperation({ summary: 'Initiate a payment order for an appointment' })
+  @ApiOperation({ summary: 'Initiate a payment order for a PENDING_PAYMENT appointment' })
   async checkout(
-    @CurrentUser() user: any,
-    @Body() body: { appointmentId: string; idempotencyKey: string },
+    @CurrentUser() user: JwtPayload,
+    @Body(new ZodValidationPipe(CreatePaymentOrderSchema))
+    body: CreatePaymentOrderInput,
   ) {
-    if (!body.appointmentId || !body.idempotencyKey) {
-      throw new BadRequestException('appointmentId and idempotencyKey are required');
-    }
     return this.paymentService.createCheckout(
-      user.userId,
+      user.sub,
       body.appointmentId,
       body.idempotencyKey,
     );
@@ -44,7 +54,7 @@ export class PaymentController {
 
   @Post('webhook')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Payment provider webhook inbox' })
+  @ApiOperation({ summary: 'Payment provider webhook inbox (verifies HMAC on raw bytes)' })
   async handleWebhook(
     @Req() req: FastifyRequest,
     @Headers('x-razorpay-signature') razorpaySig?: string,
@@ -52,39 +62,67 @@ export class PaymentController {
     @Headers('x-signature') genericSig?: string,
   ) {
     const signature = razorpaySig || stripeSig || genericSig || '';
+    const rawBody = (req as any).rawBody as Buffer | string | undefined;
 
-    // Fastify request raw body or parsed body string
-    let rawBody = (req as any).rawBody;
     if (!rawBody) {
-      rawBody = JSON.stringify(req.body);
+      throw new BadRequestException('Raw webhook payload body is required');
     }
 
     return this.paymentService.processWebhook(rawBody, signature);
   }
 
+  @Post('dev/simulate-webhook')
+  @UseGuards(JwtAuthGuard)
+  @HttpCode(HttpStatus.OK)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Dev/FakeProvider only: sign and dispatch a real webhook payload' })
+  async devSimulateWebhook(
+    @CurrentUser() user: JwtPayload,
+    @Body(new ZodValidationPipe(DevSimulateWebhookSchema))
+    body: {
+      paymentId?: string;
+      providerOrderId?: string;
+      event: 'payment.captured' | 'payment.failed';
+    },
+  ) {
+    if (!body.paymentId && !body.providerOrderId) {
+      throw new BadRequestException('paymentId or providerOrderId is required');
+    }
+    return this.paymentService.devSimulateWebhook({
+      paymentId: body.paymentId,
+      providerOrderId: body.providerOrderId,
+      event: body.event,
+      actorId: user.sub,
+      actorRole: user.role,
+    });
+  }
+
   @Get(':id')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
-  @ApiOperation({ summary: 'Get payment details' })
-  async getPayment(@Param('id') id: string) {
-    return this.paymentService.findById(id);
+  @ApiOperation({ summary: 'Get payment details (owner, doctor, or admin only)' })
+  async getPayment(
+    @Param('id', new ZodValidationPipe(UuidSchema)) id: string,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.paymentService.findById(id, user.sub, user.role);
   }
-
 
   @Post(':id/refund')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
-  @ApiOperation({ summary: 'Request refund for a captured payment' })
+  @ApiOperation({ summary: 'Request refund for a captured payment (owner, doctor, or admin only)' })
   async refund(
-    @CurrentUser() user: any,
-    @Param('id') paymentId: string,
-    @Body() body: { reason?: string },
+    @CurrentUser() user: JwtPayload,
+    @Param('id', new ZodValidationPipe(UuidSchema)) paymentId: string,
+    @Body(new ZodValidationPipe(RefundPaymentSchema.optional()))
+    body?: { reason?: string },
   ) {
-    const isDoctor = user.role === 'DOCTOR';
     return this.paymentService.refundPayment(
       paymentId,
-      body.reason || 'Requested by user',
-      isDoctor,
+      body?.reason || 'Requested by user',
+      user.sub,
+      user.role,
     );
   }
 

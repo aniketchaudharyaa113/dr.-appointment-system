@@ -110,6 +110,7 @@ model User {
   ambulanceRequests       AmbulanceRequest[]       @relation("PatientAmbulanceRequests")
   auditLogs               AuditLog[]
   chatMessages            ChatMessage[]
+  notifications           Notification[]
 
   @@map("users")
 
@@ -361,7 +362,7 @@ model Waitlist {
   doctorId       String         @map("doctor_id") @db.Uuid
   patientId      String         @map("patient_id") @db.Uuid
   slotDate       DateTime       @map("slot_date") @db.Date
-  slotTime       String?        @map("slot_time") @db.VarChar(20)
+  slotTime       String?        @map("slot_time") @db.VarChar(40)
   status         WaitlistStatus @default(WAITING)
   offeredAt      DateTime?      @map("offered_at")
   claimExpiresAt DateTime?      @map("claim_expires_at")
@@ -467,5 +468,21 @@ model ChatMessage {
 
   @@index([appointmentId, createdAt])
   @@map("chat_messages")
+}
+
+model Notification {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId    String   @map("user_id") @db.Uuid
+  type      String   @db.VarChar(50)
+  title     String   @db.VarChar(200)
+  body      String
+  metadata  Json?
+  isRead    Boolean  @default(false) @map("is_read")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, isRead, createdAt])
+  @@map("notifications")
 }
 

@@ -16,10 +16,19 @@ import { JwtAuthGuard } from '../../identity/guards/jwt-auth.guard';
 import { RolesGuard } from '../../identity/guards/roles.guard';
 import { Roles } from '../../identity/decorators/roles.decorator';
 import { CurrentUser } from '../../identity/decorators/current-user.decorator';
-import { JwtPayload } from '@medibook/shared';
+import { ZodValidationPipe } from '../../../common/pipes/zod-validation.pipe';
+import { getIstDateString } from '../../../common/utils/ist-time';
+import {
+  JwtPayload,
+  DoctorSearchQuerySchema,
+  DoctorSearchQuery,
+  DoctorSlotsQuerySchema,
+  LeaveRangeSchema,
+  UuidSchema,
+} from '@medibook/shared';
 
 @ApiTags('Scheduling')
-@Controller('api/doctors')
+@Controller('doctors')
 export class DoctorController {
   constructor(
     @Inject(DoctorService) private readonly doctorService: DoctorService,
@@ -30,47 +39,36 @@ export class DoctorController {
   @Get()
   @ApiOperation({ summary: 'Search doctors with filters, distance, and pg_trgm symptom matching' })
   async searchDoctors(
-    @Query('symptom') symptomQuery?: string,
-    @Query('specialty') specialty?: string,
-    @Query('maxFeePaise') maxFeePaise?: string,
-    @Query('minRating') minRating?: string,
-    @Query('userLat') userLat?: string,
-    @Query('userLng') userLng?: string,
-    @Query('maxDistanceKm') maxDistanceKm?: string,
-    @Query('sortBy') sortBy?: 'FEE_ASC' | 'RATING_DESC' | 'DISTANCE_ASC' | 'EXPERIENCE_DESC',
-    @Query('page') page?: string,
-    @Query('limit') limit?: string,
+    @Query(new ZodValidationPipe(DoctorSearchQuerySchema)) query: DoctorSearchQuery,
   ) {
     return this.doctorService.searchDoctors({
-      symptomQuery,
-      specialty,
-      maxFeePaise: maxFeePaise ? parseInt(maxFeePaise, 10) : undefined,
-      minRating: minRating ? parseFloat(minRating) : undefined,
-      userLat: userLat ? parseFloat(userLat) : undefined,
-      userLng: userLng ? parseFloat(userLng) : undefined,
-      maxDistanceKm: maxDistanceKm ? parseFloat(maxDistanceKm) : undefined,
-      sortBy,
-      page: page ? parseInt(page, 10) : 1,
-      limit: limit ? parseInt(limit, 10) : 10,
+      symptomQuery: query.symptom,
+      specialty: query.specialty,
+      maxFeePaise: query.maxFeePaise,
+      minRating: query.minRating,
+      userLat: query.userLat,
+      userLng: query.userLng,
+      maxDistanceKm: query.maxDistanceKm,
+      sortBy: query.sortBy,
+      page: query.page,
+      limit: query.limit,
     });
   }
 
   @Get(':id')
   @ApiOperation({ summary: 'Get doctor public profile with reviews and availability' })
-  async getDoctor(@Param('id') doctorId: string) {
+  async getDoctor(@Param('id', new ZodValidationPipe(UuidSchema)) doctorId: string) {
     return this.doctorService.getDoctorById(doctorId);
   }
 
   @Get(':id/slots')
-  @ApiOperation({ summary: 'Get slots for doctor on a specific date (YYYY-MM-DD) aligned to duration grid' })
+  @ApiOperation({ summary: 'Get slots for doctor on a specific IST date (YYYY-MM-DD) aligned to duration grid' })
   async getDoctorSlots(
-    @Param('id') doctorId: string,
-    @Query('date') dateStr: string,
+    @Param('id', new ZodValidationPipe(UuidSchema)) doctorId: string,
+    @Query(new ZodValidationPipe(DoctorSlotsQuerySchema)) query: { date?: string },
   ) {
-    return this.slotService.getDoctorSlotsForDate(
-      doctorId,
-      dateStr || new Date().toISOString().split('T')[0],
-    );
+    const dateStr = query.date || getIstDateString(new Date());
+    return this.slotService.getDoctorSlotsForDate(doctorId, dateStr);
   }
 
   @Post(':id/leaves/preview')
@@ -79,11 +77,11 @@ export class DoctorController {
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Dry-run preview of existing bookings affected by planned leave' })
   async previewLeave(
-    @Param('id') doctorId: string,
-    @Body('startDate') startDate: string,
-    @Body('endDate') endDate: string,
+    @Param('id', new ZodValidationPipe(UuidSchema)) doctorId: string,
+    @Body(new ZodValidationPipe(LeaveRangeSchema))
+    body: { startDate: string; endDate: string },
   ) {
-    return this.leaveService.previewLeaveImpact(doctorId, startDate, endDate);
+    return this.leaveService.previewLeaveImpact(doctorId, body.startDate, body.endDate);
   }
 
   @Post(':id/leaves')
@@ -92,17 +90,16 @@ export class DoctorController {
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Apply planned leave and cascade cancellations with full auto-refunds' })
   async applyLeave(
-    @Param('id') doctorId: string,
-    @Body('startDate') startDate: string,
-    @Body('endDate') endDate: string,
-    @Body('reason') reason: string,
+    @Param('id', new ZodValidationPipe(UuidSchema)) doctorId: string,
+    @Body(new ZodValidationPipe(LeaveRangeSchema))
+    body: { startDate: string; endDate: string; reason?: string },
     @CurrentUser() user: JwtPayload,
   ) {
     return this.leaveService.applyLeave(
       doctorId,
-      startDate,
-      endDate,
-      reason,
+      body.startDate,
+      body.endDate,
+      body.reason,
       user.sub,
     );
   }

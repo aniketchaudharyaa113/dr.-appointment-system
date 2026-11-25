@@ -23,12 +23,13 @@ import {
   RegisterUserInput,
   LoginSchema,
   LoginInput,
+  RefreshTokenBodySchema,
   JwtPayload,
 } from '@medibook/shared';
 import { env } from '../../common/config/env.schema';
 
 @ApiTags('Identity')
-@Controller('api/auth')
+@Controller('auth')
 export class AuthController {
   constructor(@Inject(AuthService) private readonly authService: AuthService) {}
 
@@ -101,7 +102,8 @@ export class AuthController {
   async refresh(
     @Req() req: FastifyRequest,
     @Res() res: FastifyReply,
-    @Body() body: { refreshToken?: string },
+    @Body(new ZodValidationPipe(RefreshTokenBodySchema.optional()))
+    body?: { refreshToken?: string },
   ) {
     const cookies = (req as any).cookies || {};
     const token = cookies.refreshToken || body?.refreshToken;
@@ -132,7 +134,8 @@ export class AuthController {
   async logout(
     @Req() req: FastifyRequest,
     @Res() res: FastifyReply,
-    @Body() body: { refreshToken?: string },
+    @Body(new ZodValidationPipe(RefreshTokenBodySchema.optional()))
+    body?: { refreshToken?: string },
   ) {
     const cookies = (req as any).cookies || {};
     const token = cookies.refreshToken || body?.refreshToken;

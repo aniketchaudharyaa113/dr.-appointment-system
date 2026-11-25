@@ -11,6 +11,7 @@ import { Logger } from '@nestjs/common';
 import { Server, Socket } from 'socket.io';
 import * as jwt from 'jsonwebtoken';
 import { ChatService } from '../services/chat.service';
+import { env } from '../../../common/config/env.schema';
 
 @WebSocketGateway({
   cors: { origin: '*' },
@@ -24,7 +25,7 @@ export class ConsultationGateway implements OnGatewayConnection, OnGatewayDiscon
   private readonly jwtSecret: string;
 
   constructor(private readonly chatService: ChatService) {
-    this.jwtSecret = process.env.JWT_ACCESS_SECRET || 'dev_jwt_access_secret_key_12345';
+    this.jwtSecret = env.JWT_SECRET;
   }
 
   handleConnection(client: Socket) {
@@ -41,7 +42,7 @@ export class ConsultationGateway implements OnGatewayConnection, OnGatewayDiscon
 
       const decoded = jwt.verify(token, this.jwtSecret) as any;
       (client as any).user = decoded;
-      this.logger.log(`Client connected to consultation namespace: ${decoded.userId}`);
+      this.logger.log(`Client connected to consultation namespace: ${decoded.sub}`);
     } catch {
       client.disconnect();
     }
@@ -50,7 +51,7 @@ export class ConsultationGateway implements OnGatewayConnection, OnGatewayDiscon
   handleDisconnect(client: Socket) {
     const user = (client as any).user;
     if (user) {
-      this.logger.log(`Client disconnected from consultation namespace: ${user.userId}`);
+      this.logger.log(`Client disconnected from consultation namespace: ${user.sub}`);
     }
   }
 
@@ -85,7 +86,7 @@ export class ConsultationGateway implements OnGatewayConnection, OnGatewayDiscon
     try {
       const message = await this.chatService.sendMessage({
         appointmentId: data.appointmentId,
-        senderId: user.userId,
+        senderId: user.sub,
         content: data.content,
         attachmentUrl: data.attachmentUrl,
         attachmentType: data.attachmentType,
@@ -110,7 +111,7 @@ export class ConsultationGateway implements OnGatewayConnection, OnGatewayDiscon
 
     const roomName = `consult:${data.appointmentId}`;
     client.to(roomName).emit('user_typing', {
-      userId: user.userId,
+      userId: user.sub,
       isTyping: data.isTyping,
     });
   }
