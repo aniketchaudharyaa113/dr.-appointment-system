@@ -24,7 +24,7 @@ All fixes are committed atomically on `main` (baseline tag: `pre-agent-baseline`
 - [x] **P1-3** (`1bce02b`): Chat, uploads, vitals guarded to CONFIRMED/IN_PROGRESS/COMPLETED; 7-day post-consultation window checked against `consultation.endedAt`; socket Zod schema validation & 4000 char cap; REST POST `/messages` emits to socket room; aligned socket `join_room` to deny non-participants (including ADMIN)
 - [x] **P1-4** (`5525337`): Wire `AppointmentSlotFreed` outbox events into waitlist cascading offers, atomic claim with `updateMany` and mode support, `leaveWaitlist` endpoint with hold release and next-in-line cascade, offer expiration worker sweep
 - [x] **P1-5** (`f4c09ba`): Review model endpoint `POST /appointments/:id/review`, aggregate/denormalized rating calculation (`ratingAvg`, `ratingCount`), doctor reviews list UI & review modal for completed appointments
-- [ ] **P1-6**: `PATCH /lab-orders/:id` for ordering doctor with Zod schema, surface results in Health Passport
+- [x] **P1-6** (`86576b6`): `PATCH /lab-orders/:id` for ordering doctor with Zod schema (`UpdateLabResultsSchema`), completedAt and resultNotes migration, surfaced results and doctor notes in Health Passport
 - [ ] **P1-7**: Filter past slots in `holdSlot` & `bookAppointment` with minimum lead time and max advance
 - [ ] **P1-8**: Slot-hold hoarding prevention: `DELETE /appointments/hold` (release token), one active hold per patient in Redis, PATIENT-role restriction
 - [ ] **P1-9**: Doctor search SQL pagination, Haversine distance & rating filtering, AND condition for symptom+specialty, batch Redis slot checks
