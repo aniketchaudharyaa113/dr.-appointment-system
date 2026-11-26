@@ -65,6 +65,12 @@ export class LiveKitService {
       );
     }
 
+    if (appointment.consultationMode !== 'VIDEO') {
+      throw new BadRequestException(
+        `LiveKit video tokens are only available for VIDEO consultations (this appointment is ${appointment.consultationMode})`,
+      );
+    }
+
     if (
       appointment.status === 'CANCELLED' ||
       appointment.status === 'REFUNDED' ||

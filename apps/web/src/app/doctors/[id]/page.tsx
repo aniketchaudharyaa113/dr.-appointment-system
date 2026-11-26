@@ -12,6 +12,7 @@ import {
   Star,
   Video,
   Building,
+  MessageSquare,
   Clock,
   ShieldCheck,
   ChevronRight,
@@ -67,6 +68,7 @@ export default function DoctorProfilePage() {
   ];
 
   const [selectedDate, setSelectedDate] = useState<string>(dateTabs[1].key);
+  const [consultationMode, setConsultationMode] = useState<'VIDEO' | 'IN_CLINIC' | 'CHAT'>('VIDEO');
   const [selectedSlot, setSelectedSlot] = useState<GeneratedSlot | null>(null);
   const [holdData, setHoldData] = useState<{
     holdToken: string;
@@ -115,7 +117,7 @@ export default function DoctorProfilePage() {
         body: JSON.stringify({
           doctorId,
           slotTime: slot.slotTime,
-          consultationMode: 'VIDEO',
+          consultationMode,
         }),
       }),
     onSuccess: (res, slot) => {
@@ -152,7 +154,7 @@ export default function DoctorProfilePage() {
           doctorId,
           slotTime: holdData.slotTime,
           holdToken: holdData.holdToken,
-          consultationMode: 'VIDEO',
+          consultationMode,
           idempotencyKey: crypto.randomUUID(),
         }),
       });
@@ -338,6 +340,51 @@ export default function DoctorProfilePage() {
                 <span className="text-xl font-extrabold text-teal-600 dark:text-teal-400">
                   {formatPaise(doctor.consultationFeePaise)}
                 </span>
+              </div>
+            </div>
+
+            {/* Consultation Mode Selector */}
+            <div className="space-y-1.5">
+              <label className="text-xs font-semibold text-slate-700 dark:text-slate-300 block">
+                Consultation Mode
+              </label>
+              <div className="grid grid-cols-3 gap-2">
+                <button
+                  type="button"
+                  onClick={() => setConsultationMode('VIDEO')}
+                  className={`p-2.5 rounded-xl border text-xs font-bold flex flex-col items-center justify-center gap-1 transition-all ${
+                    consultationMode === 'VIDEO'
+                      ? 'border-teal-600 bg-teal-50 dark:bg-teal-950/60 text-teal-700 dark:text-teal-300 ring-2 ring-teal-500/20'
+                      : 'border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-400 hover:border-slate-300'
+                  }`}
+                >
+                  <Video className="w-4 h-4" />
+                  <span>Video Call</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setConsultationMode('IN_CLINIC')}
+                  className={`p-2.5 rounded-xl border text-xs font-bold flex flex-col items-center justify-center gap-1 transition-all ${
+                    consultationMode === 'IN_CLINIC'
+                      ? 'border-teal-600 bg-teal-50 dark:bg-teal-950/60 text-teal-700 dark:text-teal-300 ring-2 ring-teal-500/20'
+                      : 'border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-400 hover:border-slate-300'
+                  }`}
+                >
+                  <Building className="w-4 h-4" />
+                  <span>In-Clinic</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setConsultationMode('CHAT')}
+                  className={`p-2.5 rounded-xl border text-xs font-bold flex flex-col items-center justify-center gap-1 transition-all ${
+                    consultationMode === 'CHAT'
+                      ? 'border-teal-600 bg-teal-50 dark:bg-teal-950/60 text-teal-700 dark:text-teal-300 ring-2 ring-teal-500/20'
+                      : 'border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-400 hover:border-slate-300'
+                  }`}
+                >
+                  <MessageSquare className="w-4 h-4" />
+                  <span>Live Chat</span>
+                </button>
               </div>
             </div>
 

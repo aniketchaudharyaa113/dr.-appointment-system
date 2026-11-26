@@ -19,6 +19,8 @@ import {
   Bot,
   AlertCircle,
   Download,
+  Building,
+  MessageSquare,
 } from 'lucide-react';
 import { fetchApi, formatIstTime, getAuthToken, getCurrentUser } from '@/lib/api';
 import { VitalsLabsPanel } from '@/components/clinical/vitals-labs-panel';
@@ -45,6 +47,7 @@ interface AppointmentDetail {
   patientId: string;
   patientName: string;
   slotTime: string;
+  consultationMode?: 'VIDEO' | 'IN_CLINIC' | 'CHAT';
   status: string;
   consultation: {
     roomName: string;
@@ -174,6 +177,14 @@ export default function ConsultationRoomPage() {
   // Connect LiveKit room once consented
   useEffect(() => {
     if (!hasConsented || !appointmentId || !currentUser?.token) return;
+    if (apptQuery.data && apptQuery.data.consultationMode !== 'VIDEO') {
+      setLivekitStatus(
+        apptQuery.data.consultationMode === 'IN_CLINIC'
+          ? 'In-Clinic Mode'
+          : 'Live Chat Mode'
+      );
+      return;
+    }
     let cancelled = false;
 
     const connectLiveKit = async () => {
@@ -527,22 +538,52 @@ export default function ConsultationRoomPage() {
               )}
             </div>
 
-            <div className="relative z-10 flex flex-col items-center justify-center text-white pointer-events-none">
-              <div className="w-24 h-24 rounded-full bg-slate-800/80 border-2 border-teal-500/40 flex items-center justify-center text-2xl font-bold">
-                {(appt?.doctorName || 'MD').replace(/^Dr\.\s*/i, '').slice(0, 2).toUpperCase()}
-              </div>
-              <p className="mt-2 font-bold text-sm">{appt?.doctorName || 'Attending Physician'}</p>
-              <p className="text-xs text-teal-400">{appt?.specialty || 'Telehealth'}</p>
-            </div>
-
-            <div className="absolute bottom-20 right-6 w-36 h-28 rounded-2xl bg-slate-800 border-2 border-slate-700 overflow-hidden shadow-lg flex items-center justify-center text-white text-xs z-10">
-              <video ref={localVideoRef} autoPlay muted playsInline className="w-full h-full object-cover" />
-              {!isCameraOn && (
-                <div className="absolute inset-0 bg-slate-900/90 flex flex-col items-center justify-center text-slate-400 text-[10px]">
-                  <VideoOff className="w-5 h-5 mb-1" /> Camera Off
+            {appt?.consultationMode === 'IN_CLINIC' ? (
+              <div className="relative z-10 flex flex-col items-center justify-center text-white text-center px-6">
+                <div className="w-16 h-16 rounded-full bg-teal-900/60 border-2 border-teal-500/40 flex items-center justify-center text-teal-400 mb-3">
+                  <Building className="w-8 h-8" />
                 </div>
-              )}
-            </div>
+                <h2 className="text-xl font-bold">In-Clinic Consultation Chamber</h2>
+                <p className="text-xs text-slate-300 mt-1 max-w-md">
+                  Physical clinic appointment with {appt?.doctorName || 'Doctor'}. Use the right panel for instant clinical chat, review digital prescriptions, vitals, and lab orders.
+                </p>
+                <span className="mt-3 px-3 py-1 rounded-full bg-teal-500/20 text-teal-300 text-xs font-semibold">
+                  Mode: In-Clinic Chamber Visit
+                </span>
+              </div>
+            ) : appt?.consultationMode === 'CHAT' ? (
+              <div className="relative z-10 flex flex-col items-center justify-center text-white text-center px-6">
+                <div className="w-16 h-16 rounded-full bg-purple-900/60 border-2 border-purple-500/40 flex items-center justify-center text-purple-400 mb-3">
+                  <MessageSquare className="w-8 h-8" />
+                </div>
+                <h2 className="text-xl font-bold">Live Telehealth Chat Consultation</h2>
+                <p className="text-xs text-slate-300 mt-1 max-w-md">
+                  Active text consultation channel with {appt?.doctorName || 'Doctor'}. Send messages and medical attachments via the chat pane on the right.
+                </p>
+                <span className="mt-3 px-3 py-1 rounded-full bg-purple-500/20 text-purple-300 text-xs font-semibold">
+                  Mode: Real-time Socket Chat
+                </span>
+              </div>
+            ) : (
+              <div className="relative z-10 flex flex-col items-center justify-center text-white pointer-events-none">
+                <div className="w-24 h-24 rounded-full bg-slate-800/80 border-2 border-teal-500/40 flex items-center justify-center text-2xl font-bold">
+                  {(appt?.doctorName || 'MD').replace(/^Dr\.\s*/i, '').slice(0, 2).toUpperCase()}
+                </div>
+                <p className="mt-2 font-bold text-sm">{appt?.doctorName || 'Attending Physician'}</p>
+                <p className="text-xs text-teal-400">{appt?.specialty || 'Telehealth'}</p>
+              </div>
+            )}
+
+            {appt?.consultationMode === 'VIDEO' && (
+              <div className="absolute bottom-20 right-6 w-36 h-28 rounded-2xl bg-slate-800 border-2 border-slate-700 overflow-hidden shadow-lg flex items-center justify-center text-white text-xs z-10">
+                <video ref={localVideoRef} autoPlay muted playsInline className="w-full h-full object-cover" />
+                {!isCameraOn && (
+                  <div className="absolute inset-0 bg-slate-900/90 flex flex-col items-center justify-center text-slate-400 text-[10px]">
+                    <VideoOff className="w-5 h-5 mb-1" /> Camera Off
+                  </div>
+                )}
+              </div>
+            )}
 
             <div className="z-10 flex flex-wrap items-center justify-center gap-3 bg-slate-950/80 backdrop-blur-md max-w-lg mx-auto py-2.5 px-6 rounded-2xl border border-slate-800">
               {isDoctor && appt?.status === 'CONFIRMED' && (
