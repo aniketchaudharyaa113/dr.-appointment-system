@@ -30,6 +30,13 @@ interface DoctorProfile {
   licenseNumber?: string | null;
   averageRating: number;
   reviewCount: number;
+  reviews?: Array<{
+    id: string;
+    rating: number;
+    comment?: string | null;
+    patientName: string;
+    createdAt: string;
+  }>;
   user: {
     id: string;
     name: string;
@@ -246,6 +253,60 @@ export default function DoctorProfilePage() {
                 </span>
                 <p className="text-xs text-slate-500">HD Encrypted LiveKit Consultation with instant digital Rx</p>
               </div>
+            </div>
+
+            {/* Patient Reviews Section */}
+            <div className="pt-6 border-t border-slate-100 dark:border-slate-800 space-y-4">
+              <div className="flex items-center justify-between">
+                <h3 className="font-bold text-sm text-slate-900 dark:text-white flex items-center gap-2">
+                  <Star className="w-4 h-4 text-amber-500 fill-current" />
+                  Verified Patient Reviews
+                </h3>
+                <span className="text-xs text-slate-400 font-medium">
+                  {doctor.reviewCount > 0
+                    ? `${doctor.averageRating.toFixed(1)} / 5.0 (${doctor.reviewCount} total)`
+                    : 'No reviews yet'}
+                </span>
+              </div>
+
+              {doctor.reviews && doctor.reviews.length > 0 ? (
+                <div className="space-y-3">
+                  {doctor.reviews.map((r: any) => (
+                    <div
+                      key={r.id}
+                      className="p-3.5 rounded-2xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200/60 dark:border-slate-700/60 space-y-1.5"
+                    >
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-bold text-slate-800 dark:text-slate-200">
+                          {r.patientName || 'Verified Patient'}
+                        </span>
+                        <div className="flex items-center gap-0.5 text-amber-500">
+                          {Array.from({ length: 5 }).map((_, i) => (
+                            <Star
+                              key={i}
+                              className={`w-3 h-3 ${i < r.rating ? 'fill-current' : 'text-slate-300 dark:text-slate-600'}`}
+                            />
+                          ))}
+                        </div>
+                      </div>
+                      {r.comment && (
+                        <p className="text-xs text-slate-600 dark:text-slate-300">{r.comment}</p>
+                      )}
+                      <span className="text-[10px] text-slate-400 block">
+                        {new Date(r.createdAt).toLocaleDateString('en-IN', {
+                          day: 'numeric',
+                          month: 'short',
+                          year: 'numeric',
+                        })}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-xs text-slate-400 italic">
+                  Be the first patient to review Dr. {doctor.user.name} after your consultation!
+                </p>
+              )}
             </div>
           </div>
         </div>

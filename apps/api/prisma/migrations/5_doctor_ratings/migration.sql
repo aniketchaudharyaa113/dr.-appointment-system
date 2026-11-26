@@ -1,0 +1,3 @@
+-- AlterTable
+ALTER TABLE "doctors" ADD COLUMN "rating_avg" DOUBLE PRECISION NOT NULL DEFAULT 0;
+ALTER TABLE "doctors" ADD COLUMN "rating_count" INTEGER NOT NULL DEFAULT 0;

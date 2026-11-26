@@ -522,6 +522,9 @@ export class BookingService {
         consultation: {
           select: { status: true, roomName: true, patientConsentGiven: true },
         },
+        review: {
+          select: { id: true, rating: true, comment: true },
+        },
       },
       orderBy: { slotTime: 'desc' },
     });
@@ -554,6 +557,7 @@ export class BookingService {
         : null,
       prescription: a.prescription,
       consultation: a.consultation,
+      review: a.review,
     }));
   }
 
@@ -669,5 +673,65 @@ export class BookingService {
       });
     }
     return count;
+  }
+
+  /**
+   * Submits a patient review and rating for a completed appointment.
+   * Updates denormalized Doctor ratingAvg and ratingCount columns atomically.
+   */
+  async reviewAppointment(
+    appointmentId: string,
+    patientId: string,
+    rating: number,
+    comment?: string,
+  ) {
+    const appointment = await this.prisma.appointment.findUnique({
+      where: { id: appointmentId },
+      include: { review: true },
+    });
+
+    if (!appointment) {
+      throw new NotFoundException('Appointment not found');
+    }
+
+    if (appointment.patientId !== patientId) {
+      throw new ForbiddenException('Only the patient of this appointment can leave a review');
+    }
+
+    if (appointment.status !== 'COMPLETED') {
+      throw new BadRequestException('Only completed consultations can be reviewed');
+    }
+
+    if (appointment.review) {
+      throw new ConflictException('This appointment has already been reviewed');
+    }
+
+    return this.prisma.$transaction(async (tx) => {
+      const review = await tx.review.create({
+        data: {
+          appointmentId,
+          doctorId: appointment.doctorId,
+          patientId,
+          rating,
+          comment,
+        },
+      });
+
+      const agg = await tx.review.aggregate({
+        where: { doctorId: appointment.doctorId },
+        _avg: { rating: true },
+        _count: { rating: true },
+      });
+
+      await tx.doctor.update({
+        where: { id: appointment.doctorId },
+        data: {
+          ratingAvg: agg._avg.rating || 0,
+          ratingCount: agg._count.rating || 0,
+        },
+      });
+
+      return review;
+    });
   }
 }

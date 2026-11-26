@@ -21,6 +21,8 @@ import {
   BookAppointmentInput,
   CancelAppointmentSchema,
   CancelAppointmentInput,
+  CreateReviewSchema,
+  CreateReviewInput,
   UuidSchema,
 } from '@medibook/shared';
 
@@ -91,6 +93,21 @@ export class AppointmentController {
       user.sub,
       body?.reason,
       user.role,
+    );
+  }
+
+  @Post(':id/review')
+  @ApiOperation({ summary: 'Submit rating and review for a completed appointment' })
+  async reviewAppointment(
+    @Param('id', new ZodValidationPipe(UuidSchema)) appointmentId: string,
+    @Body(new ZodValidationPipe(CreateReviewSchema)) body: CreateReviewInput,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.bookingService.reviewAppointment(
+      appointmentId,
+      user.sub,
+      body.rating,
+      body.comment,
     );
   }
 }

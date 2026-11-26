@@ -13,6 +13,7 @@ import {
   AlertCircle,
   CreditCard,
   Calendar,
+  Star,
 } from 'lucide-react';
 import { fetchApi, formatIstDateTime, getCurrentUser } from '@/lib/api';
 import { formatPaise } from '@/lib/utils';
@@ -35,12 +36,20 @@ interface AppointmentItem {
     id: string;
     currentVersion: number;
   } | null;
+  review?: {
+    id: string;
+    rating: number;
+    comment?: string;
+  } | null;
 }
 
 export default function MyAppointmentsPage() {
   const queryClient = useQueryClient();
   const [tab, setTab] = useState<'upcoming' | 'past'>('upcoming');
   const [cancelModalApt, setCancelModalApt] = useState<AppointmentItem | null>(null);
+  const [reviewModalApt, setReviewModalApt] = useState<AppointmentItem | null>(null);
+  const [reviewRating, setReviewRating] = useState<number>(5);
+  const [reviewComment, setReviewComment] = useState<string>('');
   const [actionMsg, setActionMsg] = useState<string | null>(null);
 
   const user = typeof window !== 'undefined' ? getCurrentUser() : null;
@@ -49,6 +58,24 @@ export default function MyAppointmentsPage() {
     queryKey: ['my-appointments'],
     queryFn: () => fetchApi<AppointmentItem[]>('/appointments/mine'),
     enabled: !!user?.token,
+  });
+
+  const reviewMutation = useMutation({
+    mutationFn: async ({ aptId, rating, comment }: { aptId: string; rating: number; comment?: string }) => {
+      return fetchApi(`/appointments/${aptId}/review`, {
+        method: 'POST',
+        body: JSON.stringify({ rating, comment: comment || undefined }),
+      });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['my-appointments'] });
+      setReviewModalApt(null);
+      setReviewComment('');
+      setActionMsg('Thank you! Your verified rating and review have been recorded.');
+    },
+    onError: (err: Error) => {
+      setActionMsg(`Review error: ${err.message}`);
+    },
   });
 
   const cancelMutation = useMutation({
@@ -258,14 +285,37 @@ export default function MyAppointmentsPage() {
                   </>
                 )}
 
-                {apt.status === 'COMPLETED' && apt.prescription && (
-                  <Link
-                    href={`/consultation/${apt.id}?tab=prescription`}
-                    className="px-4 py-2 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200 font-semibold text-xs transition-colors flex items-center gap-1.5"
-                  >
-                    <FileText className="w-3.5 h-3.5 text-teal-600" />
-                    View Digital Rx (v{apt.prescription.currentVersion})
-                  </Link>
+                {apt.status === 'COMPLETED' && (
+                  <div className="flex flex-wrap items-center gap-2">
+                    {apt.prescription && (
+                      <Link
+                        href={`/consultation/${apt.id}?tab=prescription`}
+                        className="px-4 py-2 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200 font-semibold text-xs transition-colors flex items-center gap-1.5"
+                      >
+                        <FileText className="w-3.5 h-3.5 text-teal-600" />
+                        View Digital Rx (v{apt.prescription.currentVersion})
+                      </Link>
+                    )}
+                    {apt.review ? (
+                      <span className="flex items-center gap-1 text-xs text-amber-500 font-bold px-3 py-1.5 rounded-xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800">
+                        <Star className="w-3.5 h-3.5 fill-current" />
+                        Rated {apt.review.rating}/5
+                      </span>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setReviewRating(5);
+                          setReviewComment('');
+                          setReviewModalApt(apt);
+                        }}
+                        className="px-3.5 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-white font-bold text-xs shadow-sm transition-colors flex items-center gap-1.5"
+                      >
+                        <Star className="w-3.5 h-3.5" />
+                        Rate &amp; Review
+                      </button>
+                    )}
+                  </div>
                 )}
 
                 {(apt.status === 'CANCELLED' || apt.status === 'REFUNDED') && (
@@ -324,6 +374,91 @@ export default function MyAppointmentsPage() {
                 className="px-4 py-2 rounded-xl text-xs font-bold bg-rose-600 hover:bg-rose-700 text-white shadow-sm transition-colors"
               >
                 {cancelMutation.isPending ? 'Cancelling...' : 'Confirm Cancellation'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Review Modal */}
+      {reviewModalApt && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-xs">
+          <div className="bg-white dark:bg-slate-900 rounded-3xl p-6 max-w-md w-full border border-slate-200 dark:border-slate-800 shadow-2xl space-y-4">
+            <div className="flex items-center gap-3 text-amber-500">
+              <div className="w-10 h-10 rounded-full bg-amber-100 dark:bg-amber-950 flex items-center justify-center">
+                <Star className="w-5 h-5 fill-current" />
+              </div>
+              <div>
+                <h3 className="font-bold text-base text-slate-900 dark:text-white">
+                  Rate Your Consultation
+                </h3>
+                <p className="text-xs text-slate-500">with {reviewModalApt.doctorName}</p>
+              </div>
+            </div>
+
+            <div className="space-y-3">
+              <div>
+                <label className="text-xs font-semibold text-slate-700 dark:text-slate-300 block mb-1">
+                  Overall Rating
+                </label>
+                <div className="flex items-center gap-2">
+                  {[1, 2, 3, 4, 5].map((star) => (
+                    <button
+                      key={star}
+                      type="button"
+                      onClick={() => setReviewRating(star)}
+                      className="p-1 text-amber-500 hover:scale-110 transition-transform"
+                      title={`${star} Star${star > 1 ? 's' : ''}`}
+                    >
+                      <Star
+                        className={`w-7 h-7 ${star <= reviewRating ? 'fill-current' : 'text-slate-300 dark:text-slate-600'}`}
+                      />
+                    </button>
+                  ))}
+                  <span className="text-xs font-bold text-slate-600 dark:text-slate-300 ml-2">
+                    {reviewRating} of 5 Stars
+                  </span>
+                </div>
+              </div>
+
+              <div>
+                <label className="text-xs font-semibold text-slate-700 dark:text-slate-300 block mb-1">
+                  Comments (Optional, max 1000 characters)
+                </label>
+                <textarea
+                  value={reviewComment}
+                  onChange={(e) => setReviewComment(e.target.value.slice(0, 1000))}
+                  placeholder="Share your experience regarding the doctor's communication, diagnosis, and care..."
+                  rows={4}
+                  className="w-full text-xs p-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-amber-500"
+                />
+                <span className="text-[10px] text-slate-400 block text-right">
+                  {reviewComment.length} / 1000
+                </span>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => setReviewModalApt(null)}
+                className="px-4 py-2 rounded-xl text-xs font-semibold text-slate-600 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={reviewMutation.isPending}
+                onClick={() =>
+                  reviewMutation.mutate({
+                    aptId: reviewModalApt.id,
+                    rating: reviewRating,
+                    comment: reviewComment,
+                  })
+                }
+                className="px-4 py-2 rounded-xl text-xs font-bold bg-amber-500 hover:bg-amber-600 text-white shadow-sm transition-colors disabled:opacity-50"
+              >
+                {reviewMutation.isPending ? 'Submitting...' : 'Submit Review'}
               </button>
             </div>
           </div>

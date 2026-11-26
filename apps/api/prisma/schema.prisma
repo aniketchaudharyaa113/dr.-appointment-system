@@ -147,6 +147,8 @@ model Doctor {
   isVerified           Boolean                  @default(false) @map("is_verified")
   verificationStatus   DoctorVerificationStatus @default(PENDING) @map("verification_status")
   photoUrl             String?                  @map("photo_url") @db.VarChar(255)
+  ratingAvg            Float                    @default(0.0) @map("rating_avg")
+  ratingCount          Int                      @default(0) @map("rating_count")
 
   user           User                    @relation(fields: [userId], references: [id], onDelete: Cascade)
   availability   Availability[]

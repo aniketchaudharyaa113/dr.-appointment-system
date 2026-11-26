@@ -102,7 +102,6 @@ export class DoctorService {
       where: whereClause,
       include: {
         user: { select: { id: true, name: true, email: true } },
-        reviews: { select: { rating: true } },
       },
       skip,
       take: limit,
@@ -120,11 +119,8 @@ export class DoctorService {
 
     const mapped = await Promise.all(
       doctors.map(async (doc) => {
-        const ratingCount = doc.reviews.length;
-        const avgRating =
-          ratingCount > 0
-            ? doc.reviews.reduce((acc, r) => acc + r.rating, 0) / ratingCount
-            : 0;
+        const ratingCount = doc.ratingCount;
+        const avgRating = doc.ratingAvg;
 
         let distanceKm: number | null = null;
         if (
@@ -208,12 +204,6 @@ export class DoctorService {
       throw new NotFoundException('Doctor not found');
     }
 
-    const ratingCount = doctor.reviews.length;
-    const avgRating =
-      ratingCount > 0
-        ? doctor.reviews.reduce((acc, r) => acc + r.rating, 0) / ratingCount
-        : 0;
-
     return {
       id: doctor.id,
       userId: doctor.userId,
@@ -232,9 +222,15 @@ export class DoctorService {
         name: doctor.user.name,
       },
       availability: doctor.availability,
-      reviews: doctor.reviews,
-      averageRating: Math.round(avgRating * 10) / 10,
-      reviewCount: ratingCount,
+      reviews: doctor.reviews.map((r) => ({
+        id: r.id,
+        rating: r.rating,
+        comment: r.comment,
+        patientName: r.patient.name,
+        createdAt: r.createdAt.toISOString(),
+      })),
+      averageRating: Math.round(doctor.ratingAvg * 10) / 10,
+      reviewCount: doctor.ratingCount,
     };
   }
 }
