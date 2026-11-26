@@ -74,6 +74,20 @@ export class BookingService {
     }
 
     const token = randomBytes(24).toString('hex');
+
+    // P1-8 (a): Enforce max 1 active hold per patient in Redis
+    const activeHold = await this.redis.getActivePatientHold(patientId);
+    if (activeHold) {
+      if (activeHold.doctorId !== doctorId || activeHold.slotTimeIso !== normalizedIso) {
+        await this.redis.releaseSlotHold(
+          activeHold.doctorId,
+          activeHold.slotTimeIso,
+          activeHold.token,
+          patientId,
+        );
+      }
+    }
+
     const acquired = await this.redis.acquireSlotHold(
       doctorId,
       normalizedIso,
@@ -94,6 +108,11 @@ export class BookingService {
         patientId,
         ttlSeconds,
       );
+      await this.redis.setActivePatientHold(
+        patientId,
+        { doctorId, slotTimeIso: normalizedIso, token: held.token },
+        ttlSeconds,
+      );
       return {
         holdToken: held.token,
         expiresAt: new Date(Date.now() + ttlSeconds * 1000).toISOString(),
@@ -101,12 +120,38 @@ export class BookingService {
       };
     }
 
+    await this.redis.setActivePatientHold(
+      patientId,
+      { doctorId, slotTimeIso: normalizedIso, token },
+      ttlSeconds,
+    );
+
     const expiresAt = new Date(Date.now() + ttlSeconds * 1000).toISOString();
     return {
       holdToken: token,
       expiresAt,
       slotTime: normalizedIso,
     };
+  }
+
+  /**
+   * Immediately releases a patient's active slot hold lease in Redis (P1-8)
+   */
+  async releaseHold(
+    patientId: string,
+    doctorId?: string,
+    slotTimeIso?: string,
+  ): Promise<{ released: boolean }> {
+    const activeHold = await this.redis.getActivePatientHold(patientId);
+    const targetDocId = doctorId || activeHold?.doctorId;
+    const targetSlot = slotTimeIso ? new Date(slotTimeIso).toISOString() : activeHold?.slotTimeIso;
+    const targetToken = activeHold?.token;
+
+    if (targetDocId && targetSlot) {
+      await this.redis.releaseSlotHold(targetDocId, targetSlot, targetToken, patientId);
+    }
+    await this.redis.clearActivePatientHold(patientId);
+    return { released: true };
   }
 
   /**
@@ -259,6 +304,7 @@ export class BookingService {
         holdToken,
         patientId,
       );
+      await this.redis.clearActivePatientHold(patientId);
       await this.redis.getClient().del(`cache:next_slot:${doctorId}`);
 
       await this.audit.log({

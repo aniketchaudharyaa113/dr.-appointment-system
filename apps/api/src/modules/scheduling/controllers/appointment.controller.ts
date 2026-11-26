@@ -2,9 +2,11 @@ import {
   Controller,
   Get,
   Post,
+  Delete,
   Param,
   Body,
   UseGuards,
+  ForbiddenException,
   Inject,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
@@ -17,6 +19,8 @@ import {
   JwtPayload,
   HoldSlotSchema,
   HoldSlotInput,
+  ReleaseSlotHoldSchema,
+  ReleaseSlotHoldInput,
   BookAppointmentSchema,
   BookAppointmentInput,
   CancelAppointmentSchema,
@@ -58,7 +62,22 @@ export class AppointmentController {
     @Body(new ZodValidationPipe(HoldSlotSchema)) body: HoldSlotInput,
     @CurrentUser() user: JwtPayload,
   ) {
+    if (user.role !== 'PATIENT') {
+      throw new ForbiddenException('Only patients are allowed to hold consultation slots');
+    }
     return this.bookingService.holdSlot(body.doctorId, body.slotTime, user.sub);
+  }
+
+  @Delete('hold')
+  @ApiOperation({ summary: 'Release currently held slot immediately (P1-8)' })
+  async releaseHold(
+    @CurrentUser() user: JwtPayload,
+    @Body(new ZodValidationPipe(ReleaseSlotHoldSchema.optional())) body?: ReleaseSlotHoldInput,
+  ) {
+    if (user.role !== 'PATIENT') {
+      throw new ForbiddenException('Only patients have slot holds');
+    }
+    return this.bookingService.releaseHold(user.sub, body?.doctorId, body?.slotTime);
   }
 
   @Post('book')
@@ -69,6 +88,9 @@ export class AppointmentController {
     @Body(new ZodValidationPipe(BookAppointmentSchema)) body: BookAppointmentInput,
     @CurrentUser() user: JwtPayload,
   ) {
+    if (user.role !== 'PATIENT') {
+      throw new ForbiddenException('Only patients can book appointments');
+    }
     return this.bookingService.bookAppointment(
       body.doctorId,
       body.slotTime,

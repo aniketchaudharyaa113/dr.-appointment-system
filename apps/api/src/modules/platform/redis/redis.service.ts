@@ -129,6 +129,36 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
     return res > 0;
   }
 
+  // --- Active Patient Hold Lease (P1-8: max 1 active hold per patient) ---
+  async getActivePatientHold(
+    patientId: string,
+  ): Promise<{ doctorId: string; slotTimeIso: string; token: string } | null> {
+    const raw = await this.client.get(`active_hold:${patientId}`);
+    if (!raw) return null;
+    try {
+      return JSON.parse(raw);
+    } catch {
+      return null;
+    }
+  }
+
+  async setActivePatientHold(
+    patientId: string,
+    hold: { doctorId: string; slotTimeIso: string; token: string },
+    ttlSeconds = 600,
+  ): Promise<void> {
+    await this.client.set(
+      `active_hold:${patientId}`,
+      JSON.stringify(hold),
+      'EX',
+      ttlSeconds,
+    );
+  }
+
+  async clearActivePatientHold(patientId: string): Promise<void> {
+    await this.client.del(`active_hold:${patientId}`);
+  }
+
   // --- Idempotency Keys (24h TTL) ---
   async getIdempotency<T>(key: string): Promise<T | null> {
     const raw = await this.client.get(`idem:${key}`);

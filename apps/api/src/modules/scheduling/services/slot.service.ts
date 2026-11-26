@@ -70,6 +70,10 @@ export class SlotService {
       existingAppointments.map((a) => a.slotTime.toISOString()),
     );
 
+    const nowMs = Date.now();
+    const minLeadTimeMs = 15 * 60 * 1000; // 15 minutes minimum lead time
+    const maxAdvanceMs = 30 * 24 * 60 * 60 * 1000; // 30 days max advance
+
     const slots: GeneratedSlot[] = [];
 
     for (const avail of availabilityList) {
@@ -86,13 +90,18 @@ export class SlotService {
         const displayTime = `${String(hour).padStart(2, '0')}:${String(min).padStart(2, '0')}`;
         const slotDateUtc = istWallClockToUtcDate(dateStr, displayTime);
         const slotTimeIso = slotDateUtc.toISOString();
+        const slotMs = slotDateUtc.getTime();
+
+        const isPastOrTooSoon = slotMs < nowMs + minLeadTimeMs;
+        const isBeyondMaxAdvance = slotMs > nowMs + maxAdvanceMs;
 
         const isBooked = bookedIsoSet.has(slotTimeIso);
         const held = await this.redis.getSlotHold(doctorId, slotTimeIso);
         const isHeld = !!held;
         const isOnLeave = !!onLeave;
 
-        const isAvailable = !isBooked && !isHeld && !isOnLeave;
+        const isAvailable =
+          !isBooked && !isHeld && !isOnLeave && !isPastOrTooSoon && !isBeyondMaxAdvance;
 
         slots.push({
           slotTime: slotTimeIso,
@@ -162,6 +171,21 @@ export class SlotService {
     doctorId: string,
     slotTime: Date,
   ): Promise<{ isValid: boolean; reason?: string }> {
+    const nowMs = Date.now();
+    const slotMs = slotTime.getTime();
+    const minLeadTimeMs = 15 * 60 * 1000; // 15 minutes minimum lead time
+    const maxAdvanceMs = 30 * 24 * 60 * 60 * 1000; // 30 days maximum advance
+
+    if (slotMs <= nowMs) {
+      return { isValid: false, reason: 'Cannot hold or book a slot in the past' };
+    }
+    if (slotMs < nowMs + minLeadTimeMs) {
+      return { isValid: false, reason: 'Slots must be booked at least 15 minutes in advance' };
+    }
+    if (slotMs > nowMs + maxAdvanceMs) {
+      return { isValid: false, reason: 'Slots cannot be booked more than 30 days in advance' };
+    }
+
     const dateStr = getIstDateString(slotTime);
     const targetMs = slotTime.getTime();
 

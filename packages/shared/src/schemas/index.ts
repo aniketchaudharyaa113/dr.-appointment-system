@@ -230,3 +230,9 @@ export const UpdateLabResultsSchema = z.object({
   resultNotes: z.string().max(1000).optional(),
 });
 export type UpdateLabResultsInput = z.infer<typeof UpdateLabResultsSchema>;
+
+export const ReleaseSlotHoldSchema = z.object({
+  doctorId: z.string().uuid().optional(),
+  slotTime: z.string().optional(),
+});
+export type ReleaseSlotHoldInput = z.infer<typeof ReleaseSlotHoldSchema>;

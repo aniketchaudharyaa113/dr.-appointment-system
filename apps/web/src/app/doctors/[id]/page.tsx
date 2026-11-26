@@ -129,6 +129,20 @@ export default function DoctorProfilePage() {
     },
   });
 
+  const releaseHoldMutation = useMutation({
+    mutationFn: () =>
+      fetchApi<{ released: boolean }>('/appointments/hold', {
+        method: 'DELETE',
+        body: holdData ? JSON.stringify({ doctorId, slotTime: holdData.slotTime }) : undefined,
+      }),
+    onSuccess: () => {
+      setHoldData(null);
+      setSelectedSlot(null);
+      setActionError(null);
+      queryClient.invalidateQueries({ queryKey: ['doctor-slots', doctorId, selectedDate] });
+    },
+  });
+
   const bookMutation = useMutation({
     mutationFn: () => {
       if (!holdData) throw new Error('No active slot hold');
@@ -412,9 +426,18 @@ export default function DoctorProfilePage() {
                     <Clock className="w-4 h-4 text-amber-600" />
                     Slot Held Temporarily
                   </span>
-                  <span className="text-sm font-mono font-extrabold text-amber-700 dark:text-amber-300 bg-amber-100 dark:bg-amber-900/60 px-2 py-0.5 rounded">
-                    {formatTimer(holdSecondsLeft)}
-                  </span>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => releaseHoldMutation.mutate()}
+                      className="text-[11px] underline text-amber-700 dark:text-amber-300 hover:opacity-80 font-medium"
+                    >
+                      Release
+                    </button>
+                    <span className="text-sm font-mono font-extrabold text-amber-700 dark:text-amber-300 bg-amber-100 dark:bg-amber-900/60 px-2 py-0.5 rounded">
+                      {formatTimer(holdSecondsLeft)}
+                    </span>
+                  </div>
                 </div>
                 <p className="text-[11px] text-amber-800/80 dark:text-amber-300/80 leading-relaxed">
                   Slot <span className="font-bold">{selectedSlot.displayTime} IST</span> is locked in Redis exclusively for you. Complete booking & payment before expiration.
