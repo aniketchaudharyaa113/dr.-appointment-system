@@ -111,6 +111,8 @@ model User {
   auditLogs               AuditLog[]
   chatMessages            ChatMessage[]
   notifications           Notification[]
+  vitalsRecorded          PatientVitals[]
+  labOrders               LabOrder[]               @relation("PatientLabOrders")
 
   @@map("users")
 
@@ -154,6 +156,7 @@ model Doctor {
   reviews        Review[]
   prescriptions  Prescription[]          @relation("DoctorPrescriptions")
   waitlists      Waitlist[]
+  labOrders      LabOrder[]              @relation("DoctorLabOrders")
 
   @@index([specialty, isVerified])
   @@map("doctors")
@@ -218,6 +221,8 @@ model Appointment {
   prescription Prescription?
   review       Review?
   messages     ChatMessage[]
+  vitals       PatientVitals[]
+  labOrders    LabOrder[]
 
   @@index([patientId, status])
 
@@ -484,5 +489,49 @@ model Notification {
 
   @@index([userId, isRead, createdAt])
   @@map("notifications")
+}
+
+model PatientVitals {
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  appointmentId  String   @map("appointment_id") @db.Uuid
+  patientId      String   @map("patient_id") @db.Uuid
+  systolicBp     Int?     @map("systolic_bp")
+  diastolicBp    Int?     @map("diastolic_bp")
+  heartRate      Int?     @map("heart_rate")
+  spO2           Decimal? @db.Decimal(5, 2)
+  temperatureF   Decimal? @map("temperature_f") @db.Decimal(4, 1)
+  weightKg       Decimal? @map("weight_kg") @db.Decimal(5, 2)
+  bloodGlucose   Decimal? @map("blood_glucose") @db.Decimal(5, 1)
+  recordedAt     DateTime @default(now()) @map("recorded_at")
+
+  appointment Appointment @relation(fields: [appointmentId], references: [id], onDelete: Cascade)
+  patient     User        @relation(fields: [patientId], references: [id], onDelete: Cascade)
+
+  @@index([patientId, recordedAt])
+  @@index([appointmentId])
+  @@map("patient_vitals")
+}
+
+model LabOrder {
+  id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  appointmentId String   @map("appointment_id") @db.Uuid
+  doctorId      String   @map("doctor_id") @db.Uuid
+  patientId     String   @map("patient_id") @db.Uuid
+  testName      String   @map("test_name") @db.VarChar(120)
+  testCode      String   @map("test_code") @db.VarChar(30)
+  urgency       String   @default("ROUTINE") @db.VarChar(20)
+  instructions  String?  @db.VarChar(500)
+  status        String   @default("ORDERED") @db.VarChar(30)
+  resultsJson   Json?    @map("results_json")
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @default(now()) @updatedAt @map("updated_at")
+
+  appointment Appointment @relation(fields: [appointmentId], references: [id], onDelete: Cascade)
+  doctor      Doctor      @relation("DoctorLabOrders", fields: [doctorId], references: [id], onDelete: Cascade)
+  patient     User        @relation("PatientLabOrders", fields: [patientId], references: [id], onDelete: Cascade)
+
+  @@index([patientId, createdAt])
+  @@index([appointmentId])
+  @@map("lab_orders")
 }
 
