@@ -322,6 +322,34 @@ export class AmbulanceService implements OnModuleDestroy {
     pickupAddress: string,
     offerTimeoutMs = Number(process.env.AMBULANCE_OFFER_TIMEOUT_MS || 20000),
   ) {
+    // 1. Service area validation (Kolkata Metropolitan Area, max 60km from city center)
+    const kolkataCenterLat = 22.5726;
+    const kolkataCenterLng = 88.3639;
+    const distanceKm = this.calculateHaversineDistanceKm(
+      pickupLat,
+      pickupLng,
+      kolkataCenterLat,
+      kolkataCenterLng,
+    );
+    if (distanceKm > 60) {
+      throw new BadRequestException(
+        `Pickup location (${pickupLat.toFixed(4)}, ${pickupLng.toFixed(4)}) is outside the active emergency ambulance service area (Kolkata Metropolitan Area, max 60km). Please dial 112 / 108 directly for national emergency dispatch.`,
+      );
+    }
+
+    // 2. Active request cap: prevent prank / duplicate spam dispatches
+    const activeExisting = await this.prisma.ambulanceRequest.findFirst({
+      where: {
+        patientId,
+        status: { in: ['REQUESTED', 'OFFERED', 'ACCEPTED', 'EN_ROUTE', 'ARRIVED'] },
+      },
+    });
+    if (activeExisting) {
+      throw new ConflictException(
+        'You already have an active emergency ambulance request in progress',
+      );
+    }
+
     const client = this.redis.getClient();
 
     // If no live drivers in Redis GEO, double check any seeded online drivers wouldn't be falsely claimed unless heartbeating
