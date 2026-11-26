@@ -80,3 +80,9 @@ All fixes are committed atomically on `main` (baseline tag: `pre-agent-baseline`
 - [x] **I-2** (`ea026c4`): Nginx configuration: secure proxy headers, rate limiting, and websocket upgrade support
 - [x] **I-3** (`ea026c4`): CI workflow verification on `main` only (Testcontainers, Web checks, AI evals)
 - [x] **I-4** (`PROGRESS.md`): Documentation: Update README.md and PROGRESS.md with full remediation details and runbook
+
+## Phase 7 — CI Hardening & Stability
+- [x] **CI-1** (`66e3a85`): Fix Testcontainers failures — TESTCONTAINERS_RYUK_DISABLED=true, pre-pull Docker images, hookTimeout 60s→180s, testTimeout 60s→120s
+- [x] **CI-2** (`66e3a85`): Fix E2E Docker Compose failures — PAYMENT_PROVIDER=FAKE for E2E, NEXT_PUBLIC_ENABLE_PAYMENT_SIMULATOR build arg in web Dockerfile, health-wait extended to 180s with error logging
+- [x] **CI-3** (`66e3a85`): pnpm store caching across all CI jobs for faster runs
+- [x] **CI-4** (`66e3a85`): Compose logs on failure step for easier CI debugging
