@@ -69,6 +69,14 @@ export class ChatService {
       }
     }
 
+    if (attachmentUrl) {
+      if (!attachmentUrl.startsWith(`appointments/${appointmentId}/`)) {
+        throw new BadRequestException(
+          `attachmentUrl must point to a file strictly within appointments/${appointmentId}/`,
+        );
+      }
+    }
+
     const senderRole = isDoctor ? 'DOCTOR' : 'PATIENT';
 
     const message = await this.prisma.chatMessage.create({

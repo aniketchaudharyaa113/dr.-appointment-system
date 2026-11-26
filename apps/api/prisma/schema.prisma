@@ -113,6 +113,7 @@ model User {
   notifications           Notification[]
   vitalsRecorded          PatientVitals[]
   labOrders               LabOrder[]               @relation("PatientLabOrders")
+  attachments             ConsultationAttachment[]
 
   @@map("users")
 
@@ -225,6 +226,7 @@ model Appointment {
   messages     ChatMessage[]
   vitals       PatientVitals[]
   labOrders    LabOrder[]
+  attachments  ConsultationAttachment[]
 
   @@index([patientId, status])
 
@@ -537,5 +539,24 @@ model LabOrder {
   @@index([patientId, createdAt])
   @@index([appointmentId])
   @@map("lab_orders")
+}
+
+model ConsultationAttachment {
+  id            String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  appointmentId String      @map("appointment_id") @db.Uuid
+  uploaderId    String      @map("uploader_id") @db.Uuid
+  fileKey       String      @unique @map("file_key") @db.VarChar(500)
+  fileName      String      @map("file_name") @db.VarChar(255)
+  mimeType      String      @map("mime_type") @db.VarChar(100)
+  sizeBytes     Int         @map("size_bytes")
+  isVerified    Boolean     @default(false) @map("is_verified")
+  verifiedAt    DateTime?   @map("verified_at") @db.Timestamptz(6)
+  createdAt     DateTime    @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  appointment   Appointment @relation(fields: [appointmentId], references: [id], onDelete: Cascade)
+  uploader      User        @relation(fields: [uploaderId], references: [id], onDelete: Cascade)
+
+  @@index([appointmentId])
+  @@map("consultation_attachments")
 }
 

@@ -166,6 +166,21 @@ export class ConsultationController {
     return { downloadUrl };
   }
 
+  @Post(':id/attachments/verify')
+  @ApiOperation({ summary: 'Verify uploaded attachment with HeadObject and magic bytes scan' })
+  async verifyAttachment(
+    @Param('id', new ZodValidationPipe(UuidSchema)) appointmentId: string,
+    @CurrentUser() user: JwtPayload,
+    @Body(new ZodValidationPipe(z.object({ fileKey: z.string().min(5).max(500) })))
+    body: { fileKey: string },
+  ) {
+    return this.attachmentService.verifyUploadedAttachment({
+      appointmentId,
+      userId: user.sub,
+      fileKey: body.fileKey,
+    });
+  }
+
   @Post(':id/prescriptions')
   @ApiOperation({ summary: 'Doctor creates prescription for completed appointment' })
   async createPrescription(

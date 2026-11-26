@@ -12,6 +12,8 @@ import {
   S3Client,
   PutObjectCommand,
   GetObjectCommand,
+  HeadObjectCommand,
+  DeleteObjectCommand,
   HeadBucketCommand,
   CreateBucketCommand,
 } from '@aws-sdk/client-s3';
@@ -172,6 +174,7 @@ export class AttachmentService {
       Bucket: this.bucketName,
       Key: fileKey,
       ContentType: mimeType,
+      ContentLength: sizeBytes,
     });
 
     const getCmd = new GetObjectCommand({
@@ -186,12 +189,143 @@ export class AttachmentService {
       expiresIn: 3600,
     });
 
+    await this.prisma.consultationAttachment.create({
+      data: {
+        appointmentId,
+        uploaderId: userId,
+        fileKey,
+        fileName,
+        mimeType,
+        sizeBytes,
+        isVerified: false,
+      },
+    });
+
     return {
       uploadUrl,
       downloadUrl,
       fileKey,
       expiresInSeconds,
     };
+  }
+
+  private validateMagicBytes(buffer: Buffer, mimeType: string): boolean {
+    if (mimeType === 'application/pdf') {
+      return buffer.length >= 4 && buffer.toString('utf-8', 0, 4) === '%PDF';
+    }
+    if (mimeType === 'image/png') {
+      return (
+        buffer.length >= 8 &&
+        buffer[0] === 0x89 &&
+        buffer[1] === 0x50 &&
+        buffer[2] === 0x4e &&
+        buffer[3] === 0x47 &&
+        buffer[4] === 0x0d &&
+        buffer[5] === 0x0a &&
+        buffer[6] === 0x1a &&
+        buffer[7] === 0x0a
+      );
+    }
+    if (mimeType === 'image/jpeg') {
+      return (
+        buffer.length >= 3 &&
+        buffer[0] === 0xff &&
+        buffer[1] === 0xd8 &&
+        buffer[2] === 0xff
+      );
+    }
+    return false;
+  }
+
+  /**
+   * Verifies an uploaded attachment using HeadObject and magic bytes validation.
+   */
+  async verifyUploadedAttachment(params: {
+    appointmentId: string;
+    userId: string;
+    fileKey: string;
+  }) {
+    const { appointmentId, userId, fileKey } = params;
+
+    if (!fileKey.startsWith(`appointments/${appointmentId}/`)) {
+      throw new BadRequestException('Attachment does not belong to this consultation');
+    }
+
+    const attachment = await this.prisma.consultationAttachment.findUnique({
+      where: { fileKey },
+    });
+
+    if (!attachment || attachment.appointmentId !== appointmentId) {
+      throw new NotFoundException('Attachment record not found');
+    }
+
+    if (attachment.uploaderId !== userId) {
+      throw new ForbiddenException('Only uploader can verify attachment upload');
+    }
+
+    try {
+      const head = await this.s3Client.send(
+        new HeadObjectCommand({
+          Bucket: this.bucketName,
+          Key: fileKey,
+        }),
+      );
+
+      const actualSize = head.ContentLength || 0;
+      if (actualSize <= 0 || actualSize > this.maxSizeBytes) {
+        throw new BadRequestException('Uploaded object size is invalid or exceeds 10MB');
+      }
+
+      // Read magic bytes (first 32 bytes)
+      const obj = await this.s3Client.send(
+        new GetObjectCommand({
+          Bucket: this.bucketName,
+          Key: fileKey,
+          Range: 'bytes=0-31',
+        }),
+      );
+
+      const streamToBuffer = async (stream: any): Promise<Buffer> => {
+        const chunks: any[] = [];
+        for await (const chunk of stream) {
+          chunks.push(chunk);
+        }
+        return Buffer.concat(chunks);
+      };
+
+      const buffer = await streamToBuffer(obj.Body);
+      const isValidMime = this.validateMagicBytes(buffer, attachment.mimeType);
+
+      if (!isValidMime) {
+        await this.s3Client.send(
+          new DeleteObjectCommand({
+            Bucket: this.bucketName,
+            Key: fileKey,
+          }),
+        );
+        throw new BadRequestException(
+          'Uploaded file content does not match declared MIME type (magic bytes check failed)',
+        );
+      }
+
+      return await this.prisma.consultationAttachment.update({
+        where: { fileKey },
+        data: {
+          isVerified: true,
+          verifiedAt: new Date(),
+          sizeBytes: actualSize,
+        },
+      });
+    } catch (err: any) {
+      if (
+        err instanceof BadRequestException ||
+        err instanceof ForbiddenException ||
+        err instanceof NotFoundException
+      ) {
+        throw err;
+      }
+      throw new BadRequestException(`Attachment verification failed: ${err.message}`);
+    }
   }
 
   /**
