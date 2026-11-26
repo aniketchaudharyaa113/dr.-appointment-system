@@ -32,6 +32,8 @@ export async function resetDatabaseAndRedis(
 ) {
   await prisma.$executeRawUnsafe(`
     TRUNCATE TABLE
+      lab_orders,
+      patient_vitals,
       chat_messages,
       prescription_versions,
       prescriptions,

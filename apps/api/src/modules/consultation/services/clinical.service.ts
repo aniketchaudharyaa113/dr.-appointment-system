@@ -191,4 +191,67 @@ export class ClinicalService {
       },
     });
   }
+
+  /**
+   * Aggregates a patient's longitudinal Health Passport (vitals, lab orders, prescriptions)
+   */
+  async getHealthPassport(patientId: string) {
+    const [patient, vitals, labOrders, prescriptions] = await Promise.all([
+      this.prisma.user.findUnique({
+        where: { id: patientId },
+        select: { id: true, name: true, email: true, phone: true },
+      }),
+      this.prisma.patientVitals.findMany({
+        where: { patientId },
+        orderBy: { recordedAt: 'desc' },
+        take: 10,
+      }),
+      this.prisma.labOrder.findMany({
+        where: { patientId },
+        orderBy: { createdAt: 'desc' },
+        take: 20,
+        include: {
+          doctor: {
+            include: { user: { select: { name: true } } },
+          },
+        },
+      }),
+      this.prisma.prescription.findMany({
+        where: { patientId },
+        orderBy: { createdAt: 'desc' },
+        take: 20,
+        include: {
+          doctor: {
+            include: { user: { select: { name: true } } },
+          },
+        },
+      }),
+    ]);
+
+    return {
+      patient,
+      latestVitals: vitals[0] || null,
+      vitalsHistory: vitals,
+      labOrders: labOrders.map((o) => ({
+        id: o.id,
+        testName: o.testName,
+        testCode: o.testCode,
+        urgency: o.urgency,
+        status: o.status,
+        instructions: o.instructions,
+        doctorName: o.doctor.user.name,
+        createdAt: o.createdAt.toISOString(),
+      })),
+      prescriptions: prescriptions.map((p) => ({
+        id: p.id,
+        appointmentId: p.appointmentId,
+        diagnosis: p.diagnosis,
+        medicines: p.medicines,
+        advice: p.advice,
+        currentVersion: p.currentVersion,
+        doctorName: p.doctor.user.name,
+        createdAt: p.createdAt.toISOString(),
+      })),
+    };
+  }
 }

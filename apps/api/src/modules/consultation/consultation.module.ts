@@ -7,10 +7,11 @@ import { PrescriptionService } from './services/prescription.service';
 import { ClinicalService } from './services/clinical.service';
 import { ConsultationGateway } from './gateways/consultation.gateway';
 import { ConsultationController } from './controllers/consultation.controller';
+import { PatientClinicalController } from './controllers/patient-clinical.controller';
 
 @Module({
   imports: [PlatformModule],
-  controllers: [ConsultationController],
+  controllers: [ConsultationController, PatientClinicalController],
   providers: [
     LiveKitService,
     ChatService,

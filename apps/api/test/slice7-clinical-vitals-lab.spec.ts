@@ -195,5 +195,17 @@ describe('Clinical Service: Telemedicine Vitals & Diagnostic Lab Orders', () => 
     const ordersList = patientGetRes.json();
     expect(ordersList.length).toBe(1);
     expect(ordersList[0].id).toBe(order.id);
+
+    // 5. Patient retrieves aggregated Health Passport
+    const passportRes = await ctx.app.inject({
+      method: 'GET',
+      url: '/api/patients/health-passport',
+      headers: { authorization: `Bearer ${patientToken}` },
+    });
+    expect(passportRes.statusCode).toBe(200);
+    const passport = passportRes.json();
+    expect(passport.patient.id).toBe(patientUser.id);
+    expect(passport.labOrders.length).toBe(1);
+    expect(passport.labOrders[0].testCode).toBe('HBA1C-FASTING');
   });
 });
