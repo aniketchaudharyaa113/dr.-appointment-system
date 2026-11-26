@@ -6,12 +6,13 @@ RUN npm install -g pnpm@12.16.1
 
 COPY package.json pnpm-workspace.yaml pnpm-lock.yaml turbo.json tsconfig.base.json .npmrc ./
 COPY packages/shared ./packages/shared
+COPY apps/api/package.json ./apps/api/package.json
 COPY apps/api/prisma ./apps/api/prisma
 COPY apps/worker ./apps/worker
 
-RUN pnpm approve-builds --all && pnpm --filter @medibook/shared --filter @medibook/worker install --frozen-lockfile
+RUN pnpm approve-builds --all && pnpm --filter @medibook/shared --filter @medibook/worker --filter @medibook/api install --frozen-lockfile
 RUN pnpm --filter @medibook/shared build
-RUN npx prisma generate --schema=apps/api/prisma/schema.prisma
+RUN cd apps/api && npx prisma generate
 RUN pnpm --filter @medibook/worker build
 
 FROM node:22-alpine AS runner

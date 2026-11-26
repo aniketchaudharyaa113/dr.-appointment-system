@@ -12,6 +12,7 @@ import { AppModule } from '../app.module';
 import { env } from './config/env.schema';
 import { AllExceptionsFilter } from './filters/http-exception.filter';
 import { RedisIoAdapter } from './adapters/redis-io.adapter';
+import { MetricsService } from '../modules/platform/metrics/metrics.service';
 
 export async function createConfiguredApp(): Promise<NestFastifyApplication> {
   const adapter = new FastifyAdapter({
@@ -68,6 +69,23 @@ export async function createConfiguredApp(): Promise<NestFastifyApplication> {
 
   // Global Exception Filter
   app.useGlobalFilters(new AllExceptionsFilter());
+
+  // Prometheus HTTP Request Counter Hook
+  const metricsService = app.get(MetricsService);
+  app
+    .getHttpAdapter()
+    .getInstance()
+    .addHook('onResponse', (request: any, reply: any, done: () => void) => {
+      const path = request.routeOptions?.url || request.url?.split('?')[0] || 'unknown';
+      if (path !== '/metrics') {
+        metricsService.httpRequestsTotal.inc({
+          method: request.method || 'GET',
+          path,
+          status_code: String(reply.statusCode || 200),
+        });
+      }
+      done();
+    });
 
   // Swagger OpenAPI Documentation
   const swaggerConfig = new DocumentBuilder()

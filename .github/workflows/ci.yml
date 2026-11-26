@@ -112,7 +112,7 @@ jobs:
             if curl -sf http://localhost/api/health/ready; then break; fi
             sleep 2
           done
-          docker compose exec -T api-1 sh -c 'npx prisma db seed || node apps/api/dist/main.js --version || true'
+          docker compose exec -T api-1 sh -c 'cd apps/api && npx -y tsx@4.19.3 prisma/seed.ts'
 
       - name: Run Playwright E2E tests
         env:
