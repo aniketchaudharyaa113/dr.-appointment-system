@@ -401,7 +401,24 @@ export class BookingService {
           },
         });
 
+        await tx.outboxEvent.create({
+          data: {
+            aggregateType: 'APPOINTMENT',
+            aggregateId: appt.id,
+            eventType: 'AppointmentSlotFreed',
+            payload: {
+              appointmentId: appt.id,
+              doctorId: appt.doctor_id,
+              slotTime: new Date(appt.slot_time).toISOString(),
+            },
+          },
+        });
+
         releasedCount++;
+      }
+
+      for (const appt of candidates) {
+        await this.redis.getClient().del(`cache:next_slot:${appt.doctor_id}`);
       }
 
       return releasedCount;

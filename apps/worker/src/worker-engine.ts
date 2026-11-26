@@ -738,8 +738,14 @@ export class WorkerEngine {
         });
       }
 
-      return candidates.length;
+      return candidates;
     });
+
+    if (Array.isArray(released)) {
+      for (const appt of released) {
+        await this.queueConnection.del(`cache:next_slot:${appt.doctor_id}`);
+      }
+    }
 
     // Sweep expired waitlist offers and cascade to next in line
     const expiredOffers = await this.prisma.waitlist.findMany({
