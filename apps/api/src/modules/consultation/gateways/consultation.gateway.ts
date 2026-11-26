@@ -47,8 +47,7 @@ export class ConsultationGateway
           (client.handshake.headers['authorization'] as string)?.replace(
             /^Bearer\s+/i,
             '',
-          ) ||
-          (client.handshake.query?.token as string);
+          );
 
         if (!token) {
           return next(new Error('Unauthorized'));
@@ -79,7 +78,7 @@ export class ConsultationGateway
   }
 
   async handleConnection(client: Socket) {
-    const user = (client as any).user as JwtPayload | undefined;
+    const user = (client as any).user as (JwtPayload & { exp?: number }) | undefined;
     if (!user?.sub) {
       client.disconnect(true);
       return;
@@ -88,9 +87,44 @@ export class ConsultationGateway
     this.logger.log(
       `Client connected to consultation namespace: ${user.sub}`,
     );
+
+    // Schedule disconnect upon JWT expiration
+    if (user.exp) {
+      const msUntilExpiry = user.exp * 1000 - Date.now();
+      if (msUntilExpiry <= 0) {
+        client.emit('auth_expired', { reason: 'JWT access token expired' });
+        client.disconnect(true);
+        return;
+      }
+      (client as any).expiryTimer = setTimeout(() => {
+        this.logger.log(`Disconnecting socket ${client.id} for user ${user.sub} due to JWT expiry`);
+        client.emit('auth_expired', { reason: 'JWT access token expired' });
+        client.disconnect(true);
+      }, msUntilExpiry);
+    }
+
+    // Periodic re-validation of user active status
+    (client as any).activeInterval = setInterval(async () => {
+      try {
+        const active = await isUserActiveCached(this.prisma, this.redis, user.sub);
+        if (!active) {
+          this.logger.log(`Disconnecting deactivated user ${user.sub} on socket ${client.id}`);
+          client.emit('auth_revoked', { reason: 'Account deactivated' });
+          client.disconnect(true);
+        }
+      } catch {
+        // Ignore transient check failure
+      }
+    }, 30000);
   }
 
   handleDisconnect(client: Socket) {
+    if ((client as any).expiryTimer) {
+      clearTimeout((client as any).expiryTimer);
+    }
+    if ((client as any).activeInterval) {
+      clearInterval((client as any).activeInterval);
+    }
     const user = (client as any).user as JwtPayload | undefined;
     if (user?.sub) {
       this.logger.log(
