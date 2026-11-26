@@ -5,7 +5,9 @@ import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useI18n } from '@/lib/i18n';
-import { fetchApi, getCurrentUser, getIstDateOffset } from '@/lib/api';
+import { fetchApi, getIstDateOffset } from '@/lib/api';
+import { useAuth } from '@/lib/auth-context';
+import { ClientTime } from '@/components/client-time';
 import { formatPaise } from '@/lib/utils';
 import {
   CheckCircle,
@@ -18,6 +20,7 @@ import {
   ChevronRight,
   ArrowLeft,
   AlertCircle,
+  Calendar as CalendarIcon,
 } from 'lucide-react';
 
 interface DoctorProfile {
@@ -60,6 +63,7 @@ export default function DoctorProfilePage() {
   const router = useRouter();
   const queryClient = useQueryClient();
   const doctorId = params?.id as string;
+  const { user } = useAuth();
 
   const dateTabs = [
     { key: getIstDateOffset(0), label: 'Today' },
@@ -170,8 +174,7 @@ export default function DoctorProfilePage() {
   const handleSelectSlot = (slot: GeneratedSlot) => {
     if (!slot.isAvailable) return;
     setActionError(null);
-    const user = getCurrentUser();
-    if (!user?.token) {
+    if (!user) {
       router.push(`/auth/login?redirect=${encodeURIComponent(`/doctors/${doctorId}`)}`);
       return;
     }
@@ -309,11 +312,7 @@ export default function DoctorProfilePage() {
                         <p className="text-xs text-slate-600 dark:text-slate-300">{r.comment}</p>
                       )}
                       <span className="text-[10px] text-slate-400 block">
-                        {new Date(r.createdAt).toLocaleDateString('en-IN', {
-                          day: 'numeric',
-                          month: 'short',
-                          year: 'numeric',
-                        })}
+                        <ClientTime datetime={r.createdAt} />
                       </span>
                     </div>
                   ))}
@@ -388,27 +387,52 @@ export default function DoctorProfilePage() {
               </div>
             </div>
 
-            {/* Date Tabs */}
-            <div className="grid grid-cols-3 gap-2 bg-slate-100 dark:bg-slate-800 p-1 rounded-xl text-xs font-semibold">
-              {dateTabs.map((tab) => (
-                <button
-                  key={tab.key}
-                  type="button"
-                  onClick={() => {
-                    setSelectedDate(tab.key);
-                    setSelectedSlot(null);
-                    setHoldData(null);
-                    setActionError(null);
-                  }}
-                  className={`py-2 rounded-lg text-center transition-all ${
-                    selectedDate === tab.key
-                      ? 'bg-white dark:bg-slate-900 text-teal-600 dark:text-teal-300 shadow-sm'
-                      : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
-                  }`}
-                >
-                  {tab.label}
-                </button>
-              ))}
+            {/* Date Selection: Quick Tabs + Calendar Picker */}
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <label className="text-xs font-semibold text-slate-700 dark:text-slate-300">
+                  Consultation Date
+                </label>
+                <div className="flex items-center gap-1.5 text-xs text-slate-500">
+                  <CalendarIcon className="w-3.5 h-3.5 text-teal-600" />
+                  <input
+                    type="date"
+                    min={getIstDateOffset(0)}
+                    max={getIstDateOffset(30)}
+                    value={selectedDate}
+                    onChange={(e) => {
+                      if (e.target.value) {
+                        setSelectedDate(e.target.value);
+                        setSelectedSlot(null);
+                        setHoldData(null);
+                        setActionError(null);
+                      }
+                    }}
+                    className="px-2 py-0.5 rounded border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-xs text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-teal-500"
+                  />
+                </div>
+              </div>
+              <div className="grid grid-cols-3 gap-2 bg-slate-100 dark:bg-slate-800 p-1 rounded-xl text-xs font-semibold">
+                {dateTabs.map((tab) => (
+                  <button
+                    key={tab.key}
+                    type="button"
+                    onClick={() => {
+                      setSelectedDate(tab.key);
+                      setSelectedSlot(null);
+                      setHoldData(null);
+                      setActionError(null);
+                    }}
+                    className={`py-2 rounded-lg text-center transition-all ${
+                      selectedDate === tab.key
+                        ? 'bg-white dark:bg-slate-900 text-teal-600 dark:text-teal-300 shadow-sm'
+                        : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
+                    }`}
+                  >
+                    {tab.label}
+                  </button>
+                ))}
+              </div>
             </div>
 
             {actionError && (
@@ -418,11 +442,25 @@ export default function DoctorProfilePage() {
               </div>
             )}
 
-            {/* Slots Grid */}
+            {/* Slots Grid & Legend */}
             <div className="space-y-2">
-              <label className="text-xs font-semibold text-slate-700 dark:text-slate-300 block">
-                Available Time Slots ({selectedDate})
-              </label>
+              <div className="flex items-center justify-between">
+                <label className="text-xs font-semibold text-slate-700 dark:text-slate-300 block">
+                  Available Time Slots ({selectedDate})
+                </label>
+                {/* Slot Status Legend */}
+                <div className="flex items-center gap-2.5 text-[10px] text-slate-500 dark:text-slate-400">
+                  <span className="flex items-center gap-1">
+                    <span className="w-2 h-2 rounded-full bg-teal-500 inline-block" /> Available
+                  </span>
+                  <span className="flex items-center gap-1">
+                    <span className="w-2 h-2 rounded-full bg-amber-400 inline-block" /> Held
+                  </span>
+                  <span className="flex items-center gap-1">
+                    <span className="w-2 h-2 rounded-full bg-slate-300 dark:bg-slate-600 inline-block" /> Booked
+                  </span>
+                </div>
+              </div>
 
               {slotsQuery.isLoading ? (
                 <div className="grid grid-cols-2 gap-2.5">
@@ -502,9 +540,9 @@ export default function DoctorProfilePage() {
               <ChevronRight className="w-4 h-4" />
             </button>
 
-            <div className="text-[11px] text-slate-400 text-center flex items-center justify-center gap-1">
-              <ShieldCheck className="w-3.5 h-3.5 text-teal-600" />
-              100% Refundable if cancelled up to 24h before
+            <div className="text-[11px] text-slate-500 dark:text-slate-400 text-center flex items-center justify-center gap-1.5 leading-tight">
+              <ShieldCheck className="w-4 h-4 text-teal-600 shrink-0" />
+              <span>Policy: 100% refund &ge;24h before slot; 50% refund &lt;24h. Doctor cancellation is 100% refunded.</span>
             </div>
           </div>
         </div>
