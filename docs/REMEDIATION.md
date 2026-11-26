@@ -32,7 +32,7 @@ All fixes are committed atomically on `main` (baseline tag: `pre-agent-baseline`
 - [x] **P1-11** (`bdab0a2`): Real admin endpoints & dashboard (`/admin/stats`, `/admin/ledgers`, `/admin/audit-logs`, `/admin/payments/reconcile`), real doctor clinical workspace (`/doctors/me/dashboard`, today's queue, 7-day earnings chart, dry-run leave conflict preview & cascade refund, verified reviews)
 - [x] **P1-12** (`11f273e`): Doctor registration & onboarding flow in UI, pending verification banner (`ShieldAlert`), doctor profile management (`/doctors/me/profile`), and weekly schedule availability editor (`/doctors/me/availability`)
 - [x] **P1-13** (`7e2bbe2`): 3-way consultation mode selector (`VIDEO | IN_CLINIC | CHAT`) in slot picker and booking flow, conditional LiveKit video token minting (restricted strictly to `VIDEO` mode, 400 for `IN_CLINIC`/`CHAT`), and dedicated chamber/chat views in consultation room
-- [ ] **P1-14**: Concurrency lock (`FOR UPDATE`) on prescription create/update, patient notification on prescription issue, multi-medicine form
+- [x] **P1-14** (`ad0751a`): Concurrency row-locking (`FOR UPDATE`) on prescription creation & updates, patient notification dispatch (`PRESCRIPTION_ISSUED` / `PRESCRIPTION_UPDATED`), and interactive multi-medicine form with validation in clinical workspace
 - [ ] **P1-15**: Cursor pagination & status/date filters on appointment lists (`getMyAppointments`)
 
 ## Phase 3 — P2: Backend Quality / Performance
