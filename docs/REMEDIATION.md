@@ -36,24 +36,38 @@ All fixes are committed atomically on `main` (baseline tag: `pre-agent-baseline`
 - [x] **P1-15** (`8981c46`): Cursor pagination & status/date/mode filters on appointment lists (`getMyAppointments`), limit+1 cursor pagination, date range & mode filters, Next.js interactive filter toolbar and Load More pagination
 
 ## Phase 3 — P2: Backend Quality / Performance
-- [ ] **P2-1**: Configurable `PLATFORM_COMMISSION_BPS` (remove magic number 1000 repeated in 6 places)
-- [ ] **P2-2**: Single source of truth for timezone (`CLINIC_TIMEZONE` in shared & api)
-- [ ] **P2-3**: Remove redundant `releaseExpiredPendingAppointments` in API, keep worker's `processExpiryJob`, invalidate `cache:next_slot:{doctor}` and emit `slot_freed` event
-- [ ] **P2-4**: `bookAppointment`: Redis failure after DB commit made best-effort with logging; inspect `meta.target` for unique constraint errors
-- [ ] **P2-5**: Slot grid: validate availability rows (no overlap, start<end, duration divides window) and dedupe overlapping slots
-- [ ] **P2-6**: Presigned PUT ContentLength bound and HeadObject verification, attachment metadata table, magic byte MIME scan, path confinement under `appointments/{id}/`
-- [ ] **P2-7**: LiveKit token: display real names instead of "Attending Doctor/Patient", reject non-VIDEO modes, append device suffix to identity
-- [ ] **P2-8**: Socket.IO auth: header/auth only (no token in query string), periodic re-validation, disconnect on token expiry
-- [ ] **P2-9**: FakePaymentProvider persistence (or drop `fetchPaymentStatus` for FAKE) so multi-instance api reconciliation doesn't falsely mark orders FAILED
-- [ ] **P2-10**: DB indexes: `appointments(status, created_at)`, `outbox_events(status, created_at)`, `notifications(user_id, read_at, created_at)`, `chat_messages(appointment_id, created_at)`, and outbox retention job
-- [ ] **P2-11**: Metrics label cardinality protection (use route patterns instead of raw `request.url`), add business metrics (bookings, captures, refunds, DLQ size)
-- [ ] **P2-12**: Gate dev-only endpoints behind `ENABLE_DEV_ENDPOINTS` flag (must be false in production, do not register routes otherwise)
-- [ ] **P2-13**: Ambulance rate limit & active request cap per user, service area coordinate validation, cascade race condition review
-- [ ] **P2-14**: AI gateway rate limiting, request size caps, 3s timeout with safe fallback when AI service is down
-- [ ] **P2-15**: Replace `any` in services (`tx: any`, `body: any`) with Prisma `TransactionClient` and Zod-inferred types
+- [x] **P2-1** (`88d36d2`): Configurable `PLATFORM_COMMISSION_BPS` (remove magic number 1000 repeated in 6 places)
+- [x] **P2-2** (`88bcbb2`): Single source of truth for timezone (`CLINIC_TIMEZONE` in shared & api)
+- [x] **P2-3** (`bf2b81f`): Invalidate `cache:next_slot:{doctor}` and emit `slot_freed` event on appointment expiration
+- [x] **P2-4** (`939c9dd`): `bookAppointment`: Redis failure after DB commit made best-effort with logging; inspect `meta.target` for unique constraint errors
+- [x] **P2-5** (`812e262`): Slot grid: validate availability rows (no overlap, start<end, duration divides window) and dedupe overlapping slots
+- [x] **P2-6** (`7686a5c`): Presigned PUT ContentLength bound and HeadObject verification, attachment metadata table, magic byte MIME scan, path confinement under `appointments/{id}/`
+- [x] **P2-7** (`160ade8`): LiveKit token: display real names instead of "Attending Doctor/Patient", reject non-VIDEO modes, append device suffix to identity
+- [x] **P2-8** (`9048d59`): Socket.IO auth: header/auth only (no token in query string), periodic re-validation, disconnect on token expiry
+- [x] **P2-9** (`a73c16b`): FakePaymentProvider persistence in Redis so multi-instance api reconciliation doesn't falsely mark orders FAILED
+- [x] **P2-10** (`83b83af`): DB indexes: `appointments(status, created_at)`, `outbox_events(status, created_at)`, `notifications(user_id, read_at, created_at)`, `chat_messages(appointment_id, created_at)`, and outbox retention purge job
+- [x] **P2-11** (`fb6c1e6`): Metrics label cardinality protection (use route patterns instead of raw `request.url`), add business metrics (bookings, captures, refunds, DLQ size)
+- [x] **P2-12** (`805af01`): Gate dev-only endpoints behind `ENABLE_DEV_ENDPOINTS` flag (must be false in production, do not register routes otherwise)
+- [x] **P2-13** (`25b76a3`): Ambulance rate limit & active request cap per user, service area coordinate validation, cascade race condition review
+- [x] **P2-14** (`7e9c236`): AI gateway rate limiting, request size caps, 3s timeout with safe fallback when AI service is down
+- [x] **P2-15** (`b179456`): Replace `any` in services (`tx: any`, `body: any`) with Prisma `TransactionClient` and Zod-inferred types
 
 ## Phase 4 — Frontend Bugs (`apps/web`)
-- [ ] **F-1** – **F-15**: (Pending Phase 3 completion)
+- [ ] **F-1**: Single-flight token refresh in `src/lib/api.ts` with request queue and 204 handling
+- [ ] **F-2**: Real logout calling `POST /auth/logout`, clearing TanStack Query cache, disconnecting sockets
+- [ ] **F-3**: `AuthProvider` + `useAuth()` keeping access token in memory with httpOnly bootstrap via `GET /auth/me`
+- [ ] **F-4**: Eliminate hydration mismatches across appointments, consultation, passport
+- [ ] **F-5**: Prevent open redirect in login page (`startsWith('/') && !startsWith('//')`)
+- [ ] **F-6**: Gate demo credentials behind `NEXT_PUBLIC_SHOW_DEMO_LOGINS=true`, remove dev jargon from copy
+- [ ] **F-7**: Truthful doctor page claims, policy-driven text, calendar date picker, slot legend
+- [ ] **F-8**: Consultation page improvements (LiveKit window countdown/retry, dynamic socket auth token callback, remove audio elements on disconnect, mic/cam permission error handling, 3s typing timeout, red phone confirmation)
+- [ ] **F-9**: Real Razorpay Checkout.js integration on checkout page
+- [ ] **F-10**: Emergency page: reverse-geocode, manual address + pin drag fallback on GPS denial, Call 112/108 primary action
+- [ ] **F-11**: Dark mode clean implementation with `next-themes` / script before paint
+- [ ] **F-12**: Mobile responsive drawer/bottom bar, role-based navigation links, route guards
+- [ ] **F-13**: Add Next.js App Router root & segment `error.tsx`, `loading.tsx`, `not-found.tsx`, `global-error.tsx`
+- [ ] **F-14**: Complete user-facing i18n translations or hide unlocalized languages
+- [ ] **F-15**: Clean up unused deps, replace `alert()` with sonner toast, slot refetching
 
 ## Phase 5 — UI / UX Polish
 - [ ] Design system, forms & accessibility, flows, content & trust (Pending Phase 4 completion)
