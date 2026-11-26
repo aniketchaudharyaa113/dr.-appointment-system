@@ -1,5 +1,5 @@
 import * as crypto from 'crypto';
-import { Injectable } from '@nestjs/common';
+import { Injectable, Optional, Inject } from '@nestjs/common';
 import {
   PaymentProvider,
   PaymentOrderResult,
@@ -7,6 +7,7 @@ import {
   ParsedWebhookEvent,
 } from './payment-provider.interface';
 import { env } from '../../../common/config/env.schema';
+import { RedisService } from '../../platform/redis/redis.service';
 
 @Injectable()
 export class FakePaymentProvider implements PaymentProvider {
@@ -20,7 +21,9 @@ export class FakePaymentProvider implements PaymentProvider {
   public simulateFailure = false;
   public simulateDelayedWebhook = false;
 
-  constructor() {
+  constructor(
+    @Optional() @Inject(RedisService) private readonly redis?: RedisService,
+  ) {
     this.webhookSecret = env.PAYMENT_WEBHOOK_SECRET || env.RAZORPAY_WEBHOOK_SECRET || '';
     if (!this.webhookSecret) {
       throw new Error('PAYMENT_WEBHOOK_SECRET is required for FakePaymentProvider');
@@ -33,10 +36,24 @@ export class FakePaymentProvider implements PaymentProvider {
     currency?: string;
   }): Promise<PaymentOrderResult> {
     const providerOrderId = `fake_ord_${crypto.randomUUID().slice(0, 16)}`;
-    this.orders.set(providerOrderId, {
+    const record = {
       amountPaise: params.amountPaise,
-      status: this.simulateFailure ? 'FAILED' : 'PENDING',
-    });
+      status: (this.simulateFailure ? 'FAILED' : 'PENDING') as 'CAPTURED' | 'PENDING' | 'FAILED',
+    };
+    this.orders.set(providerOrderId, record);
+
+    if (this.redis) {
+      try {
+        await this.redis.getClient().set(
+          `fake:order:${providerOrderId}`,
+          JSON.stringify(record),
+          'EX',
+          86400,
+        );
+      } catch {
+        // Ignore redis cache error in offline test mode
+      }
+    }
 
     return {
       providerOrderId,
@@ -106,29 +123,57 @@ export class FakePaymentProvider implements PaymentProvider {
     providerPaymentId?: string;
   }> {
     const existing = this.orders.get(providerOrderId);
-    if (!existing) {
-      return { status: 'FAILED' };
+    if (existing) {
+      return {
+        status: existing.status,
+        providerPaymentId: existing.providerPaymentId,
+      };
     }
-    return {
-      status: existing.status,
-      providerPaymentId: existing.providerPaymentId,
-    };
+
+    if (this.redis) {
+      try {
+        const raw = await this.redis.getClient().get(`fake:order:${providerOrderId}`);
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          this.orders.set(providerOrderId, parsed);
+          return {
+            status: parsed.status,
+            providerPaymentId: parsed.providerPaymentId,
+          };
+        }
+      } catch {
+        // Fallback below
+      }
+    }
+
+    // Default to PENDING if order is not tracked yet (never falsely mark FAILED on unknown order)
+    return { status: 'PENDING' };
   }
 
   simulateExternalCapture(
     providerOrderId: string,
     providerPaymentId = `fake_pay_${Date.now()}`,
   ): void {
+    const record = {
+      amountPaise: 0,
+      status: 'CAPTURED' as const,
+      providerPaymentId,
+    };
     const ord = this.orders.get(providerOrderId);
     if (ord) {
       ord.status = 'CAPTURED';
       ord.providerPaymentId = providerPaymentId;
     } else {
-      this.orders.set(providerOrderId, {
-        amountPaise: 0,
-        status: 'CAPTURED',
-        providerPaymentId,
-      });
+      this.orders.set(providerOrderId, record);
+    }
+
+    if (this.redis) {
+      this.redis.getClient().set(
+        `fake:order:${providerOrderId}`,
+        JSON.stringify(record),
+        'EX',
+        86400,
+      ).catch(() => {});
     }
   }
 }
