@@ -15,7 +15,9 @@ import {
   Activity,
   XCircle,
 } from 'lucide-react';
-import { fetchApi, getAuthToken, getCurrentUser } from '@/lib/api';
+import { fetchApi, getAuthToken } from '@/lib/api';
+import { useAuth } from '@/lib/auth-context';
+import { registerSocket } from '@/lib/socket-registry';
 import { EmergencyMap } from '@/components/emergency-map';
 
 interface EmergencyInfo {
@@ -60,6 +62,7 @@ interface AmbulanceTrip {
 
 export default function EmergencyPage() {
   const queryClient = useQueryClient();
+  const { user } = useAuth();
   const [pickupLat, setPickupLat] = useState(22.5512);
   const [pickupLng, setPickupLng] = useState(88.3524);
   const [pickupAddress, setPickupAddress] = useState(
@@ -72,24 +75,39 @@ export default function EmergencyPage() {
     distanceKm?: number;
   } | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
-  const [hasSession, setHasSession] = useState(false);
+  const [gpsStatus, setGpsStatus] = useState<'locating' | 'ready' | 'denied' | 'timeout'>('locating');
+
+  const hasSession = Boolean(user);
 
   useEffect(() => {
-    setHasSession(Boolean(getAuthToken() && getCurrentUser()));
     if (typeof window !== 'undefined' && navigator.geolocation) {
+      const timer = setTimeout(() => {
+        setGpsStatus((current) => (current === 'locating' ? 'timeout' : current));
+      }, 10000);
+
       navigator.geolocation.getCurrentPosition(
         (pos) => {
-          // Keep Kolkata fallback unless user is reasonably near Kolkata or explicitly allows
+          clearTimeout(timer);
           if (pos.coords.latitude && pos.coords.longitude) {
             setPickupLat(Number(pos.coords.latitude.toFixed(5)));
             setPickupLng(Number(pos.coords.longitude.toFixed(5)));
+            setGpsStatus('ready');
           }
         },
-        () => {
-          // Silent fallback to default Park Street coordinates
+        (err) => {
+          clearTimeout(timer);
+          if (err.code === 1) {
+            setGpsStatus('denied');
+          } else {
+            setGpsStatus('timeout');
+          }
         },
-        { timeout: 2500 },
+        { timeout: 10000, enableHighAccuracy: true },
       );
+
+      return () => clearTimeout(timer);
+    } else {
+      setGpsStatus('denied');
     }
   }, []);
 
@@ -140,9 +158,12 @@ export default function EmergencyPage() {
       process.env.NEXT_PUBLIC_SOCKET_URL ||
       (typeof window !== 'undefined' ? window.location.origin : '');
     const socket: Socket = io(`${socketOrigin}/ambulance`, {
-      auth: { token },
+      auth: (cb) => {
+        cb({ token: getAuthToken() || '' });
+      },
       transports: ['websocket', 'polling'],
     });
+    const unregisterSocket = registerSocket(socket);
 
     socket.on('connect', () => {
       socket.emit('join_tracking', { requestId: activeTrip.id });
@@ -186,6 +207,7 @@ export default function EmergencyPage() {
     });
 
     return () => {
+      unregisterSocket();
       socket.disconnect();
     };
   }, [activeTrip?.id]);
@@ -349,6 +371,18 @@ export default function EmergencyPage() {
                   </div>
                 )}
 
+                {(gpsStatus === 'denied' || gpsStatus === 'timeout') && (
+                  <div className="p-3 rounded-xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 text-xs text-amber-900 dark:text-amber-200 space-y-1">
+                    <div className="font-bold flex items-center gap-1.5">
+                      <AlertTriangle className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                      <span>GPS Permission Unavailable — Manual Address Enabled</span>
+                    </div>
+                    <p className="text-[11px] text-amber-800/80 dark:text-amber-300/80">
+                      Enter your address or tap a landmark below. For life-threatening emergencies, dial 112 / 108 immediately.
+                    </p>
+                  </div>
+                )}
+
                 <div className="space-y-2">
                   <label className="block text-xs font-medium text-slate-600 dark:text-slate-400">
                     Pickup Address
@@ -359,16 +393,50 @@ export default function EmergencyPage() {
                     onChange={(e) => setPickupAddress(e.target.value)}
                     className="w-full px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 text-sm text-slate-900 dark:text-white"
                   />
+                  <div className="flex flex-wrap items-center gap-1.5 pt-1">
+                    <span className="text-[10px] text-slate-400">Presets:</span>
+                    {[
+                      { label: 'Park Street', lat: 22.5512, lng: 88.3524 },
+                      { label: 'Howrah Station', lat: 22.5857, lng: 88.3426 },
+                      { label: 'Salt Lake Sec V', lat: 22.5735, lng: 88.4331 },
+                      { label: 'SSKM Hospital', lat: 22.5398, lng: 88.3442 },
+                    ].map((preset) => (
+                      <button
+                        key={preset.label}
+                        type="button"
+                        onClick={() => {
+                          setPickupAddress(preset.label + ', Kolkata');
+                          setPickupLat(preset.lat);
+                          setPickupLng(preset.lng);
+                        }}
+                        className="text-[10px] px-2 py-0.5 rounded-md bg-slate-100 dark:bg-slate-800 hover:bg-teal-50 dark:hover:bg-teal-950/40 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 transition"
+                      >
+                        {preset.label}
+                      </button>
+                    ))}
+                  </div>
                 </div>
 
                 <div className="grid grid-cols-2 gap-2 text-xs text-slate-500">
                   <div>
-                    <span className="block font-medium">Latitude</span>
-                    <span className="font-mono">{pickupLat}</span>
+                    <label className="block font-medium mb-1">Latitude</label>
+                    <input
+                      type="number"
+                      step="0.0001"
+                      value={pickupLat}
+                      onChange={(e) => setPickupLat(Number(e.target.value))}
+                      className="w-full px-2.5 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 text-xs font-mono text-slate-900 dark:text-white"
+                    />
                   </div>
                   <div>
-                    <span className="block font-medium">Longitude</span>
-                    <span className="font-mono">{pickupLng}</span>
+                    <label className="block font-medium mb-1">Longitude</label>
+                    <input
+                      type="number"
+                      step="0.0001"
+                      value={pickupLng}
+                      onChange={(e) => setPickupLng(Number(e.target.value))}
+                      className="w-full px-2.5 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 text-xs font-mono text-slate-900 dark:text-white"
+                    />
                   </div>
                 </div>
 
