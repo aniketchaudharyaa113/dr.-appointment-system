@@ -49,6 +49,7 @@ export function Navbar() {
     { href: '/doctors', label: t.nav.findDoctors, icon: Stethoscope },
     { href: '/emergency', label: t.nav.emergency, icon: ShieldAlert, highlight: true },
     { href: '/appointments', label: t.nav.myAppointments, icon: Calendar },
+    { href: '/passport', label: 'Health Passport', icon: User },
     { href: '/doctor/dashboard', label: t.nav.doctorPortal, icon: Activity },
     { href: '/admin', label: t.nav.adminPortal, icon: User },
   ];
