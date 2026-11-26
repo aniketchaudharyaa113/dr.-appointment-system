@@ -4,6 +4,7 @@ import { PrismaService } from '../../platform/database/prisma.service';
 import { RedisService } from '../../platform/redis/redis.service';
 import { SlotService } from './slot.service';
 import { getIstDayBoundsUtc, getIstDateString } from '../../../common/utils/ist-time';
+import { UpdateDoctorAvailabilityInput, UpdateDoctorProfileInput } from '@medibook/shared';
 
 export interface DoctorSearchParams {
   symptomQuery?: string;
@@ -422,6 +423,10 @@ export class DoctorService {
       doctorId: doctor.id,
       doctorName: doctor.user.name,
       specialty: doctor.specialty,
+      isVerified: doctor.isVerified,
+      verificationStatus: doctor.verificationStatus,
+      licenseNumber: doctor.licenseNumber,
+      photoUrl: doctor.photoUrl,
       stats: {
         totalEarningsPaise,
         totalConsultations: completedCount,
@@ -455,5 +460,89 @@ export class DoctorService {
         createdAt: r.createdAt.toISOString(),
       })),
     };
+  }
+
+  async getDoctorProfile(userId: string) {
+    const doctor = await this.prisma.doctor.findUnique({
+      where: { userId },
+      include: {
+        user: { select: { id: true, name: true, email: true, phone: true } },
+        availability: { orderBy: [{ dayOfWeek: 'asc' }, { startTime: 'asc' }] },
+      },
+    });
+
+    if (!doctor) {
+      throw new NotFoundException('Doctor profile not found');
+    }
+
+    return {
+      id: doctor.id,
+      userId: doctor.userId,
+      name: doctor.user.name,
+      email: doctor.user.email,
+      phone: doctor.user.phone,
+      specialty: doctor.specialty,
+      qualifications: doctor.qualifications,
+      experienceYears: doctor.experienceYears,
+      clinicName: doctor.clinicName,
+      clinicAddress: doctor.clinicAddress,
+      consultationFeePaise: doctor.consultationFeePaise,
+      licenseNumber: doctor.licenseNumber,
+      isVerified: doctor.isVerified,
+      verificationStatus: doctor.verificationStatus,
+      photoUrl: doctor.photoUrl,
+      availability: doctor.availability,
+    };
+  }
+
+  async updateDoctorProfile(userId: string, input: UpdateDoctorProfileInput) {
+    const doctor = await this.prisma.doctor.findUnique({ where: { userId } });
+    if (!doctor) {
+      throw new NotFoundException('Doctor profile not found');
+    }
+
+    return this.prisma.doctor.update({
+      where: { id: doctor.id },
+      data: {
+        specialty: input.specialty,
+        qualifications: input.qualifications,
+        experienceYears: input.experienceYears,
+        clinicName: input.clinicName,
+        clinicAddress: input.clinicAddress,
+        consultationFeePaise: input.consultationFeePaise,
+        licenseNumber: input.licenseNumber,
+        photoUrl: input.photoUrl,
+      },
+    });
+  }
+
+  async updateDoctorAvailability(userId: string, input: UpdateDoctorAvailabilityInput) {
+    const doctor = await this.prisma.doctor.findUnique({ where: { userId } });
+    if (!doctor) {
+      throw new NotFoundException('Doctor profile not found');
+    }
+
+    return this.prisma.$transaction(async (tx) => {
+      await tx.availability.deleteMany({
+        where: { doctorId: doctor.id },
+      });
+
+      if (input.slots.length > 0) {
+        await tx.availability.createMany({
+          data: input.slots.map((s: { dayOfWeek: number; startTime: string; endTime: string; slotDurationMinutes?: number }) => ({
+            doctorId: doctor.id,
+            dayOfWeek: s.dayOfWeek,
+            startTime: s.startTime.length === 5 ? `${s.startTime}:00` : s.startTime,
+            endTime: s.endTime.length === 5 ? `${s.endTime}:00` : s.endTime,
+            slotDurationMinutes: s.slotDurationMinutes || 15,
+          })),
+        });
+      }
+
+      return tx.availability.findMany({
+        where: { doctorId: doctor.id },
+        orderBy: [{ dayOfWeek: 'asc' }, { startTime: 'asc' }],
+      });
+    });
   }
 }

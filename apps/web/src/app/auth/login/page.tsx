@@ -11,9 +11,14 @@ function LoginContent() {
   const redirectParam = searchParams.get('redirect');
 
   const [mode, setMode] = useState<'login' | 'register'>('login');
+  const [registerRole, setRegisterRole] = useState<'PATIENT' | 'DOCTOR'>('PATIENT');
   const [name, setName] = useState('');
   const [email, setEmail] = useState('patient@medibook.test');
   const [password, setPassword] = useState('Password123!');
+  const [specialty, setSpecialty] = useState('General Medicine');
+  const [licenseNumber, setLicenseNumber] = useState('');
+  const [experienceYears, setExperienceYears] = useState(5);
+  const [consultationFee, setConsultationFee] = useState(500);
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
@@ -93,12 +98,26 @@ function LoginContent() {
     setLoading(true);
     setErrorMsg(null);
     try {
+      const payload: any = {
+        name,
+        email,
+        password,
+        role: registerRole,
+      };
+
+      if (registerRole === 'DOCTOR') {
+        payload.specialty = specialty;
+        payload.licenseNumber = licenseNumber || 'WBMC/' + Math.floor(10000 + Math.random() * 90000);
+        payload.experienceYears = Number(experienceYears);
+        payload.consultationFeePaise = Math.round(Number(consultationFee) * 100);
+      }
+
       const res = await fetchApi<{
         user: { id: string; email: string; name: string; role: UserSession['role'] };
         accessToken: string;
       }>('/auth/register', {
         method: 'POST',
-        body: JSON.stringify({ name, email, password, role: 'PATIENT' }),
+        body: JSON.stringify(payload),
       });
 
       setCurrentUser({
@@ -109,7 +128,8 @@ function LoginContent() {
         token: res.accessToken,
       });
 
-      router.push(redirectParam || '/doctors');
+      const fallback = res.user.role === 'DOCTOR' ? '/doctor/dashboard' : '/doctors';
+      router.push(redirectParam || fallback);
     } catch (err: any) {
       setErrorMsg(err.message || 'Registration failed');
     } finally {
@@ -190,20 +210,118 @@ function LoginContent() {
         </div>
 
         {mode === 'register' && (
-          <div>
-            <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-              Full Name
-            </label>
-            <input
-              type="text"
-              required
-              minLength={2}
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="e.g. Aarav Chatterjee"
-              className="w-full p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-teal-500"
-            />
-          </div>
+          <>
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                Account Type
+              </label>
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => setRegisterRole('PATIENT')}
+                  className={`py-2 rounded-xl text-xs font-bold border transition-colors ${
+                    registerRole === 'PATIENT'
+                      ? 'border-teal-600 bg-teal-50 dark:bg-teal-950/60 text-teal-700 dark:text-teal-300'
+                      : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400'
+                  }`}
+                >
+                  Patient
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setRegisterRole('DOCTOR')}
+                  className={`py-2 rounded-xl text-xs font-bold border transition-colors ${
+                    registerRole === 'DOCTOR'
+                      ? 'border-teal-600 bg-teal-50 dark:bg-teal-950/60 text-teal-700 dark:text-teal-300'
+                      : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400'
+                  }`}
+                >
+                  Doctor / Physician
+                </button>
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                Full Name
+              </label>
+              <input
+                type="text"
+                required
+                minLength={2}
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder={registerRole === 'DOCTOR' ? 'e.g. Dr. Sneha Mukherjee' : 'e.g. Aarav Chatterjee'}
+                className="w-full p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-teal-500"
+              />
+            </div>
+
+            {registerRole === 'DOCTOR' && (
+              <>
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                      Specialty
+                    </label>
+                    <select
+                      value={specialty}
+                      onChange={(e) => setSpecialty(e.target.value)}
+                      className="w-full p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-teal-500"
+                    >
+                      <option value="General Medicine">General Medicine</option>
+                      <option value="Cardiology">Cardiology</option>
+                      <option value="Dermatology">Dermatology</option>
+                      <option value="Pediatrics">Pediatrics</option>
+                      <option value="Orthopedics">Orthopedics</option>
+                      <option value="Psychiatry">Psychiatry</option>
+                      <option value="ENT">ENT</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                      License / Reg No.
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      value={licenseNumber}
+                      onChange={(e) => setLicenseNumber(e.target.value)}
+                      placeholder="e.g. WBMC/58291"
+                      className="w-full p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-teal-500"
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                      Experience (Years)
+                    </label>
+                    <input
+                      type="number"
+                      min={0}
+                      value={experienceYears}
+                      onChange={(e) => setExperienceYears(Number(e.target.value))}
+                      className="w-full p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-teal-500"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                      Consultation Fee (₹)
+                    </label>
+                    <input
+                      type="number"
+                      min={100}
+                      step={50}
+                      value={consultationFee}
+                      onChange={(e) => setConsultationFee(Number(e.target.value))}
+                      className="w-full p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-teal-500"
+                    />
+                  </div>
+                </div>
+              </>
+            )}
+          </>
         )}
 
         <div>

@@ -236,3 +236,27 @@ export const ReleaseSlotHoldSchema = z.object({
   slotTime: z.string().optional(),
 });
 export type ReleaseSlotHoldInput = z.infer<typeof ReleaseSlotHoldSchema>;
+
+export const UpdateDoctorAvailabilitySchema = z.object({
+  slots: z.array(
+    z.object({
+      dayOfWeek: z.number().int().min(0).max(6),
+      startTime: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d(:[0-5]\d)?$/),
+      endTime: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d(:[0-5]\d)?$/),
+      slotDurationMinutes: z.number().int().positive().default(15),
+    }),
+  ),
+});
+export type UpdateDoctorAvailabilityInput = z.infer<typeof UpdateDoctorAvailabilitySchema>;
+
+export const UpdateDoctorProfileSchema = z.object({
+  specialty: z.string().optional(),
+  qualifications: z.string().optional(),
+  experienceYears: z.number().int().nonnegative().optional(),
+  clinicName: z.string().optional(),
+  clinicAddress: z.string().optional(),
+  consultationFeePaise: z.number().int().nonnegative().optional(),
+  licenseNumber: z.string().optional(),
+  photoUrl: z.string().optional(),
+});
+export type UpdateDoctorProfileInput = z.infer<typeof UpdateDoctorProfileSchema>;

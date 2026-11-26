@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
@@ -13,6 +13,10 @@ import {
   DollarSign,
   Star,
   Users,
+  ShieldAlert,
+  ShieldCheck,
+  Save,
+  Briefcase,
 } from 'lucide-react';
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip } from 'recharts';
 import { fetchApi } from '@/lib/api';
@@ -22,6 +26,10 @@ interface DoctorDashboardData {
   doctorId: string;
   doctorName: string;
   specialty: string;
+  isVerified: boolean;
+  verificationStatus: 'PENDING' | 'APPROVED' | 'REJECTED';
+  licenseNumber: string | null;
+  photoUrl: string | null;
   stats: {
     totalEarningsPaise: number;
     totalConsultations: number;
@@ -56,6 +64,30 @@ interface DoctorDashboardData {
   }>;
 }
 
+interface DoctorProfileData {
+  id: string;
+  name: string;
+  email: string;
+  specialty: string;
+  qualifications: string | null;
+  experienceYears: number;
+  clinicName: string | null;
+  clinicAddress: string | null;
+  consultationFeePaise: number;
+  licenseNumber: string | null;
+  isVerified: boolean;
+  verificationStatus: 'PENDING' | 'APPROVED' | 'REJECTED';
+  availability: Array<{
+    id: string;
+    dayOfWeek: number;
+    startTime: string;
+    endTime: string;
+    slotDurationMinutes: number;
+  }>;
+}
+
+const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+
 export default function DoctorDashboardPage() {
   const queryClient = useQueryClient();
   const [activeTab, setActiveTab] = useState<'queue' | 'availability' | 'earnings'>('queue');
@@ -65,10 +97,63 @@ export default function DoctorDashboardPage() {
   const [newLeaveReason, setNewLeaveReason] = useState('');
   const [dryRunImpact, setDryRunImpact] = useState<number | null>(null);
 
+  // Profile Form States
+  const [licenseInput, setLicenseInput] = useState('');
+  const [specialtyInput, setSpecialtyInput] = useState('');
+  const [qualificationsInput, setQualificationsInput] = useState('');
+  const [experienceInput, setExperienceInput] = useState(5);
+  const [feeRupeesInput, setFeeRupeesInput] = useState(500);
+
+  // Schedule Editor States
+  const [weeklySchedule, setWeeklySchedule] = useState<
+    Array<{ dayOfWeek: number; enabled: boolean; startTime: string; endTime: string; slotDurationMinutes: number }>
+  >(
+    DAYS.map((_, i) => ({
+      dayOfWeek: i,
+      enabled: i >= 1 && i <= 5, // Mon-Fri default
+      startTime: '09:00',
+      endTime: '17:00',
+      slotDurationMinutes: 15,
+    }))
+  );
+
   const { data, isLoading, error } = useQuery<DoctorDashboardData>({
     queryKey: ['doctor-dashboard'],
     queryFn: () => fetchApi('/doctors/me/dashboard'),
   });
+
+  const { data: profile } = useQuery<DoctorProfileData>({
+    queryKey: ['doctor-profile'],
+    queryFn: () => fetchApi('/doctors/me/profile'),
+  });
+
+  useEffect(() => {
+    if (profile) {
+      setLicenseInput(profile.licenseNumber || '');
+      setSpecialtyInput(profile.specialty || 'General Medicine');
+      setQualificationsInput(profile.qualifications || '');
+      setExperienceInput(profile.experienceYears || 5);
+      setFeeRupeesInput(Math.round((profile.consultationFeePaise || 50000) / 100));
+
+      if (profile.availability && profile.availability.length > 0) {
+        setWeeklySchedule((prev) =>
+          prev.map((day) => {
+            const matched = profile.availability.find((a) => a.dayOfWeek === day.dayOfWeek);
+            if (matched) {
+              return {
+                dayOfWeek: day.dayOfWeek,
+                enabled: true,
+                startTime: matched.startTime.slice(0, 5),
+                endTime: matched.endTime.slice(0, 5),
+                slotDurationMinutes: matched.slotDurationMinutes || 15,
+              };
+            }
+            return { ...day, enabled: false };
+          })
+        );
+      }
+    }
+  }, [profile]);
 
   const previewMutation = useMutation({
     mutationFn: (body: { startDate: string; endDate: string }) => {
@@ -109,6 +194,37 @@ export default function DoctorDashboardPage() {
     },
   });
 
+  const updateProfileMutation = useMutation({
+    mutationFn: (body: any) =>
+      fetchApi('/doctors/me/profile', {
+        method: 'PUT',
+        body: JSON.stringify(body),
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['doctor-dashboard'] });
+      queryClient.invalidateQueries({ queryKey: ['doctor-profile'] });
+      alert('Doctor license and professional profile successfully saved.');
+    },
+    onError: (err: any) => {
+      alert(`Failed to update profile: ${err.message || 'Validation error'}`);
+    },
+  });
+
+  const updateScheduleMutation = useMutation({
+    mutationFn: (slots: any[]) =>
+      fetchApi('/doctors/me/availability', {
+        method: 'PUT',
+        body: JSON.stringify({ slots }),
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['doctor-profile'] });
+      alert('Weekly schedule and recurring working hours saved.');
+    },
+    onError: (err: any) => {
+      alert(`Failed to save availability schedule: ${err.message || 'Validation error'}`);
+    },
+  });
+
   const handleDryRunLeave = () => {
     if (!newLeaveStart || !newLeaveEnd) {
       alert('Please select both start and end dates');
@@ -127,6 +243,29 @@ export default function DoctorDashboardPage() {
       endDate: newLeaveEnd,
       reason: newLeaveReason || 'Personal Leave',
     });
+  };
+
+  const handleSaveProfile = (e: React.FormEvent) => {
+    e.preventDefault();
+    updateProfileMutation.mutate({
+      licenseNumber: licenseInput,
+      specialty: specialtyInput,
+      qualifications: qualificationsInput,
+      experienceYears: Number(experienceInput),
+      consultationFeePaise: Math.round(Number(feeRupeesInput) * 100),
+    });
+  };
+
+  const handleSaveSchedule = () => {
+    const activeSlots = weeklySchedule
+      .filter((s) => s.enabled)
+      .map((s) => ({
+        dayOfWeek: s.dayOfWeek,
+        startTime: s.startTime,
+        endTime: s.endTime,
+        slotDurationMinutes: s.slotDurationMinutes,
+      }));
+    updateScheduleMutation.mutate(activeSlots);
   };
 
   if (isLoading) {
@@ -148,10 +287,41 @@ export default function DoctorDashboardPage() {
     );
   }
 
-  const { stats, todayQueue, earningsChart, leaves, reviews } = data;
+  const { stats, todayQueue, earningsChart, reviews } = data;
+  const isPending = data.verificationStatus === 'PENDING';
+  const isRejected = data.verificationStatus === 'REJECTED';
 
   return (
-    <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8">
+    <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-6">
+      {/* Verification Status Banner */}
+      {isPending && (
+        <div className="p-4 sm:p-5 rounded-3xl bg-amber-50 dark:bg-amber-950/50 border border-amber-200 dark:border-amber-900 flex items-start gap-3.5">
+          <ShieldAlert className="w-6 h-6 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
+          <div className="space-y-1">
+            <h3 className="text-sm font-bold text-amber-900 dark:text-amber-200">
+              Medical Practitioner Verification Pending
+            </h3>
+            <p className="text-xs text-amber-800 dark:text-amber-300">
+              Your medical registration (<span className="font-mono font-semibold">{data.licenseNumber || 'License Under Review'}</span>) is currently being audited by administrators. You can update your practice information and configure your weekly schedule below; your public booking profile will become active upon approval.
+            </p>
+          </div>
+        </div>
+      )}
+
+      {isRejected && (
+        <div className="p-4 sm:p-5 rounded-3xl bg-rose-50 dark:bg-rose-950/50 border border-rose-200 dark:border-rose-900 flex items-start gap-3.5">
+          <AlertTriangle className="w-6 h-6 text-rose-600 dark:text-rose-400 shrink-0 mt-0.5" />
+          <div className="space-y-1">
+            <h3 className="text-sm font-bold text-rose-900 dark:text-rose-200">
+              Verification Needs Revision
+            </h3>
+            <p className="text-xs text-rose-800 dark:text-rose-300">
+              Your medical license verification was rejected. Please review and update your license details or qualifications below to re-submit for review.
+            </p>
+          </div>
+        </div>
+      )}
+
       {/* Header */}
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
         <div>
@@ -159,9 +329,15 @@ export default function DoctorDashboardPage() {
             <h1 className="text-2xl sm:text-3xl font-extrabold text-slate-900 dark:text-white">
               {data.doctorName}
             </h1>
-            <span className="text-xs font-bold text-teal-600 bg-teal-50 dark:bg-teal-950 px-2.5 py-0.5 rounded-full">
-              Attending Physician
-            </span>
+            {data.isVerified ? (
+              <span className="text-xs font-bold text-emerald-700 bg-emerald-50 dark:bg-emerald-950 px-2.5 py-0.5 rounded-full flex items-center gap-1">
+                <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" /> NMC Verified
+              </span>
+            ) : (
+              <span className="text-xs font-bold text-amber-700 bg-amber-50 dark:bg-amber-950 px-2.5 py-0.5 rounded-full">
+                Verification Pending
+              </span>
+            )}
           </div>
           <p className="text-xs sm:text-sm text-slate-500 mt-1">
             Specialty: {data.specialty} • Real-time clinical queue & automated scheduling
@@ -277,101 +453,236 @@ export default function DoctorDashboardPage() {
         </div>
       )}
 
-      {/* Availability & Leave Manager with Dry-Run */}
+      {/* Leaves & Schedule Tab */}
       {activeTab === 'availability' && (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        <div className="space-y-6">
+          {/* Weekly Schedule Availability Editor */}
           <div className="p-6 rounded-3xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm space-y-4">
-            <h3 className="text-base font-bold text-slate-900 dark:text-white flex items-center gap-2">
-              <Calendar className="w-4 h-4 text-teal-600" /> Apply Doctor Leave
-            </h3>
-            <p className="text-xs text-slate-500">
-              Applying leave automatically performs a dry-run check to prevent silent orphan bookings and triggers automated 100% refunds.
-            </p>
+            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+              <div>
+                <h3 className="text-base font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                  <Clock className="w-4 h-4 text-teal-600" /> Weekly Working Hours & Schedule Availability
+                </h3>
+                <p className="text-xs text-slate-500">
+                  Configure your standard consultation hours per day of the week. Slots will be auto-generated in 15-minute grids.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={handleSaveSchedule}
+                disabled={updateScheduleMutation.isPending}
+                className="px-4 py-2 rounded-xl bg-teal-600 hover:bg-teal-700 text-white font-bold text-xs shadow-sm flex items-center gap-1.5 transition-colors disabled:opacity-50"
+              >
+                <Save className="w-3.5 h-3.5" />
+                <span>{updateScheduleMutation.isPending ? 'Saving...' : 'Save Schedule'}</span>
+              </button>
+            </div>
 
-            <div className="space-y-3 text-xs">
-              <div>
-                <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">Start Date</label>
-                <input
-                  type="date"
-                  value={newLeaveStart}
-                  onChange={(e) => setNewLeaveStart(e.target.value)}
-                  className="w-full p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700"
-                />
-              </div>
-              <div>
-                <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">End Date</label>
-                <input
-                  type="date"
-                  value={newLeaveEnd}
-                  onChange={(e) => setNewLeaveEnd(e.target.value)}
-                  className="w-full p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700"
-                />
-              </div>
-              <div>
-                <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">Reason</label>
-                <input
-                  type="text"
-                  value={newLeaveReason}
-                  onChange={(e) => setNewLeaveReason(e.target.value)}
-                  placeholder="e.g. Conference, Personal Medical Leave"
-                  className="w-full p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700"
-                />
-              </div>
-
-              {dryRunImpact !== null && (
-                <div className="p-4 rounded-xl bg-amber-50 dark:bg-amber-950/60 border border-amber-200 dark:border-amber-900 text-xs text-amber-900 dark:text-amber-200 space-y-1">
-                  <div className="font-bold flex items-center gap-1.5">
-                    <AlertTriangle className="w-4 h-4 text-amber-600" /> Dry-Run Conflict Evaluation:
+            <div className="space-y-2 pt-2">
+              {weeklySchedule.map((day, idx) => (
+                <div
+                  key={day.dayOfWeek}
+                  className={`p-3.5 rounded-2xl border transition-colors flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 ${
+                    day.enabled
+                      ? 'bg-slate-50 dark:bg-slate-800/60 border-slate-200 dark:border-slate-700'
+                      : 'bg-slate-100/40 dark:bg-slate-900/40 border-dashed border-slate-200 dark:border-slate-800 opacity-60'
+                  }`}
+                >
+                  <div className="flex items-center gap-3 w-36">
+                    <input
+                      type="checkbox"
+                      id={`day-${day.dayOfWeek}`}
+                      checked={day.enabled}
+                      onChange={(e) => {
+                        const updated = [...weeklySchedule];
+                        updated[idx].enabled = e.target.checked;
+                        setWeeklySchedule(updated);
+                      }}
+                      className="rounded text-teal-600 focus:ring-teal-500 w-4 h-4"
+                    />
+                    <label htmlFor={`day-${day.dayOfWeek}`} className="text-xs font-bold text-slate-800 dark:text-slate-200 cursor-pointer">
+                      {DAYS[day.dayOfWeek]}
+                    </label>
                   </div>
-                  <p>
-                    <span className="font-bold">{dryRunImpact} booked appointments</span> fall inside this date window. If confirmed, they will be automatically cancelled, 100% refunded, and patients notified via SMS/email.
-                  </p>
-                </div>
-              )}
 
-              <div className="flex gap-2 pt-2">
-                <button
-                  type="button"
-                  onClick={handleDryRunLeave}
-                  disabled={previewMutation.isPending}
-                  className="flex-1 py-2.5 px-3 rounded-xl border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 font-semibold text-xs transition-colors disabled:opacity-50"
-                >
-                  {previewMutation.isPending ? 'Checking...' : 'Dry-Run Impact Check'}
-                </button>
-                <button
-                  type="button"
-                  onClick={handleApplyLeave}
-                  disabled={applyLeaveMutation.isPending}
-                  className="flex-1 py-2.5 px-3 rounded-xl bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs shadow-sm transition-colors disabled:opacity-50"
-                >
-                  {applyLeaveMutation.isPending ? 'Processing...' : 'Confirm & Cascade Leave'}
-                </button>
-              </div>
+                  {day.enabled ? (
+                    <div className="flex items-center gap-2 text-xs">
+                      <span className="text-slate-400">Hours:</span>
+                      <input
+                        type="time"
+                        value={day.startTime}
+                        onChange={(e) => {
+                          const updated = [...weeklySchedule];
+                          updated[idx].startTime = e.target.value;
+                          setWeeklySchedule(updated);
+                        }}
+                        className="p-1.5 rounded-lg bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs text-slate-800 dark:text-slate-200"
+                      />
+                      <span className="text-slate-400">to</span>
+                      <input
+                        type="time"
+                        value={day.endTime}
+                        onChange={(e) => {
+                          const updated = [...weeklySchedule];
+                          updated[idx].endTime = e.target.value;
+                          setWeeklySchedule(updated);
+                        }}
+                        className="p-1.5 rounded-lg bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs text-slate-800 dark:text-slate-200"
+                      />
+                      <span className="text-slate-400 ml-2">Slot: 15 min</span>
+                    </div>
+                  ) : (
+                    <span className="text-xs text-slate-400 italic">Off duty / Unavailable</span>
+                  )}
+                </div>
+              ))}
             </div>
           </div>
 
-          {/* Active Leaves List */}
-          <div className="p-6 rounded-3xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm space-y-4">
-            <h3 className="text-base font-bold text-slate-900 dark:text-white">Active Approved Leaves</h3>
-            {leaves.length === 0 ? (
-              <p className="text-xs text-slate-400">No scheduled leaves on record.</p>
-            ) : (
-              <div className="space-y-3">
-                {leaves.map((l) => (
-                  <div
-                    key={l.id}
-                    className="p-3.5 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200/60 dark:border-slate-700/60 flex items-center justify-between text-xs"
-                  >
-                    <div>
-                      <span className="font-bold text-slate-800 dark:text-slate-200 block">{l.reason}</span>
-                      <span className="text-slate-400">
-                        {l.startDate} to {l.endDate}
-                      </span>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            {/* Apply Leave Card */}
+            <div className="p-6 rounded-3xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm space-y-4">
+              <h3 className="text-base font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                <Calendar className="w-4 h-4 text-teal-600" /> Apply Doctor Leave
+              </h3>
+              <p className="text-xs text-slate-500">
+                Applying leave automatically performs a dry-run check to prevent silent orphan bookings and triggers automated 100% refunds.
+              </p>
+
+              <div className="space-y-3 text-xs">
+                <div>
+                  <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">Start Date</label>
+                  <input
+                    type="date"
+                    value={newLeaveStart}
+                    onChange={(e) => setNewLeaveStart(e.target.value)}
+                    className="w-full p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700"
+                  />
+                </div>
+                <div>
+                  <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">End Date</label>
+                  <input
+                    type="date"
+                    value={newLeaveEnd}
+                    onChange={(e) => setNewLeaveEnd(e.target.value)}
+                    className="w-full p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700"
+                  />
+                </div>
+                <div>
+                  <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">Reason</label>
+                  <input
+                    type="text"
+                    value={newLeaveReason}
+                    onChange={(e) => setNewLeaveReason(e.target.value)}
+                    placeholder="e.g. Medical Conference, Personal Leave"
+                    className="w-full p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700"
+                  />
+                </div>
+
+                {dryRunImpact !== null && (
+                  <div className="p-4 rounded-xl bg-amber-50 dark:bg-amber-950/60 border border-amber-200 dark:border-amber-900 text-xs text-amber-900 dark:text-amber-200 space-y-1">
+                    <div className="font-bold flex items-center gap-1.5">
+                      <AlertTriangle className="w-4 h-4 text-amber-600" /> Dry-Run Conflict Evaluation:
                     </div>
+                    <p>
+                      <span className="font-bold">{dryRunImpact} booked appointments</span> fall inside this date window. If confirmed, they will be automatically cancelled, 100% refunded, and patients notified.
+                    </p>
                   </div>
-                ))}
+                )}
+
+                <div className="flex gap-2 pt-2">
+                  <button
+                    type="button"
+                    onClick={handleDryRunLeave}
+                    disabled={previewMutation.isPending}
+                    className="flex-1 py-2.5 px-3 rounded-xl border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 font-semibold text-xs transition-colors disabled:opacity-50"
+                  >
+                    {previewMutation.isPending ? 'Checking...' : 'Dry-Run Impact Check'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleApplyLeave}
+                    disabled={applyLeaveMutation.isPending}
+                    className="flex-1 py-2.5 px-3 rounded-xl bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs shadow-sm transition-colors disabled:opacity-50"
+                  >
+                    {applyLeaveMutation.isPending ? 'Processing...' : 'Confirm & Cascade Leave'}
+                  </button>
+                </div>
               </div>
-            )}
+            </div>
+
+            {/* Profile & License Credentials Card */}
+            <form onSubmit={handleSaveProfile} className="p-6 rounded-3xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm space-y-4">
+              <div className="flex items-center justify-between">
+                <h3 className="text-base font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                  <Briefcase className="w-4 h-4 text-teal-600" /> License & Credentials
+                </h3>
+                <button
+                  type="submit"
+                  disabled={updateProfileMutation.isPending}
+                  className="px-3.5 py-1.5 rounded-xl bg-teal-600 hover:bg-teal-700 text-white font-bold text-xs shadow-xs transition-colors disabled:opacity-50"
+                >
+                  {updateProfileMutation.isPending ? 'Updating...' : 'Update Details'}
+                </button>
+              </div>
+
+              <div className="space-y-3 text-xs">
+                <div>
+                  <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">Medical License / Registration No.</label>
+                  <input
+                    type="text"
+                    required
+                    value={licenseInput}
+                    onChange={(e) => setLicenseInput(e.target.value)}
+                    placeholder="e.g. WBMC/88219"
+                    className="w-full p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700"
+                  />
+                </div>
+                <div>
+                  <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">Specialty</label>
+                  <input
+                    type="text"
+                    required
+                    value={specialtyInput}
+                    onChange={(e) => setSpecialtyInput(e.target.value)}
+                    className="w-full p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700"
+                  />
+                </div>
+                <div>
+                  <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">Qualifications / Degrees</label>
+                  <input
+                    type="text"
+                    value={qualificationsInput}
+                    onChange={(e) => setQualificationsInput(e.target.value)}
+                    placeholder="e.g. MBBS, MD (General Medicine)"
+                    className="w-full p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700"
+                  />
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">Experience (Years)</label>
+                    <input
+                      type="number"
+                      min={0}
+                      value={experienceInput}
+                      onChange={(e) => setExperienceInput(Number(e.target.value))}
+                      className="w-full p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700"
+                    />
+                  </div>
+                  <div>
+                    <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">Fee (INR)</label>
+                    <input
+                      type="number"
+                      min={100}
+                      step={50}
+                      value={feeRupeesInput}
+                      onChange={(e) => setFeeRupeesInput(Number(e.target.value))}
+                      className="w-full p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700"
+                    />
+                  </div>
+                </div>
+              </div>
+            </form>
           </div>
         </div>
       )}

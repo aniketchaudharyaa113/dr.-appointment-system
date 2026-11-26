@@ -2,6 +2,7 @@ import {
   Controller,
   Get,
   Post,
+  Put,
   Param,
   Query,
   Body,
@@ -25,6 +26,10 @@ import {
   DoctorSlotsQuerySchema,
   LeaveRangeSchema,
   UuidSchema,
+  UpdateDoctorAvailabilitySchema,
+  UpdateDoctorAvailabilityInput,
+  UpdateDoctorProfileSchema,
+  UpdateDoctorProfileInput,
 } from '@medibook/shared';
 
 @ApiTags('Scheduling')
@@ -62,6 +67,39 @@ export class DoctorController {
   @ApiOperation({ summary: 'Get doctor clinical workspace dashboard data' })
   async getMyDashboard(@CurrentUser() user: JwtPayload) {
     return this.doctorService.getDoctorDashboard(user.sub);
+  }
+
+  @Get('me/profile')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('DOCTOR')
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Get current doctor full onboarding and verification profile' })
+  async getMyProfile(@CurrentUser() user: JwtPayload) {
+    return this.doctorService.getDoctorProfile(user.sub);
+  }
+
+  @Put('me/profile')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('DOCTOR')
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Update current doctor professional profile and license info' })
+  async updateMyProfile(
+    @CurrentUser() user: JwtPayload,
+    @Body(new ZodValidationPipe(UpdateDoctorProfileSchema)) body: UpdateDoctorProfileInput,
+  ) {
+    return this.doctorService.updateDoctorProfile(user.sub, body);
+  }
+
+  @Put('me/availability')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('DOCTOR')
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Update doctor weekly recurring availability schedule' })
+  async updateMyAvailability(
+    @CurrentUser() user: JwtPayload,
+    @Body(new ZodValidationPipe(UpdateDoctorAvailabilitySchema)) body: UpdateDoctorAvailabilityInput,
+  ) {
+    return this.doctorService.updateDoctorAvailability(user.sub, body);
   }
 
   @Get(':id')
