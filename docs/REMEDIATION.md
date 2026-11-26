@@ -53,24 +53,30 @@ All fixes are committed atomically on `main` (baseline tag: `pre-agent-baseline`
 - [x] **P2-15** (`b179456`): Replace `any` in services (`tx: any`, `body: any`) with Prisma `TransactionClient` and Zod-inferred types
 
 ## Phase 4 — Frontend Bugs (`apps/web`)
-- [ ] **F-1**: Single-flight token refresh in `src/lib/api.ts` with request queue and 204 handling
-- [ ] **F-2**: Real logout calling `POST /auth/logout`, clearing TanStack Query cache, disconnecting sockets
-- [ ] **F-3**: `AuthProvider` + `useAuth()` keeping access token in memory with httpOnly bootstrap via `GET /auth/me`
-- [ ] **F-4**: Eliminate hydration mismatches across appointments, consultation, passport
-- [ ] **F-5**: Prevent open redirect in login page (`startsWith('/') && !startsWith('//')`)
-- [ ] **F-6**: Gate demo credentials behind `NEXT_PUBLIC_SHOW_DEMO_LOGINS=true`, remove dev jargon from copy
-- [ ] **F-7**: Truthful doctor page claims, policy-driven text, calendar date picker, slot legend
-- [ ] **F-8**: Consultation page improvements (LiveKit window countdown/retry, dynamic socket auth token callback, remove audio elements on disconnect, mic/cam permission error handling, 3s typing timeout, red phone confirmation)
-- [ ] **F-9**: Real Razorpay Checkout.js integration on checkout page
-- [ ] **F-10**: Emergency page: reverse-geocode, manual address + pin drag fallback on GPS denial, Call 112/108 primary action
-- [ ] **F-11**: Dark mode clean implementation with `next-themes` / script before paint
-- [ ] **F-12**: Mobile responsive drawer/bottom bar, role-based navigation links, route guards
-- [ ] **F-13**: Add Next.js App Router root & segment `error.tsx`, `loading.tsx`, `not-found.tsx`, `global-error.tsx`
-- [ ] **F-14**: Complete user-facing i18n translations or hide unlocalized languages
-- [ ] **F-15**: Clean up unused deps, replace `alert()` with sonner toast, slot refetching
+- [x] **F-1** (`65cb7bc`): Single-flight token refresh in `src/lib/api.ts` with request queue and 204 handling
+- [x] **F-2** (`2e68ee3`): Real logout calling `POST /auth/logout`, clearing TanStack Query cache, disconnecting sockets
+- [x] **F-3** (`2e68ee3`): `AuthProvider` + `useAuth()` keeping access token in memory with httpOnly bootstrap via `GET /auth/me`
+- [x] **F-4** (`db2473c`): Eliminate hydration mismatches across appointments, consultation, passport with ClientTime
+- [x] **F-5** (`94e6261`): Prevent open redirect in login page (`startsWith('/') && !startsWith('//')`)
+- [x] **F-6** (`94e6261`): Gate demo credentials behind `NEXT_PUBLIC_SHOW_DEMO_LOGINS=true`, remove dev jargon from copy
+- [x] **F-7** (`42fb723`): Truthful doctor page claims, policy-driven text, calendar date picker, slot legend
+- [x] **F-8** (`09f5dc1`): Consultation page improvements (LiveKit window countdown/retry, dynamic socket auth token callback, remove audio elements on disconnect, mic/cam permission error handling, 3s typing timeout, red phone confirmation)
+- [x] **F-9** (`a157cb3`): Real Razorpay Checkout.js integration on checkout page
+- [x] **F-10** (`410052b`): Emergency page: reverse-geocode, manual address + coordinate fallback on GPS denial, Call 112/108 primary action
+- [x] **F-11** (`cc550be`): Dark mode clean implementation with `next-themes` and zero hydration mismatch
+- [x] **F-12** (`b779b3f`): Mobile responsive navigation drawer, role-based navigation links, sticky checkout CTA
+- [x] **F-13** (`0505c55`): Add Next.js App Router root & segment `error.tsx`, `not-found.tsx`, `global-error.tsx`, and RoleGuard
+- [x] **F-14** (`e960b4b`): Complete user-facing i18n translations for English, Hindi, and Bengali
+- [x] **F-15** (`88a2c9e`): Replace browser alerts with toast notifications, slot refetching on hold
 
 ## Phase 5 — UI / UX Polish
-- [ ] Design system, forms & accessibility, flows, content & trust (Pending Phase 4 completion)
+- [ ] **UI-1**: Touch targets audit (minimum 44x44px for buttons, links, controls) & focus-visible rings
+- [ ] **UI-2**: WCAG AA contrast compliance in dark/light mode across status pills and emergency badges
+- [ ] **UI-3**: Telemedicine Practice Guidelines (2020) compliance disclaimers and verified badges across patient flows
+- [ ] **UI-4**: Form validation styling, aria-labels, and screen-reader accessible attributes across auth and booking
 
 ## Phase 6 — Infra, CI, Docs
-- [ ] **I-1** – **I-7**: (Pending Phase 5 completion)
+- [ ] **I-1**: Harden docker-compose.yml: strict environment secret validation, localhost-bound admin ports, healthchecks
+- [ ] **I-2**: Nginx configuration: secure proxy headers, rate limiting, and websocket upgrade support
+- [ ] **I-3**: CI workflow verification on `main` only (Testcontainers, Web checks, AI evals)
+- [ ] **I-4**: Documentation: Update README.md and PROGRESS.md with full remediation details and runbook
