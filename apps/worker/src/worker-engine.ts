@@ -566,7 +566,52 @@ export class WorkerEngine {
       },
     });
 
-    return { released };
+    // Mark CONFIRMED appointments past slotTime + 30m without live/ended session as NO_SHOW
+    const noShowCutoff = new Date(Date.now() - 30 * 60 * 1000);
+    const noShowCandidates = await this.prisma.appointment.findMany({
+      where: {
+        status: 'CONFIRMED',
+        slotTime: { lt: noShowCutoff },
+        OR: [
+          { consultation: null },
+          { consultation: { status: { in: ['SCHEDULED', 'WAITING'] } } },
+        ],
+      },
+      select: { id: true, doctorId: true, patientId: true, slotTime: true },
+    });
+
+    let count = 0;
+    for (const appt of noShowCandidates) {
+      await this.prisma.$transaction(async (tx) => {
+        const locked = await tx.appointment.findUnique({
+          where: { id: appt.id },
+          select: { status: true },
+        });
+        if (locked?.status !== 'CONFIRMED') return;
+
+        await tx.appointment.update({
+          where: { id: appt.id },
+          data: { status: 'NO_SHOW' },
+        });
+
+        await tx.outboxEvent.create({
+          data: {
+            aggregateType: 'APPOINTMENT',
+            aggregateId: appt.id,
+            eventType: 'APPOINTMENT_NO_SHOW',
+            payload: {
+              appointmentId: appt.id,
+              patientId: appt.patientId,
+              doctorId: appt.doctorId,
+              slotTime: appt.slotTime.toISOString(),
+            },
+          },
+        });
+        count++;
+      });
+    }
+
+    return { released, noShowCount: count };
   }
 
   async scheduleExpiryCheck() {

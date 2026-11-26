@@ -253,6 +253,21 @@ export default function ConsultationRoomPage() {
     },
   });
 
+  const updateStatusMutation = useMutation({
+    mutationFn: (status: 'WAITING' | 'LIVE' | 'ENDED') =>
+      fetchApi(`/consultations/${appointmentId}/session-status`, {
+        method: 'POST',
+        body: JSON.stringify({ status }),
+      }),
+    onSuccess: (_, status) => {
+      queryClient.invalidateQueries({ queryKey: ['appointment', appointmentId] });
+      if (status === 'ENDED') {
+        roomRef.current?.disconnect();
+        setActiveTab('prescription');
+      }
+    },
+  });
+
   const handleSendMessage = async (e: React.FormEvent) => {
     e.preventDefault();
     const content = inputMsg.trim();
@@ -529,7 +544,31 @@ export default function ConsultationRoomPage() {
               )}
             </div>
 
-            <div className="z-10 flex items-center justify-center gap-3 bg-slate-950/80 backdrop-blur-md max-w-md mx-auto py-2.5 px-6 rounded-2xl border border-slate-800">
+            <div className="z-10 flex flex-wrap items-center justify-center gap-3 bg-slate-950/80 backdrop-blur-md max-w-lg mx-auto py-2.5 px-6 rounded-2xl border border-slate-800">
+              {isDoctor && appt?.status === 'CONFIRMED' && (
+                <button
+                  type="button"
+                  disabled={updateStatusMutation.isPending}
+                  onClick={() => updateStatusMutation.mutate('LIVE')}
+                  className="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold transition shadow-xs disabled:opacity-50"
+                >
+                  Start Consultation
+                </button>
+              )}
+              {isDoctor && (appt?.status === 'IN_PROGRESS' || appt?.consultation?.status === 'LIVE') && (
+                <button
+                  type="button"
+                  disabled={updateStatusMutation.isPending}
+                  onClick={() => {
+                    if (window.confirm('Are you sure you want to end and complete this consultation?')) {
+                      updateStatusMutation.mutate('ENDED');
+                    }
+                  }}
+                  className="px-3 py-1.5 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold transition shadow-xs disabled:opacity-50"
+                >
+                  End &amp; Complete
+                </button>
+              )}
               <button
                 type="button"
                 onClick={() => {
@@ -538,6 +577,7 @@ export default function ConsultationRoomPage() {
                   roomRef.current?.localParticipant.setMicrophoneEnabled(next).catch(() => {});
                 }}
                 className={`p-3 rounded-full ${isMicOn ? 'bg-slate-800 text-white' : 'bg-rose-600 text-white'}`}
+                title={isMicOn ? 'Mute Microphone' : 'Unmute Microphone'}
               >
                 {isMicOn ? <Mic className="w-5 h-5" /> : <MicOff className="w-5 h-5" />}
               </button>
@@ -549,16 +589,26 @@ export default function ConsultationRoomPage() {
                   roomRef.current?.localParticipant.setCameraEnabled(next).catch(() => {});
                 }}
                 className={`p-3 rounded-full ${isCameraOn ? 'bg-slate-800 text-white' : 'bg-rose-600 text-white'}`}
+                title={isCameraOn ? 'Turn Off Camera' : 'Turn On Camera'}
               >
                 {isCameraOn ? <Video className="w-5 h-5" /> : <VideoOff className="w-5 h-5" />}
               </button>
               <button
                 type="button"
                 onClick={() => {
-                  roomRef.current?.disconnect();
-                  setActiveTab('prescription');
+                  if (isDoctor) {
+                    if (window.confirm('End and complete consultation session?')) {
+                      updateStatusMutation.mutate('ENDED');
+                    }
+                  } else {
+                    if (window.confirm('Leave consultation room?')) {
+                      roomRef.current?.disconnect();
+                      setActiveTab('prescription');
+                    }
+                  }
                 }}
                 className="p-3 rounded-full bg-rose-600 hover:bg-rose-700 text-white"
+                title={isDoctor ? 'End & Complete Consultation' : 'Leave Consultation'}
               >
                 <PhoneOff className="w-5 h-5" />
               </button>

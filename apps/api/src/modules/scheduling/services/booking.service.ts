@@ -13,6 +13,7 @@ import { SlotService } from './slot.service';
 import { AuditService } from '../../platform/audit/audit.service';
 import { RealtimeService } from '../../platform/realtime/realtime.service';
 import { RefundPolicyService } from '../../payments/services/refund-policy.service';
+import { assertAppointmentTransition } from '../appointment-state';
 import { ConsultationMode } from '@medibook/shared';
 import { getIstDateCompact, getIstDateString } from '../../../common/utils/ist-time';
 
@@ -598,5 +599,62 @@ export class BookingService {
       prescription: a.prescription,
       consultation: a.consultation,
     };
+  }
+
+  /**
+   * Periodic job: marks CONFIRMED appointments without an active/ended session
+   * past slotTime + 30 minutes as NO_SHOW.
+   */
+  async markNoShowAppointments(now: Date = new Date()): Promise<number> {
+    const cutoff = new Date(now.getTime() - 30 * 60 * 1000);
+    const candidateRows = await this.prisma.appointment.findMany({
+      where: {
+        status: 'CONFIRMED',
+        slotTime: { lt: cutoff },
+        OR: [
+          { consultation: null },
+          { consultation: { status: { in: ['SCHEDULED', 'WAITING'] } } },
+        ],
+      },
+      select: {
+        id: true,
+        patientId: true,
+        doctorId: true,
+        slotTime: true,
+      },
+    });
+
+    let count = 0;
+    for (const appt of candidateRows) {
+      await this.prisma.$transaction(async (tx) => {
+        const locked = await tx.appointment.findUnique({
+          where: { id: appt.id },
+          select: { status: true },
+        });
+        if (locked?.status !== 'CONFIRMED') return;
+
+        assertAppointmentTransition('CONFIRMED', 'NO_SHOW');
+        await tx.appointment.update({
+          where: { id: appt.id },
+          data: { status: 'NO_SHOW' },
+        });
+
+        await tx.outboxEvent.create({
+          data: {
+            aggregateType: 'APPOINTMENT',
+            aggregateId: appt.id,
+            eventType: 'APPOINTMENT_NO_SHOW',
+            payload: {
+              appointmentId: appt.id,
+              patientId: appt.patientId,
+              doctorId: appt.doctorId,
+              slotTime: appt.slotTime.toISOString(),
+            },
+          },
+        });
+        count++;
+      });
+    }
+    return count;
   }
 }

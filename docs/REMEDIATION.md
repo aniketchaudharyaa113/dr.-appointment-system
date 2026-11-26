@@ -19,7 +19,21 @@ All fixes are committed atomically on `main` (baseline tag: `pre-agent-baseline`
 - [x] **P0-14** (`c886fa8`): Public data leak fixes (`GET /ambulance/drivers/online` auth, explicit Doctor public DTO + 404 unverified, strip ledger for non-admin, generic 500 in prod, protect Swagger, Helmet CSP)
 
 ## Phase 2 — P1: Broken or Missing Core Flows
-- [ ] **P1-1** – **P1-15**: (Pending Phase 1 completion)
+- [x] **P1-1** (`PENDING_COMMIT`): State machine in `appointment-state.ts` (LIVE -> IN_PROGRESS, ENDED -> COMPLETED, NO_SHOW sweep for expired confirmed appts + outbox events); consultation room UI controls for doctor start/end and red phone action
+- [x] **P1-2** (`PENDING_COMMIT`): Safe session status endpoint with upsert, transition validation, doctor-only restriction for LIVE/ENDED, and CONFIRMED/IN_PROGRESS requirement
+- [ ] **P1-3**: Chat, uploads, vitals guard (7-day window from `endedAt`, Zod socket schema & length cap, REST POST emit to socket room, align room auth)
+- [ ] **P1-4**: Wire `WaitlistService.offerCancelledSlotToNext` into cancel/expiry/leave/refund via outbox, atomic claim w/ `updateMany`, leave-waitlist endpoint, offer expiration worker job
+- [ ] **P1-5**: Review model endpoint `POST /appointments/:id/review`, aggregate/denormalized rating calculation, doctor reviews UI
+- [ ] **P1-6**: `PATCH /lab-orders/:id` for ordering doctor with Zod schema, surface results in Health Passport
+- [ ] **P1-7**: Filter past slots in `holdSlot` & `bookAppointment` with minimum lead time and max advance
+- [ ] **P1-8**: Slot-hold hoarding prevention: `DELETE /appointments/hold` (release token), one active hold per patient in Redis, PATIENT-role restriction
+- [ ] **P1-9**: Doctor search SQL pagination, Haversine distance & rating filtering, AND condition for symptom+specialty, batch Redis slot checks
+- [ ] **P1-10**: Doctor notifications on booking/cancel/refund, HTML email escaping, notification dedup, navbar notifications bell/inbox UI
+- [ ] **P1-11**: Wire Admin and Doctor dashboards to real endpoints (pending doctors, verification, reconcile, real ledger, real audit, real earnings)
+- [ ] **P1-12**: Doctor registration & onboarding UI flow with license upload, pending verification status, schedule availability editor
+- [ ] **P1-13**: Consultation mode selector (`IN_CLINIC | VIDEO | CHAT`) in UI, mint LiveKit tokens for `VIDEO` only
+- [ ] **P1-14**: Concurrency lock (`FOR UPDATE`) on prescription create/update, patient notification on prescription issue, multi-medicine form
+- [ ] **P1-15**: Cursor pagination & status/date filters on appointment lists (`getMyAppointments`)
 
 ## Phase 3 — P2: Backend Quality / Performance
 - [ ] **P2-1** – **P2-15**: (Pending Phase 2 completion)

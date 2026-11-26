@@ -7,7 +7,14 @@ import {
 } from '@nestjs/common';
 import { AccessToken } from 'livekit-server-sdk';
 import { PrismaService } from '../../platform/database/prisma.service';
+import { RealtimeService } from '../../platform/realtime/realtime.service';
 import { env } from '../../../common/config/env.schema';
+import {
+  assertSessionTransition,
+  assertAppointmentTransition,
+  SessionStatus,
+  AppointmentStatus,
+} from '../../scheduling/appointment-state';
 
 export interface VideoTokenResult {
   token: string;
@@ -20,7 +27,10 @@ export interface VideoTokenResult {
 
 @Injectable()
 export class LiveKitService {
-  constructor(@Inject(PrismaService) private readonly prisma: PrismaService) {}
+  constructor(
+    @Inject(PrismaService) private readonly prisma: PrismaService,
+    @Inject(RealtimeService) private readonly realtime: RealtimeService,
+  ) {}
 
   /**
    * Mints short-lived LiveKit join token.
@@ -180,19 +190,114 @@ export class LiveKitService {
       throw new ForbiddenException('Not authorized for this consultation session');
     }
 
-    if (!isDoctor && newStatus === 'LIVE') {
-      throw new ForbiddenException(
-        'Only the doctor can transition consultation to LIVE',
+    if (
+      appointment.status !== 'CONFIRMED' &&
+      appointment.status !== 'IN_PROGRESS'
+    ) {
+      throw new BadRequestException(
+        `Cannot update consultation session for appointment in state ${appointment.status}`,
       );
     }
 
-    return this.prisma.consultationSession.update({
-      where: { appointmentId },
-      data: {
-        status: newStatus,
-        startedAt: newStatus === 'LIVE' ? new Date() : undefined,
-        endedAt: newStatus === 'ENDED' ? new Date() : undefined,
-      },
+    if (!isDoctor && (newStatus === 'LIVE' || newStatus === 'ENDED')) {
+      throw new ForbiddenException(
+        `Only the doctor can transition consultation to ${newStatus}`,
+      );
+    }
+
+    if (appointment.consultation) {
+      assertSessionTransition(
+        appointment.consultation.status as SessionStatus,
+        newStatus,
+      );
+    }
+
+    return this.prisma.$transaction(async (tx) => {
+      const roomName = `consult-${appointment.id}`;
+      const session = await tx.consultationSession.upsert({
+        where: { appointmentId },
+        create: {
+          appointmentId,
+          roomName,
+          status: newStatus,
+          startedAt: newStatus === 'LIVE' ? new Date() : undefined,
+          endedAt: newStatus === 'ENDED' ? new Date() : undefined,
+        },
+        update: {
+          status: newStatus,
+          startedAt:
+            newStatus === 'LIVE'
+              ? appointment.consultation?.startedAt || new Date()
+              : undefined,
+          endedAt: newStatus === 'ENDED' ? new Date() : undefined,
+        },
+      });
+
+      if (newStatus === 'LIVE' && appointment.status === 'CONFIRMED') {
+        assertAppointmentTransition('CONFIRMED', 'IN_PROGRESS');
+        await tx.appointment.update({
+          where: { id: appointment.id },
+          data: { status: 'IN_PROGRESS' },
+        });
+        await tx.outboxEvent.create({
+          data: {
+            aggregateType: 'APPOINTMENT',
+            aggregateId: appointment.id,
+            eventType: 'APPOINTMENT_IN_PROGRESS',
+            payload: {
+              appointmentId: appointment.id,
+              patientId: appointment.patientId,
+              doctorId: appointment.doctorId,
+              startedAt: new Date().toISOString(),
+            },
+          },
+        });
+      } else if (
+        newStatus === 'ENDED' &&
+        (appointment.status === 'IN_PROGRESS' || appointment.status === 'CONFIRMED')
+      ) {
+        assertAppointmentTransition(
+          appointment.status as AppointmentStatus,
+          'COMPLETED',
+        );
+        await tx.appointment.update({
+          where: { id: appointment.id },
+          data: { status: 'COMPLETED' },
+        });
+        await tx.outboxEvent.create({
+          data: {
+            aggregateType: 'APPOINTMENT',
+            aggregateId: appointment.id,
+            eventType: 'APPOINTMENT_COMPLETED',
+            payload: {
+              appointmentId: appointment.id,
+              patientId: appointment.patientId,
+              doctorId: appointment.doctorId,
+              endedAt: new Date().toISOString(),
+            },
+          },
+        });
+      }
+
+      this.realtime.emitToConsultationRoom(
+        appointment.id,
+        'session_status_changed',
+        {
+          appointmentId: appointment.id,
+          sessionStatus: newStatus,
+        },
+      );
+      this.realtime.emitToUser(appointment.patientId, 'booking_updated', {
+        appointmentId: appointment.id,
+        status:
+          newStatus === 'LIVE'
+            ? 'IN_PROGRESS'
+            : newStatus === 'ENDED'
+            ? 'COMPLETED'
+            : appointment.status,
+      });
+
+      return session;
     });
   }
 }
