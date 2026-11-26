@@ -39,6 +39,13 @@ body {
   outline-offset: 3px;
 }
 
+/* Touch targets WCAG AA compliance (minimum 44x44px for primary controls on touch devices) */
+@media (pointer: coarse) {
+  :where(button, a, input, select, textarea):not(.no-touch-target) {
+    min-height: 44px;
+  }
+}
+
 @media (prefers-reduced-motion: no-preference) {
   :where(button, a) {
     transition: box-shadow 150ms ease-out, scale 150ms ease-out, background-color 150ms ease-out, border-color 150ms ease-out;
