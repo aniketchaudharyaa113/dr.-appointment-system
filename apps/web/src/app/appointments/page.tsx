@@ -15,7 +15,9 @@ import {
   Calendar,
   Star,
 } from 'lucide-react';
-import { fetchApi, formatIstDateTime, getCurrentUser } from '@/lib/api';
+import { fetchApi } from '@/lib/api';
+import { useAuth } from '@/lib/auth-context';
+import { ClientTime } from '@/components/client-time';
 import { formatPaise } from '@/lib/utils';
 
 interface AppointmentItem {
@@ -56,7 +58,7 @@ export default function MyAppointmentsPage() {
   const [reviewComment, setReviewComment] = useState<string>('');
   const [actionMsg, setActionMsg] = useState<string | null>(null);
 
-  const user = typeof window !== 'undefined' ? getCurrentUser() : null;
+  const { user } = useAuth();
 
   const { data: appointmentData, isLoading, isError, error } = useQuery<{
     items: AppointmentItem[];
@@ -77,7 +79,7 @@ export default function MyAppointmentsPage() {
       }
       return res;
     },
-    enabled: !!user?.token,
+    enabled: Boolean(user),
   });
 
   const appointments = appointmentData?.items || [];
@@ -131,7 +133,7 @@ export default function MyAppointmentsPage() {
     ['COMPLETED', 'CANCELLED', 'REFUNDED', 'NO_SHOW'].includes(a.status),
   );
 
-  if (!user?.token) {
+  if (!user) {
     return (
       <div className="max-w-3xl mx-auto px-4 py-16 text-center space-y-4">
         <Calendar className="w-10 h-10 text-teal-600 mx-auto" />
@@ -320,7 +322,7 @@ export default function MyAppointmentsPage() {
                 <p className="text-xs font-semibold text-teal-600 dark:text-teal-400">{apt.specialty}</p>
                 <div className="flex flex-wrap items-center gap-4 text-xs text-slate-500 dark:text-slate-400">
                   <span className="flex items-center gap-1">
-                    <Clock className="w-3.5 h-3.5" /> {formatIstDateTime(apt.slotTime)} (IST)
+                    <Clock className="w-3.5 h-3.5" /> <ClientTime datetime={apt.slotTime} suffix=" (IST)" />
                   </span>
                   <span className="flex items-center gap-1">
                     {apt.consultationMode === 'VIDEO' ? (

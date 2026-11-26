@@ -12,7 +12,9 @@ import {
   AlertCircle,
   Activity,
 } from 'lucide-react';
-import { fetchApi, formatIstTime, getCurrentUser } from '@/lib/api';
+import { fetchApi } from '@/lib/api';
+import { useAuth } from '@/lib/auth-context';
+import { ClientTime } from '@/components/client-time';
 
 interface HealthPassportResponse {
   patient: { id: string; name: string; email: string; phone?: string | null } | null;
@@ -51,15 +53,23 @@ interface HealthPassportResponse {
 }
 
 export default function HealthPassportPage() {
-  const currentUser = typeof window !== 'undefined' ? getCurrentUser() : null;
+  const { user: currentUser, isLoading: isAuthLoading } = useAuth();
 
   const passportQuery = useQuery({
-    queryKey: ['patient-health-passport'],
-    enabled: Boolean(currentUser?.token),
+    queryKey: ['patient-health-passport', currentUser?.id],
+    enabled: Boolean(currentUser),
     queryFn: () => fetchApi<HealthPassportResponse>('/patients/health-passport'),
   });
 
-  if (!currentUser?.token) {
+  if (isAuthLoading) {
+    return (
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-16 text-center text-sm text-slate-500">
+        Loading Health Passport...
+      </div>
+    );
+  }
+
+  if (!currentUser) {
     return (
       <div className="max-w-2xl mx-auto px-4 py-16 text-center space-y-4">
         <AlertCircle className="w-10 h-10 text-teal-600 mx-auto" />
@@ -125,7 +135,7 @@ export default function HealthPassportPage() {
               </h2>
               {data?.latestVitals && (
                 <span className="text-xs text-slate-500">
-                  Recorded {formatIstTime(data.latestVitals.recordedAt)}
+                  Recorded <ClientTime datetime={data.latestVitals.recordedAt} mode="time" />
                 </span>
               )}
             </div>
@@ -216,7 +226,7 @@ export default function HealthPassportPage() {
                           )}
                           {o.completedAt && (
                             <span className="text-[10px] text-slate-400 block">
-                              Completed {formatIstTime(o.completedAt)}
+                              Completed <ClientTime datetime={o.completedAt} mode="time" />
                             </span>
                           )}
                         </div>

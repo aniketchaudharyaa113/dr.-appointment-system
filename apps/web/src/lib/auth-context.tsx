@@ -20,6 +20,7 @@ export interface AuthUser {
   role: 'PATIENT' | 'DOCTOR' | 'ADMIN' | 'DRIVER';
   doctorProfile?: any;
   driverProfile?: any;
+  token?: string;
 }
 
 export interface AuthContextValue {
@@ -41,15 +42,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const fetchUserProfile = useCallback(async (): Promise<AuthUser | null> => {
     try {
       const profile = await fetchApi<AuthUser>('/auth/me');
-      setUser(profile);
+      const token = getAuthToken() || undefined;
+      const fullProfile = { ...profile, token };
+      setUser(fullProfile);
       setCurrentUser({
         id: profile.id,
         name: profile.name,
         email: profile.email,
         role: profile.role,
-        token: getAuthToken() || undefined,
+        token,
       });
-      return profile;
+      return fullProfile;
     } catch {
       setUser(null);
       setCurrentUser(null);

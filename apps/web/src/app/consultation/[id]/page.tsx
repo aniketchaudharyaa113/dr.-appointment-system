@@ -24,7 +24,9 @@ import {
   Plus,
   Trash2,
 } from 'lucide-react';
-import { fetchApi, formatIstTime, getAuthToken, getCurrentUser } from '@/lib/api';
+import { fetchApi, getAuthToken } from '@/lib/api';
+import { useAuth } from '@/lib/auth-context';
+import { ClientTime } from '@/components/client-time';
 import { VitalsLabsPanel } from '@/components/clinical/vitals-labs-panel';
 
 interface ChatMessage {
@@ -66,7 +68,7 @@ export default function ConsultationRoomPage() {
   const appointmentId = params?.id as string;
   const initialTab = searchParams.get('tab') || 'video';
 
-  const currentUser = typeof window !== 'undefined' ? getCurrentUser() : null;
+  const { user: currentUser } = useAuth();
   const isDoctor = currentUser?.role === 'DOCTOR';
 
   const [hasConsented, setHasConsented] = useState(false);
@@ -721,7 +723,7 @@ export default function ConsultationRoomPage() {
                       )}
                     </div>
                     <div className="flex items-center gap-1 text-[10px] text-slate-400 mt-1 px-1">
-                      <span>{formatIstTime(m.createdAt)}</span>
+                      <span><ClientTime datetime={m.createdAt} mode="time" /></span>
                       {isMine && <CheckCheck className="w-3 h-3 text-teal-600" />}
                     </div>
                   </div>
