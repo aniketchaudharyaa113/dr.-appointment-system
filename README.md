@@ -1,335 +1,286 @@
-# MediBook — Enterprise Doctor Appointment & Clinic Management Platform
+# MediBook — Enterprise Telehealth & Emergency EMS Platform
 
-A distributed, production-ready web platform for booking doctor appointments and managing clinic workflows. Patients discover and book verified doctors (with an intelligent symptom matcher and live slot locking), doctors manage clinics, schedules, blackout dates, and digital prescriptions, and administrators oversee credentials, appointments, and audit trails.
+A distributed, production-grade telehealth and emergency medical response platform built as a high-throughput TypeScript monorepo alongside an honest Python AI clinical service. 
 
-Engineered with comprehensive **System Design (HLD & LLD)**, **Zero Double-Booking Guarantees**, **Transactional Outbox Messaging**, **BullMQ Workers**, **Redis Cache Hardening & Mutex Locks**, **Horizontal Scaling across API Replicas**, and **Full Observability (Prometheus & Grafana)**.
+MediBook pairs board-certified specialist doctor consultations (real-time slot locking, double-entry payment ledger, WebRTC video, and immutable digital prescriptions) with priority Emergency Medical Services (EMS) ambulance dispatch (Redis GEO driver matching, 20-second timeout cascade, and live Leaflet GPS tracking).
+
+Engineered with **NestJS + Fastify**, **Next.js 15 App Router**, **Prisma ORM**, **PostgreSQL (pgvector)**, **Redis 7**, **BullMQ Transactional Outbox**, **Nginx Load Balancing**, **LiveKit WebRTC**, and **Playwright E2E**.
 
 ---
 
 ## Table of Contents
 
-- [Features](#features)
+- [Key Features](#key-features)
 - [System Architecture](#system-architecture)
+- [Monorepo Workspace Map](#monorepo-workspace-map)
 - [Tech Stack](#tech-stack)
-- [Project Structure](#project-structure)
 - [Quick Start with Docker Compose](#quick-start-with-docker-compose)
-- [Running Observability (Prometheus & Grafana)](#running-observability-prometheus--grafana)
-- [Manual Local Setup](#manual-local-setup)
-- [API Overview](#api-overview)
-- [Core Invariants & Design Guarantees](#core-invariants--design-guarantees)
-- [Testing & Quality Assurance](#testing--quality-assurance)
+- [Local Development Setup](#local-development-setup)
+- [Core Invariants & Engineering Guarantees](#core-invariants--engineering-guarantees)
+- [AI Clinical Service & Evals](#ai-clinical-service--evals)
+- [Quality Assurance & Test Verification](#quality-assurance--test-verification)
+- [Security & Compliance](#security--compliance)
 
 ---
 
-## Features
+## Key Features
 
-### 🧑‍⚕️ Patient
-- **Symptom-Based Search**: Natural language & trigram similarity (`pg_trgm`) matching plain-language symptoms to specialist doctors with score rankings.
-- **Next Available Slot Badge**: Real-time display of each doctor's earliest bookable slot, cached with version-stamped keys.
-- **5-Minute Slot Hold with Live Countdown**: Locks a slot for 5 minutes (`POST /appointments/hold`) while filling details, preventing cart-jacking and broadcasting real-time hold states to other users.
-- **Idempotency Protection**: Client-provided `Idempotency-Key` headers guarantee no accidental duplicate bookings or charges.
-- **Automated Waitlist**: When all slots are full, patients can join a FIFO waitlist. If an appointment is cancelled, a 10-minute claim window with an automatic hold is granted to the next patient in line.
-- **Atomic Reschedule**: Atomically cancel and rebook appointments (`PATCH /appointments/:id/reschedule`) in a single database transaction.
-- **Digital Prescriptions**: View complete prescription history with full version tracking (`prescription_versions`) for auditability.
-- **Verified Reviews**: One review per completed appointment verified by foreign key constraint (`appointment_id UNIQUE`).
+### 🧑‍⚕️ Telehealth & Patient Care
+- **Intelligent Doctor Discovery**: Search verified physicians by specialty, symptoms, consultation mode (`VIDEO`, `IN_CLINIC`), fee, and patient ratings.
+- **10-Minute Redis Slot Hold**: Race-safe, unguessable 48-hex-char hold token (`hold:{doctor}:{slot}`) with live visual countdown timer preventing double-booking and cart-jacking.
+- **Double-Entry Financial Ledger**: Zero-sum double-entry ledger tracking `ESCROW`, `DOCTOR_PAYABLE`, and `PLATFORM_REVENUE` accounts with atomic provider webhooks and 100%/50% refund policies.
+- **Razorpay Checkout & Webhooks**: Production-grade payment gateway integration with raw-body HMAC-SHA256 verification and replay attack deduplication.
+- **HD WebRTC Video Consultations**: LiveKit-powered consultations with pre-slot 10-minute countdown windows, patient informed consent (India Telemedicine Guidelines 2020), and persistent socket chat.
+- **Immutable Digital Prescriptions**: Versioned clinical prescriptions (`prescription_versions`) with PDF export and audit logging.
+- **Health Passport**: Chronological clinical history of vitals, lab orders, prescriptions, and past doctor encounters.
 
-### 🩺 Doctor
-- **Day-View Schedule**: View hourly appointments with patient details and quick status actions.
-- **Mark No-Show**: Mark absent patients as `NO_SHOW` to free clinic resources and update audit histories.
-- **Revenue Analytics**: Aggregated weekly and monthly earnings dashboard computed directly from completed consultations.
-- **Schedule Reduction with Cascade Cancellation**: Reducing hours or taking emergency leaves safely identifies affected confirmed bookings, dry-runs impact via `?dryRun=true`, and cascades cancellations with patient notifications in a single transaction.
-- **Digital Rx Generator**: Issue digital prescriptions restricted to `COMPLETED` visits, storing version snapshots on every edit.
+### 🚑 Priority Emergency Medical Service (EMS)
+- **One-Tap SOS Dispatch**: Instant ambulance dispatch with automatic reverse geocoding and manual coordinate fallback.
+- **Redis GEO Proximity Matching**: Dispatches trip offers to the nearest active ambulance within 15 km in Kolkata.
+- **20-Second Cascade Timeout**: If the primary driver does not accept within 20 seconds, the dispatch automatically cascades to the next nearest driver without duplicate alerts.
+- **Live Interactive Leaflet Tracking**: Real-time vehicle location streaming over WebSockets, trauma center markers, and dynamic ETA calculation.
+- **Driver Simulator**: Built-in script simulating driver heartbeats, acceptances, and trip progressions (`ACCEPTED -> EN_ROUTE -> ARRIVED -> COMPLETED`).
 
-### 🛡️ Admin
-- **Doctor Verification & Credentials Review**: Verify medical licenses with real-time approved/rejected notifications.
-- **Platform Analytics**: Total bookings, verified doctors, patient volume, and cancellation metrics cached via versioned Redis keys.
-- **Queue Dashboard (Bull-Board)**: Web-based queue management interface mounted at `/admin/queues` for monitoring job states, retries, and dead-letter queues.
-- **Prescription Read Auditing**: Real-time audit log tracking every user who views or downloads a patient prescription.
+### 🤖 AI Clinical Copilot & Triage
+- **Hybrid RAG (Dense + Sparse)**: Combines 384-dimensional `SentenceTransformer('all-MiniLM-L6-v2')` embeddings with PostgreSQL `tsvector` full-text search via Reciprocal Rank Fusion (RRF), yielding grounded citations and out-of-domain abstention.
+- **Triage ML Classifier**: Trained `LogisticRegression` model on clinical emergency/urgent/routine symptoms achieving 100% held-out emergency recall, backed by a hardcoded 112/108 safety net.
+- **Conversational Booking Agent**: Autonomous clinical assistant querying real doctor availability and executing slot holds using authenticated patient JWTs.
+
+### 🩺 Doctor Workspace & Administration
+- **Clinical Dashboard**: Real-time patient queue, day-view schedule, earnings analytics, and verified patient reviews.
+- **Cascade Leave Cancellation**: Emergency leave scheduler featuring a dry-run impact preview (`?dryRun=true`), automatic appointment cancellation, and 100% patient refunds.
+- **Admin Operations**: Medical license verification, stuck payment reconciliation, and HIPAA-style prescription read audit trails.
 
 ---
 
 ## System Architecture
 
-> For in-depth architectural specifications, sequence diagrams, and capacity estimations, see [`docs/SYSTEM_DESIGN.md`](docs/SYSTEM_DESIGN.md).
+```
+                               ┌────────────────────────────────────────────────────────┐
+                               │       Next.js 15 Web Application (React 19)            │
+                               │  - Doctor Discovery, Slot Holds, Razorpay Checkout     │
+                               │  - LiveKit WebRTC Video, Socket.IO Chat & Leaflet Maps  │
+                               └───────────────────────────┬────────────────────────────┘
+                                                           │ HTTP / HTTPS & WebSockets
+                                                           ▼
+                     ┌──────────────────────────────────────────────────────────────────┐
+                     │                     NGINX REVERSE PROXY                          │
+                     │  - Rate Limiting (30r/s API, 5r/s Auth)                          │
+                     │  - Anti-Spoofing: Strict X-Forwarded-For $remote_addr             │
+                     │  - Load Balancer: Least-Conn (api-1, api-2)                      │
+                     │  - WebSocket IP-Hash Affinity (/socket.io/)                      │
+                     │  - Security: CSP, HSTS, X-Frame, /metrics blocked from public    │
+                     └───────────────────┬──────────────────────────────┬───────────────┘
+                                         │                              │
+                                         ▼                              ▼
+                       ┌───────────────────────────────────┐  ┌─────────────────────────┐
+                       │   NestJS / Fastify API Node 1     │  │ NestJS / Fastify Node 2 │
+                       │           (Port 4000)             │  │       (Port 4000)       │
+                       └─────────────────┬─────────────────┘  └────────────┬────────────┘
+                                         │                                 │
+           ┌─────────────────────────────┼─────────────────────────────────┼─────────────────────────────┐
+           │                             │                                 │                             │
+           ▼                             ▼                                 ▼                             ▼
+┌──────────────────────┐      ┌────────────────────────┐      ┌────────────────────────┐      ┌──────────────────────┐
+│  POSTGRESQL 16 ACID  │      │     REDIS 7 CLUSTER    │      │  TRANSACTIONAL OUTBOX  │      │   FASTAPI AI AGENT   │
+│ - pgvector (384-d)   │      │ - Slot Hold Mutex (10m)│      │  BullMQ Worker Relay   │      │ - Hybrid Dense/Sparse│
+│ - Row-level Locks    │      │ - GEO Driver Matching  │      │  (FOR UPDATE SKIP LOCK)│      │ - Triage Classifier  │
+│ - Double-Entry Ledger│      │ - Socket.IO Pub/Sub    │      │ - Mailpit Emailer      │      │ - JWT Booking Agent  │
+│ - Partial Uniq Index │      │ - 24h Idempotency Keys │      │ - Delayed Reminders    │      │ - Ollama / Mock LLM  │
+│ - Prescription Vers  │      │ - Auth Token Cache     │      │ - Poison Job DLQ       │      └──────────────────────┘
+└──────────────────────┘      └────────────────────────┘      └────────────────────────┘
+```
+
+---
+
+## Monorepo Workspace Map
 
 ```
-                               ┌─────────────────────────┐
-                               │   Patients & Doctors    │
-                               │     (Web Clients)       │
-                               └────────────┬────────────┘
-                                            │ HTTP/S & WebSockets
-                                            ▼
-                    ┌──────────────────────────────────────────────┐
-                    │               NGINX REVERSE PROXY            │
-                    │  - Rate Limiting (20r/s API, 5r/s Auth)      │
-                    │  - Strict Location Precedence (^~ /api/auth/)│
-                    │  - Security Headers (CSP, HSTS, X-Frame)     │
-                    │  - WebSocket Upgrade & Connection Pooling    │
-                    │  - Upstream Load Balancing (ip_hash)         │
-                    └───────┬──────────────────────────────┬───────┘
-                            │                              │
-        Static Assets (/)   │                              │ /api/ & /socket.io/
-                            ▼                              ▼
-                 ┌────────────────────┐      ┌─────────────────────────────┐
-                 │ Multi-Stage SPA    │      │ Upstream: backend_cluster   │
-                 │ Frontend (Vite)    │      │ ├── Backend Replica 1 (5000)│
-                 │ (Nginx static)     │      │ └── Backend Replica 2 (5000)│
-                 └────────────────────┘      └──────────────┬──────────────┘
-                                                            │
-                 ┌──────────────────────────────────────────┼──────────────────────────────────────────┐
-                 │                                          │                                          │
-                 ▼                                          ▼                                          ▼
-    ┌─────────────────────────┐                ┌─────────────────────────┐                ┌─────────────────────────┐
-    │      REDIS 7 TIER       │                │    TRANSACTIONAL OUTBOX │                │  POSTGRESQL 16 (ACID)   │
-    │  - Versioned Caching    │                │    RELAY (SKIP LOCKED)  │                │  - Users / Doctors      │
-    │  - Slot Hold Locks (5m) │                │            │            │                │  - Appointments (Status)│
-    │  - Idempotency Store    │                │            ▼            │                │  - Prescriptions + Vers │
-    │  - Socket.IO Pub/Sub    │                │    BULLMQ JOB QUEUES    │                │  - Outbox Events Table  │
-    │  - Stampede Mutex Lock  │                │    (Separate Worker)    │                │  - Waitlist Entries     │
-    └────────────▲────────────┘                │  - Notifications Queue  │                │  - Refresh Tokens       │
-                 │                             │  - Email Queue (SMTP)   │                │  - Partial Unique Index │
-                 │ Socket Adapter Pub/Sub      │  - Reminders (Delayed)  │                │  - Audit Logs           │
-                 │                             │  - Audit Trail Queue    │                └─────────────────────────┘
-                 │                             └────────────┬────────────┘
-                 │                                          │
-                 └──────────────────────────────────────────┘
-                                                            │
-                                                            ▼
-                                               ┌─────────────────────────┐
-                                               │ MAILPIT SMTP DEV SERVER │
-                                               │ (Port 1025 SMTP / 8025) │
-                                               └─────────────────────────┘
-                                                            │
-                    ┌───────────────────────────────────────┴───────────────────────────────────────┐
-                    │                                                                               │
-                    ▼                                                                               ▼
-      ┌───────────────────────────┐                                                   ┌───────────────────────────┐
-      │     PROMETHEUS ENGINE     │ ◄─── Scrapes /metrics (backend-1, backend-2) ──── │      GRAFANA DASHBOARDS   │
-      │ (docker-compose.observ)   │                                                   │ (Pre-provisioned Metrics) │
-      └───────────────────────────┘                                                   └───────────────────────────┘
+.
+├── apps/
+│   ├── api/                   # NestJS 10 + Fastify modular monolith
+│   │   ├── prisma/            # Schema, migrations (0_init to 4_patient_vitals), seed data
+│   │   ├── src/modules/       # Auth, Scheduling, Payments, Consultation, Ambulance, Admin
+│   │   └── test/              # Real Testcontainers specs (Postgres + Redis + MinIO + LiveKit)
+│   ├── web/                   # Next.js 15 (App Router, React 19, Tailwind CSS 3)
+│   │   ├── src/app/           # Routes: /doctors, /checkout, /consultation, /emergency, /passport
+│   │   ├── src/components/    # Responsive navbar, Toast provider, Role guard, ClientTime
+│   │   └── test/              # Vitest & Node test runner test suites
+│   └── worker/                # BullMQ Transactional Outbox Worker
+│       ├── src/               # Outbox relay (SKIP LOCKED), Mailer, Reminder engine, DLQ
+│       └── test/              # Real Testcontainers worker integration tests
+├── packages/
+│   └── shared/                # Zod schemas, constants, DTO contracts shared by API & Web
+├── services/
+│   └── ai/                    # Python FastAPI AI microservice
+│       ├── dataset.py         # 190-item clinical triage dataset (multilingual)
+│       ├── triage_model.py    # LogisticRegression classifier on sentence embeddings
+│       ├── rag.py             # Hybrid dense (SentenceTransformer) + sparse tsvector search
+│       └── evals/             # Pytest AI test suite against pgvector Testcontainer
+├── infra/
+│   └── nginx/                 # Production Nginx Dockerfile and configuration
+├── e2e/                       # Playwright E2E browser tests (Patient flow, Emergency SOS, A11y)
+├── load/                      # k6 load testing scripts (concurrency benchmarks)
+├── docs/                      # Architectural specs (SYSTEM_DESIGN.md, REMEDIATION.md, AUDIT.md)
+├── docker-compose.yml         # Production multi-container orchestration
+└── pnpm-workspace.yaml        # Workspace package definitions
 ```
 
 ---
 
 ## Tech Stack
 
-| Layer | Technology | Purpose |
+| Component | Technology | Description |
 |---|---|---|
-| **Ingress & Reverse Proxy** | Nginx 1.25 Alpine | SSL termination, upstream `ip_hash` balancing across 2 API replicas, strict auth rate limits, static SPA delivery |
-| **Frontend** | React 18 + Vite + Tailwind CSS | Component architecture, slot hold timer, waitlist modal, earnings charts, Lucide icons |
-| **API Backend** | Node.js + Express + TypeScript | Zod validation middleware, rotating refresh tokens, wall-clock datetime math, Pino structured logging |
-| **Worker Process** | Node.js + BullMQ | Dedicated worker consuming transactional outbox events: in-app notifications, emails, 24h/1h delayed reminders, audit trails |
-| **Real-time Hub** | Socket.IO + Redis Adapter | Room-scoped real-time events (`user:<id>`, `doctor:<id>`), cross-replica event synchronization |
-| **Database** | PostgreSQL 16 Alpine | Strict ACID transactions, partial unique index, row-level locks, `pg_trgm` fuzzy similarity search, `node-pg-migrate` migrations |
-| **Caching & Mutex** | Redis 7 Alpine | Version-stamped cache keys, single-flight stampede protection, 5-minute slot holds, 24-hour idempotency store |
-| **Email Server** | Nodemailer + Mailpit | HTML responsive email templates, local SMTP server (port 1025) and inspection UI (port 8025) |
-| **Observability** | Prometheus + Grafana | HTTP latency histograms, booking counters, queue metrics, cache hit/miss ratio, health probes (`/health/live`, `/health/ready`) |
-
----
-
-## Project Structure
-
-```
-.
-├── backend/
-│   ├── src/
-│   │   ├── cache/             # Versioned Redis client, stampede lock, normalization
-│   │   ├── queue/             # BullMQ queue definitions and outbox relay
-│   │   ├── worker.ts          # Dedicated background worker entrypoint
-│   │   ├── controllers/       # Auth, appointments, doctors, prescriptions, waitlist, admin
-│   │   ├── routes/            # Express routes and bull-board queue dashboard
-│   │   ├── middleware/        # Zod validation, JWT auth, rate limiters, request ID
-│   │   ├── db/                # Pool, migrations (node-pg-migrate 001 to 008), seed script
-│   │   ├── sockets/           # Socket.IO setup, Redis adapter, room join/leave handlers
-│   │   ├── utils/             # Naive wall-clock datetime math, logger (Pino), metrics
-│   │   └── index.ts           # API entrypoint
-│   ├── tests/                 # Vitest integration test suites (concurrency, outbox, etc.)
-│   ├── Dockerfile
-│   └── package.json
-│
-├── frontend/
-│   ├── src/
-│   │   ├── components/        # Hold countdown, waitlist modal, prescription viewer, earnings
-│   │   ├── pages/             # Doctor day-view, search, booking, admin verification
-│   │   ├── context/           # AuthContext with token rotation
-│   │   └── lib/               # API client with Idempotency-Key generation, sockets
-│   ├── Dockerfile             # Multi-stage production build
-│   └── package.json
-│
-├── nginx/
-│   ├── nginx.conf             # Production Nginx configuration
-│   └── conf.d/default.conf    # Upstream load balancer, strict rate limits, security headers
-│
-├── monitoring/
-│   ├── prometheus/            # Prometheus scrape configuration
-│   └── grafana/               # Pre-provisioned Grafana dashboards and datasource configs
-│
-├── load/
-│   └── booking.js             # k6 concurrency and booking load test script
-│
-├── docs/
-│   ├── SYSTEM_DESIGN.md       # Complete HLD & LLD design document
-│   └── LOAD_TEST.md           # k6 benchmark results and latency metrics
-│
-├── docker-compose.yml         # Main orchestration (Nginx, Frontend, 2x Backend, Worker, DB, Redis, Mailpit)
-└── docker-compose.observability.yml # Monitoring add-on (Prometheus + Grafana)
-```
+| **API Framework** | NestJS 10 + Fastify | High-throughput asynchronous HTTP engine with raw-body capture |
+| **Frontend Framework** | Next.js 15 + React 19 | App Router, Server/Client components, zero hydration mismatch |
+| **Styling & Icons** | Tailwind CSS 3 + Lucide | Clinical design system, WCAG AA touch targets (≥44px), dark mode |
+| **State & Data Fetching**| TanStack Query 5 | Single-flight request deduplication, cache invalidation |
+| **Database & ORM** | PostgreSQL 16 + Prisma | Strict ACID transactions, row-level locks (`FOR UPDATE`), pgvector |
+| **Cache & Real-time** | Redis 7 + Socket.IO | Geospatial driver indexing, Redis IO adapter, mutex locks |
+| **Background Jobs** | BullMQ | Transactional outbox relay with `SKIP LOCKED`, poison job DLQ |
+| **Video Telehealth** | LiveKit | WebRTC SFU engine, selective audio track detachment, room tokens |
+| **Object Storage** | MinIO | S3-compatible presigned upload/download for medical records |
+| **AI & NLP** | Python 3.12 + FastAPI | `SentenceTransformers`, `scikit-learn`, hybrid dense/sparse search |
+| **Reverse Proxy** | Nginx Alpine | Least-conn load balancing, rate limiting, IP spoofing prevention |
+| **Testing** | Testcontainers + Playwright | Zero-mock PostgreSQL/Redis integration tests, cross-browser E2E |
 
 ---
 
 ## Quick Start with Docker Compose
 
-Start the entire platform (Nginx, Frontend, 2 API Replicas, Worker, PostgreSQL, Redis, Mailpit) with a single command:
+Run the entire production stack (Nginx, Web, 2x API Replicas, Worker, AI Service, PostgreSQL, Redis, MinIO, Mailpit, LiveKit) with a single command:
 
 ```bash
 docker compose up --build -d
 ```
 
-- **Web Application**: [http://localhost](http://localhost)
-- **Mailpit Web UI (Email Inbox)**: [http://localhost:8025](http://localhost:8025)
-- **Bull-Board Queue Dashboard**: [http://localhost/admin/queues](http://localhost/admin/queues) *(Admin account required)*
-- **API Health Probes**:
-  - Liveness: [http://localhost/health/live](http://localhost/health/live)
-  - Readiness: [http://localhost/health/ready](http://localhost/health/ready)
+### Service Access Points:
+- **Web Application**: [http://localhost](http://localhost) (or [http://localhost:3000](http://localhost:3000))
+- **API Health Check**: [http://localhost/api/health/ready](http://localhost/api/health/ready)
+- **Mailpit Email Inspector**: [http://localhost:8025](http://localhost:8025)
+- **MinIO Object Console**: [http://localhost:9001](http://localhost:9001)
 
 ### Pre-Seeded Accounts:
-- **Admin**: `admin@medibook.com` / `admin123`
-- **Patient**: `patient@medibook.com` / `patient123`
-- **Doctor**: `ananya.roy@medibook.com` / `doctor123`
+| Role | Email | Password | Access Details |
+|---|---|---|---|
+| **Patient** | `patient@medibook.com` | `patient123` | Appointment booking, live video, health passport |
+| **Doctor** | `ananya.roy@medibook.com` | `doctor123` | Clinical dashboard, prescriptions, leave schedule |
+| **Admin** | `admin@medibook.com` | `admin123` | Doctor verification, payment reconciliation, audit logs |
+| **Ambulance Driver**| `driver.somnath@medibook.com` | `driver123` | Mobile dispatch acceptance, live GPS streaming |
 
 ---
 
-## Running Observability (Prometheus & Grafana)
-
-To launch the Prometheus metrics scraper and pre-provisioned Grafana dashboard alongside the application:
-
-```bash
-docker compose -f docker-compose.yml -f docker-compose.observability.yml up -d
-```
-
-- **Grafana Dashboard**: [http://localhost:3001](http://localhost:3001) *(Credentials: `admin` / `admin`)*
-- **Prometheus UI**: [http://localhost:9090](http://localhost:9090)
-
----
-
-## Manual Local Setup
+## Local Development Setup
 
 ### Prerequisites
-- Node.js (v18+)
-- PostgreSQL 16+
-- Redis 7+
+- **Node.js**: v22+
+- **pnpm**: v12+
+- **Python**: 3.12+ (for AI service)
+- **Docker**: For running local Postgres (pgvector) and Redis
 
-### 1. Install Dependencies
+### 1. Install Workspace Dependencies
 ```bash
-cd backend && npm install
-cd ../frontend && npm install
+pnpm install
 ```
 
-### 2. Configure Environment
+### 2. Configure Environment Files
+Copy the example environment configurations:
 ```bash
 cp .env.example .env
-cp backend/.env.example backend/.env
-cp frontend/.env.example frontend/.env
+cp apps/api/.env.example apps/api/.env
+cp apps/web/.env.example apps/web/.env
 ```
 
-### 3. Run Migrations & Seed Database
+### 3. Generate Prisma Client & Run Migrations
 ```bash
-cd backend
-npm run migrate:up
-npm run seed
+pnpm --filter @medibook/api exec prisma generate
+pnpm --filter @medibook/api exec prisma migrate deploy
+pnpm --filter @medibook/api run seed
+pnpm --filter @medibook/shared build
 ```
 
-### 4. Start Services
+### 4. Start Services in Development
 ```bash
-# Terminal 1: Backend API
-cd backend && npm run dev
+# Terminal 1: API Backend (NestJS + Fastify)
+pnpm --filter @medibook/api dev
 
-# Terminal 2: Background Worker
-cd backend && npm run worker
+# Terminal 2: Web Application (Next.js 15)
+pnpm --filter @medibook/web dev
 
-# Terminal 3: Frontend SPA
-cd frontend && npm run dev
+# Terminal 3: Background Worker (BullMQ)
+pnpm --filter @medibook/worker dev
+
+# Terminal 4: Python AI Service
+cd services/ai && uvicorn main:app --reload --port 8000
 ```
 
 ---
 
-## API Overview
-
-| Method | Endpoint | Access | Purpose |
-|---|---|---|---|
-| `POST` | `/api/auth/signup`, `/login` | Public | Account authentication with rotating refresh token cookies |
-| `POST` | `/api/auth/refresh` | Public | Rotates refresh token and returns new 15-minute access token |
-| `POST` | `/api/auth/logout` | Auth | Revokes active refresh token from database and clears cookie |
-| `GET` | `/api/doctors` | Public | Paginated doctor search (supports specialty, fee, rating, distance, sort) |
-| `GET` | `/api/doctors/:id` | Public | Doctor profile, reviews, and computed next available slot |
-| `GET` | `/api/doctors/:id/booked-slots` | Public | Active booked slots (cached in Redis with version stamps) |
-| `PATCH`| `/api/doctors/me/availability` | Doctor | Update weekly hours with optional `?dryRun=true` to preview affected bookings |
-| `POST` | `/api/doctors/me/leaves` | Doctor | Block emergency leave with optional `?dryRun=true` preview |
-| `GET` | `/api/search/symptom` | Public | Intelligent symptom search using `pg_trgm` similarity ranking |
-| `POST` | `/api/appointments/hold` | Patient | Lock a slot for 5 minutes (`hold:{doc}:{slot}` in Redis) |
-| `POST` | `/api/appointments` | Patient | Race-safe booking with `Idempotency-Key` and hold validation |
-| `PATCH`| `/api/appointments/:id/reschedule`| Patient | Atomic cancel and rebook in a single transaction |
-| `PATCH`| `/api/appointments/:id/cancel` | Auth | Cancel appointment, free slot, cascade to waitlist |
-| `POST` | `/api/appointments/waitlist` | Patient | Join FIFO waitlist for fully booked dates |
-| `GET` | `/api/appointments/doctor/day-view`| Doctor | Doctor day-view schedule with patient summaries |
-| `PATCH`| `/api/appointments/:id/no-show`| Doctor | Mark absent patient as `NO_SHOW` |
-| `GET` | `/api/appointments/doctor/earnings`| Doctor | Weekly and monthly earnings aggregation |
-| `POST` | `/api/prescriptions` | Doctor | Issue digital Rx (restricted to `COMPLETED` visits) |
-| `GET` | `/api/prescriptions/:id/versions`| Auth | View prescription version audit history |
-| `GET` | `/api/admin/queues` | Admin | Bull-Board queue administration dashboard |
-| `GET` | `/metrics` | Internal | Prometheus metrics (HTTP latency histogram, counters) |
-| `GET` | `/health/live`, `/health/ready` | Public | Kubernetes/Docker health and readiness probes |
-
----
-
-## Core Invariants & Design Guarantees
+## Core Invariants & Engineering Guarantees
 
 1. **Zero Double-Booking Guarantee**:
-   Enforced at the PostgreSQL engine level via a partial unique index:
+   Enforced at the PostgreSQL storage engine level via a partial unique index:
    ```sql
    CREATE UNIQUE INDEX idx_appointments_active_slot
    ON appointments (doctor_id, slot_time)
-   WHERE status IN ('PENDING', 'CONFIRMED');
+   WHERE status IN ('PENDING_PAYMENT', 'CONFIRMED', 'HELD');
    ```
-   Cancelled appointments transition to `CANCELLED`, freeing the slot for rebooking immediately while preserving complete audit logs.
-2. **Race-Safe Daily Booking Tokens**:
-   Daily sequence numbers (`MB-YYYYMMDD-001`) are generated atomically using:
-   ```sql
-   INSERT INTO doctor_daily_counters (doctor_id, booking_date, last_seq)
-   VALUES ($1, $2, 1)
-   ON CONFLICT (doctor_id, booking_date)
-   DO UPDATE SET last_seq = doctor_daily_counters.last_seq + 1
-   RETURNING last_seq;
-   ```
-3. **Zero Message Loss (Transactional Outbox Pattern)**:
-   All business mutations and outbox events are inserted into the same ACID transaction. An asynchronous relay polls using `SELECT ... FOR UPDATE SKIP LOCKED` and publishes to BullMQ with idempotent job IDs. If the message broker is temporarily offline, events are safely retained in PostgreSQL.
-4. **No Timezone Distortion**:
-   Naive wall-clock IST timestamp strings (`YYYY-MM-DDTHH:MM:SS`) are preserved end-to-end without UTC offset corruption.
-5. **Cache Stampede Protection**:
-   Single-flight mutex locks (`SET lock:<key> 1 EX 5 NX`) and $\pm 10\%$ TTL jitter ensure that high traffic spikes never overwhelm the PostgreSQL database.
+2. **Double-Entry Financial Integrity**:
+   Every payment mutation creates balanced zero-sum journal entries in the `ledgers` table. Reconciliations and refunds reverse the exact debits and credits inside a single ACID transaction.
+3. **Guaranteed Delivery (Transactional Outbox)**:
+   Domain mutations and outbox events write to the same PostgreSQL transaction. The outbox relay uses `SELECT ... FOR UPDATE SKIP LOCKED` to publish events to BullMQ, guaranteeing zero message loss even during message broker downtime.
+4. **Idempotent Webhooks & Operations**:
+   Razorpay webhook events are tracked in a dedicated `payment_events` table with unique constraint `UNIQUE(provider_event_id)`. Replayed webhooks trigger a graceful duplicate no-op.
+5. **Accurate IST Wall-Clock Datetime**:
+   All clinic hours, blackout dates, and midnight booking counter rollovers operate strictly in Asia/Kolkata (`UTC+05:30`) without UTC date shifting.
 
 ---
 
-## Testing & Quality Assurance
+## AI Clinical Service & Evals
 
-### Vitest Test Suite
-The codebase includes 27 test files covering 62+ integration and unit tests:
-- **Concurrency Test**: 50 parallel requests attempting to book the same slot simultaneously — asserts exactly 1 returns 201, 49 return 409, and booking references are unique.
-- **Cancel-then-Rebook Test**: Confirms cancelled slots can be rebooked without constraint violations.
-- **Socket Isolation Test**: Proves user B cannot eavesdrop on user A's notifications.
-- **Outbox Durability Test**: Proves outbox events survive temporary Redis downtime without loss.
-- **Worker Retry & DLQ Test**: Simulates worker failure with exponential backoff and validates poison jobs land in the dead-letter queue.
-- **Cross-Instance Socket Delivery**: Validates `@socket.io/redis-adapter` delivers live events across independent backend replicas.
-- **Idempotency Replay Test**: Proves identical `Idempotency-Key` headers return the cached response without creating second appointments.
+The AI service in `services/ai/` provides clinical decision support grounded in medical literature:
+- **Zero Hallucination / Hybrid Search**: Combines 384-dimensional sentence vectors with BM25/tsvector full-text search. Queries scoring below threshold cleanly abstain rather than hallucinating medical advice.
+- **Triage Performance**:
+  - Emergency Recall: `1.0000` (zero missed life-threatening emergencies)
+  - Evaluated on a 190-sample stratified clinical dataset including romanized Bengali and Hinglish queries.
+- **Run AI Evaluations**:
+  ```bash
+  pytest services/ai/evals/test_evals.py -v
+  ```
 
-To execute tests:
+---
+
+## Quality Assurance & Test Verification
+
+The repository enforces strict verification with zero mocks on critical components:
+
 ```bash
-cd backend && npm test
+# 1. Monorepo linting & TypeScript type checking
+pnpm lint
+pnpm typecheck
+
+# 2. Web unit and i18n tests
+pnpm --filter @medibook/web test
+
+# 3. Backend Testcontainers integration tests (real Postgres + Redis + MinIO)
+pnpm --filter @medibook/api test
+
+# 4. Worker integration tests (real Postgres + BullMQ + Mailpit)
+pnpm --filter @medibook/worker test
+
+# 5. Playwright End-to-End browser tests
+npx playwright test
 ```
 
-### k6 Concurrency Benchmark
-Run the end-to-end load test simulating 200 virtual users across search, slot hold, and booking:
-```bash
-k6 run load/k6-booking-flow.js
-```
-See [`docs/LOAD_TEST.md`](docs/LOAD_TEST.md) for detailed performance results.
+---
+
+## Security & Compliance
+
+- **Telemedicine Practice Guidelines (2020)**: Built-in patient informed consent logging, registered medical practitioner (RMP) qualification display, and prescription digital records.
+- **Fail-Fast Secrets**: Application boots fail immediately if secrets (`JWT_SECRET`, `COOKIE_SECRET`, `PAYMENT_WEBHOOK_SECRET`) use default or insecure values in production.
+- **Defense in Depth**:
+  - IP spoofing prevented via Nginx `$remote_addr` upstream proxy headers.
+  - Multi-tier rate limiting on `/api/auth/*` (5 req/sec) and general APIs (30 req/sec).
+  - Internal metrics endpoint (`/metrics`) blocked from external ingress.
+  - Role-based route guards and in-memory JWT storage with httpOnly cookie bootstrap.
