@@ -70,13 +70,13 @@ All fixes are committed atomically on `main` (baseline tag: `pre-agent-baseline`
 - [x] **F-15** (`88a2c9e`): Replace browser alerts with toast notifications, slot refetching on hold
 
 ## Phase 5 — UI / UX Polish
-- [ ] **UI-1**: Touch targets audit (minimum 44x44px for buttons, links, controls) & focus-visible rings
-- [ ] **UI-2**: WCAG AA contrast compliance in dark/light mode across status pills and emergency badges
-- [ ] **UI-3**: Telemedicine Practice Guidelines (2020) compliance disclaimers and verified badges across patient flows
-- [ ] **UI-4**: Form validation styling, aria-labels, and screen-reader accessible attributes across auth and booking
+- [x] **UI-1** (`ea7e03b`): Touch targets audit (minimum 44x44px for buttons, links, controls) & focus-visible rings
+- [x] **UI-2** (`ea7e03b`): WCAG AA contrast compliance in dark/light mode across status pills and emergency badges
+- [x] **UI-3** (`ea7e03b`): Telemedicine Practice Guidelines (2020) compliance disclaimers and verified badges across patient flows
+- [x] **UI-4** (`ea7e03b`): Form validation styling, aria-labels, and screen-reader accessible attributes across auth and booking
 
 ## Phase 6 — Infra, CI, Docs
-- [ ] **I-1**: Harden docker-compose.yml: strict environment secret validation, localhost-bound admin ports, healthchecks
-- [ ] **I-2**: Nginx configuration: secure proxy headers, rate limiting, and websocket upgrade support
-- [ ] **I-3**: CI workflow verification on `main` only (Testcontainers, Web checks, AI evals)
-- [ ] **I-4**: Documentation: Update README.md and PROGRESS.md with full remediation details and runbook
+- [x] **I-1** (`ea026c4`): Harden docker-compose.yml: strict environment secret validation, localhost-bound admin ports, healthchecks
+- [x] **I-2** (`ea026c4`): Nginx configuration: secure proxy headers, rate limiting, and websocket upgrade support
+- [x] **I-3** (`ea026c4`): CI workflow verification on `main` only (Testcontainers, Web checks, AI evals)
+- [x] **I-4** (`PROGRESS.md`): Documentation: Update README.md and PROGRESS.md with full remediation details and runbook

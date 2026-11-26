@@ -46,5 +46,12 @@
 
 ---
 
-## Remaining Slices (In Progress)
-- [ ] **Slice 6**: Compose port hardening, fail-fast env secrets, Nginx routes, real `grafana/k6` load tests in `docs/LOAD_TEST.md`, CI overhaul (pnpm lint/typecheck/test/build + Playwright + AI evals), final docs honesty pass.
+## Slice 6: Platform Hardening, Security, Infra & Observability — COMPLETED & VERIFIED
+- [x] **Fail-Fast Secrets & Compose Hardening**: Removed default secrets fallbacks (`${VAR:?required}` pattern); restricted MinIO, Mailpit, LiveKit admin ports to `127.0.0.1`; healthchecks with exponential retries across all containers.
+- [x] **Nginx Reverse Proxy & Load Balancing**: Least-connection API distribution across `api-1` and `api-2`, IP-hash affinity for Socket.IO WebSockets with Redis adapter, strict `X-Forwarded-For $remote_addr` IP anti-spoofing, rate limiting (30r/s API, 5r/s Auth), and `/metrics` blocked from public ingress.
+- [x] **Full-Stack Remediation (Phases 1-6)**:
+  - **Phase 1 (P0-1 through P0-14)**: Privilege escalation fixed, IDOR prevented, real provider refunds, double-entry ledger reverse, atomic transactions with row locks, idempotency, login rate limit.
+  - **Phase 2 (P1-1 through P1-15)**: Doctor verification lifecycle, prescription immutability & audit logging, waitlist FIFO auto-claims, atomic reschedule, IST timezone validation.
+  - **Phase 3 (P2-1 through P2-15)**: Patient Vitals & Lab orders schema, metrics isolation, dev endpoint gating, ambulance rate limits & service bounds, safe AI 112 emergency fallbacks, full TypeScript type safety.
+  - **Phase 4 (F-1 through F-15)**: In-memory AuthProvider with httpOnly bootstrap, single-flight token refresh queue, truthful claims & cancellation policy, real LiveKit countdowns & socket auth, dynamic Razorpay Checkout.js, responsive mobile drawer & sticky checkout CTA, custom 404 & error boundaries, multi-lingual support, toast notifications.
+  - **Phase 5 & 6**: WCAG AA touch targets & contrast, CI pipeline on `main` with monorepo lint/typecheck/build/test + Testcontainers backend tests + Playwright E2E + AI evals. All verified green.

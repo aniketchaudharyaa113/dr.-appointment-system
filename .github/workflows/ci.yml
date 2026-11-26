@@ -35,6 +35,9 @@ jobs:
       - name: Typecheck monorepo
         run: pnpm typecheck
 
+      - name: Run Web tests
+        run: pnpm --filter @medibook/web test
+
       - name: Build api, worker, and web
         run: pnpm build
 
