@@ -18,11 +18,22 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en">
+      <head>
+        <meta name="color-scheme" content="light dark" />
+      </head>
       <body className="antialiased selection:bg-teal-500 selection:text-white bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 flex flex-col min-h-screen">
+        <a
+          href="#main-content"
+          className="visually-hidden focus:not-sr-only fixed top-3 left-3 z-50 px-4 py-2 rounded-xl bg-teal-600 text-white text-xs font-bold shadow-lg"
+        >
+          Skip to main content
+        </a>
         <Providers>
           <I18nProvider>
             <Navbar />
-            <main className="flex-1">{children}</main>
+            <main id="main-content" tabIndex={-1} className="flex-1 focus:outline-none">
+              {children}
+            </main>
             <AiDrawer />
             <footer className="border-t border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900/60 py-8 px-4 sm:px-6 lg:px-8 mt-16 text-xs text-slate-500">
               <div className="max-w-7xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-4">
