@@ -4,6 +4,17 @@ WORKDIR /app
 
 RUN npm install -g pnpm@12.16.1
 
+# Build-time env vars (NEXT_PUBLIC_* baked into the Next.js bundle at build time)
+ARG NEXT_PUBLIC_ENABLE_PAYMENT_SIMULATOR=false
+ARG NEXT_PUBLIC_SHOW_DEMO_LOGINS=false
+ARG NEXT_PUBLIC_API_URL=""
+ARG NEXT_PUBLIC_SOCKET_URL=""
+
+ENV NEXT_PUBLIC_ENABLE_PAYMENT_SIMULATOR=$NEXT_PUBLIC_ENABLE_PAYMENT_SIMULATOR
+ENV NEXT_PUBLIC_SHOW_DEMO_LOGINS=$NEXT_PUBLIC_SHOW_DEMO_LOGINS
+ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
+ENV NEXT_PUBLIC_SOCKET_URL=$NEXT_PUBLIC_SOCKET_URL
+
 COPY package.json pnpm-workspace.yaml pnpm-lock.yaml turbo.json tsconfig.base.json .npmrc ./
 COPY packages/shared ./packages/shared
 COPY apps/web ./apps/web

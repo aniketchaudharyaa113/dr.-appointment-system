@@ -23,6 +23,13 @@ jobs:
       - name: Install pnpm
         run: npm install -g pnpm@12.16.1
 
+      - name: Cache pnpm store
+        uses: actions/cache@v4
+        with:
+          path: ~/.local/share/pnpm/store
+          key: pnpm-store-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: pnpm-store-
+
       - name: Install workspace dependencies
         run: pnpm install --frozen-lockfile
 
@@ -45,6 +52,28 @@ jobs:
     name: Backend & Worker Testcontainers Integration Tests
     runs-on: ubuntu-latest
     needs: lint-typecheck-build
+    env:
+      # Testcontainers config for GitHub Actions
+      TESTCONTAINERS_RYUK_DISABLED: "true"
+      DOCKER_HOST: "unix:///var/run/docker.sock"
+      # Defaults used by global-setup.ts (overridden at runtime by containers)
+      NODE_ENV: test
+      JWT_SECRET: "test-super-secret-jwt-key-32-chars-minimum!"
+      COOKIE_SECRET: "test-super-secret-cookie-key-32chars!"
+      PAYMENT_PROVIDER: "FAKE"
+      PAYMENT_WEBHOOK_SECRET: "fake_webhook_secret_for_testing_123"
+      RAZORPAY_WEBHOOK_SECRET: "webhook_secret_123"
+      LIVEKIT_API_KEY: "devkey"
+      LIVEKIT_API_SECRET: "test_livekit_secret_32_characters_min"
+      LIVEKIT_URL: "ws://localhost:7880"
+      MINIO_ACCESS_KEY: "minioadmin"
+      MINIO_SECRET_KEY: "minioadmin"
+      MINIO_BUCKET: "medibook-records"
+      CLINIC_TIMEZONE: "Asia/Kolkata"
+      ENABLE_DEV_ENDPOINTS: "true"
+      # DATABASE_URL and REDIS_URL are injected by global-setup.ts from containers
+      DATABASE_URL: "postgresql://postgres:postgrespassword@localhost:5432/medibook_test"
+      REDIS_URL: "redis://localhost:6379"
     steps:
       - uses: actions/checkout@v4
 
@@ -55,16 +84,33 @@ jobs:
       - name: Install pnpm
         run: npm install -g pnpm@12.16.1
 
+      - name: Cache pnpm store
+        uses: actions/cache@v4
+        with:
+          path: ~/.local/share/pnpm/store
+          key: pnpm-store-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: pnpm-store-
+
       - name: Install workspace dependencies
         run: pnpm install --frozen-lockfile
 
       - name: Generate Prisma client & build shared package
         run: pnpm --filter @medibook/api exec prisma generate && pnpm --filter @medibook/shared build
 
+      - name: Pre-pull Docker images for Testcontainers (speeds up startup)
+        run: |
+          docker pull pgvector/pgvector:pg16 &
+          docker pull redis:7-alpine &
+          docker pull axllent/mailpit:latest &
+          wait
+        continue-on-error: true
+
       - name: Run Worker integration tests (Testcontainers Postgres + Redis + Mailpit)
+        timeout-minutes: 10
         run: pnpm --filter @medibook/worker test
 
-      - name: Run API integration tests (Testcontainers Postgres+pgvector + Redis + MinIO)
+      - name: Run API integration tests (Testcontainers Postgres+pgvector + Redis)
+        timeout-minutes: 15
         run: pnpm --filter @medibook/api test
 
   ai-evals:
@@ -84,9 +130,14 @@ jobs:
           pip install --index-url https://download.pytorch.org/whl/cpu torch
           pip install fastapi uvicorn pydantic pydantic-settings httpx numpy psycopg2-binary pgvector scikit-learn sentence-transformers pytest testcontainers
 
+      - name: Pre-pull pgvector image
+        run: docker pull pgvector/pgvector:pg16
+        continue-on-error: true
+
       - name: Run AI evaluations against Testcontainer pgvector
         env:
           LLM_PROVIDER: mock
+          TESTCONTAINERS_RYUK_DISABLED: "true"
         run: pytest services/ai/evals/test_evals.py -v
 
   playwright-e2e:
@@ -103,36 +154,80 @@ jobs:
       - name: Install pnpm
         run: npm install -g pnpm@12.16.1
 
+      - name: Cache pnpm store
+        uses: actions/cache@v4
+        with:
+          path: ~/.local/share/pnpm/store
+          key: pnpm-store-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: pnpm-store-
+
       - name: Install dependencies & Chromium browser
         run: pnpm install --frozen-lockfile && npx playwright install chromium --with-deps
 
-      - name: Boot production Docker Compose stack behind Nginx
+      - name: Pre-pull Docker images for faster compose boot
+        run: |
+          docker pull pgvector/pgvector:pg16 &
+          docker pull redis:7-alpine &
+          docker pull minio/minio:latest &
+          docker pull axllent/mailpit:latest &
+          docker pull livekit/livekit-server:latest &
+          wait
+        continue-on-error: true
+
+      - name: Boot full-stack Docker Compose (FAKE payment for E2E)
         env:
           POSTGRES_PASSWORD: ci_pg_strong_password_2026
           JWT_SECRET: ci_strong_jwt_secret_key_for_github_actions_e2e_2026
           COOKIE_SECRET: ci_strong_cookie_secret_key_for_e2e_2026
-          PAYMENT_PROVIDER: RAZORPAY
-          RAZORPAY_KEY_ID: rzp_test_ci_key_id
-          RAZORPAY_KEY_SECRET: rzp_test_ci_key_secret_2026
-          RAZORPAY_WEBHOOK_SECRET: rzp_test_ci_webhook_secret_2026
+          # Use FAKE provider so the E2E simulate-payment button is available
+          # and so API boots without real Razorpay credentials
+          PAYMENT_PROVIDER: FAKE
+          PAYMENT_WEBHOOK_SECRET: ci_fake_webhook_secret_key_e2e_2026abcd
+          RAZORPAY_KEY_ID: ""
+          RAZORPAY_KEY_SECRET: ""
+          RAZORPAY_WEBHOOK_SECRET: ci_fake_rzp_webhook_secret_e2e_2026abcd
           LIVEKIT_API_KEY: ci_livekit_key_2026
           LIVEKIT_API_SECRET: ci_livekit_secret_key_for_e2e_32_chars_2026
           MINIO_ACCESS_KEY: ci_minio_access_2026
           MINIO_SECRET_KEY: ci_minio_secret_2026
+          # Allow E2E simulate button (FAKE provider)
+          NEXT_PUBLIC_ENABLE_PAYMENT_SIMULATOR: "true"
+          NEXT_PUBLIC_SHOW_DEMO_LOGINS: "true"
         run: docker compose up -d --build postgres redis minio mailpit livekit api-1 api-2 worker web nginx
+
+      - name: Wait for API to be ready (up to 3 minutes)
+        run: |
+          echo "Waiting for API health endpoint..."
+          for i in $(seq 1 90); do
+            if curl -sf http://localhost/api/health/ready > /dev/null 2>&1; then
+              echo "✅ API is ready after ${i} attempts"
+              break
+            fi
+            if [ "$i" -eq 90 ]; then
+              echo "❌ API did not become ready in time"
+              docker compose logs api-1 --tail=50
+              docker compose logs nginx --tail=20
+              exit 1
+            fi
+            sleep 2
+          done
 
       - name: Seed database inside API container
         run: |
-          for i in $(seq 1 30); do
-            if curl -sf http://localhost/api/health/ready; then break; fi
-            sleep 2
-          done
+          docker compose exec -T api-1 sh -c 'cd /app && NODE_ENV=development npx -y tsx@4.19.3 apps/api/prisma/seed.ts' || \
           docker compose exec -T api-1 sh -c 'cd apps/api && npx -y tsx@4.19.3 prisma/seed.ts'
 
       - name: Run Playwright E2E tests
         env:
           PLAYWRIGHT_BASE_URL: http://localhost
         run: npx playwright test e2e/patient-flow.spec.ts e2e/emergency-flow.spec.ts e2e/accessibility.spec.ts
+
+      - name: Show compose logs on failure
+        if: failure()
+        run: |
+          docker compose logs api-1 --tail=100
+          docker compose logs web --tail=50
+          docker compose logs nginx --tail=50
 
       - name: Tear down compose stack
         if: always()

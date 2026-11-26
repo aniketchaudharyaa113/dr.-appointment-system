@@ -6,6 +6,8 @@ let pgContainer: any;
 let redisContainer: any;
 
 export async function setup() {
+  // Required for GitHub Actions CI where Ryuk (Testcontainers cleanup daemon) is unavailable
+  process.env.TESTCONTAINERS_RYUK_DISABLED = process.env.TESTCONTAINERS_RYUK_DISABLED || 'true';
   process.env.NODE_ENV = 'test';
   process.env.JWT_SECRET =
     process.env.JWT_SECRET || 'test-super-secret-jwt-key-32-chars-minimum!';

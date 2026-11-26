@@ -204,6 +204,13 @@ services:
     build:
       context: .
       dockerfile: apps/web/Dockerfile
+      args:
+        # NEXT_PUBLIC_* vars are baked into the bundle at build time.
+        # Pass NEXT_PUBLIC_ENABLE_PAYMENT_SIMULATOR=true when using FAKE payment provider.
+        NEXT_PUBLIC_ENABLE_PAYMENT_SIMULATOR: ${NEXT_PUBLIC_ENABLE_PAYMENT_SIMULATOR:-false}
+        NEXT_PUBLIC_SHOW_DEMO_LOGINS: ${NEXT_PUBLIC_SHOW_DEMO_LOGINS:-false}
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-}
+        NEXT_PUBLIC_SOCKET_URL: ${NEXT_PUBLIC_SOCKET_URL:-}
     container_name: medibook-web
     restart: unless-stopped
     environment:
