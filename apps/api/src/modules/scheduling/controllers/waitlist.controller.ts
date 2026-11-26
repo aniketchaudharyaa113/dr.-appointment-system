@@ -1,6 +1,7 @@
 import {
   Controller,
   Post,
+  Delete,
   Param,
   Body,
   UseGuards,
@@ -11,7 +12,12 @@ import { WaitlistService } from '../services/waitlist.service';
 import { JwtAuthGuard } from '../../identity/guards/jwt-auth.guard';
 import { CurrentUser } from '../../identity/decorators/current-user.decorator';
 import { ZodValidationPipe } from '../../../common/pipes/zod-validation.pipe';
-import { JwtPayload, JoinWaitlistSchema, UuidSchema } from '@medibook/shared';
+import {
+  JwtPayload,
+  JoinWaitlistSchema,
+  UuidSchema,
+  ConsultationMode,
+} from '@medibook/shared';
 
 @ApiTags('Scheduling')
 @Controller('waitlists')
@@ -42,7 +48,21 @@ export class WaitlistController {
   async claimOffer(
     @Param('id', new ZodValidationPipe(UuidSchema)) waitlistId: string,
     @CurrentUser() user: JwtPayload,
+    @Body() body?: { consultationMode?: ConsultationMode },
   ) {
-    return this.waitlistService.claimWaitlistOffer(waitlistId, user.sub);
+    return this.waitlistService.claimWaitlistOffer(
+      waitlistId,
+      user.sub,
+      body?.consultationMode || 'VIDEO',
+    );
+  }
+
+  @Delete(':id')
+  @ApiOperation({ summary: 'Leave waitlist or reject/cancel pending offer' })
+  async leaveWaitlist(
+    @Param('id', new ZodValidationPipe(UuidSchema)) waitlistId: string,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.waitlistService.leaveWaitlist(waitlistId, user.sub);
   }
 }

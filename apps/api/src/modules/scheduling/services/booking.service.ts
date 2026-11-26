@@ -431,6 +431,19 @@ export class BookingService {
         },
       });
 
+      await tx.outboxEvent.create({
+        data: {
+          aggregateType: 'APPOINTMENT',
+          aggregateId: appointmentId,
+          eventType: 'AppointmentSlotFreed',
+          payload: {
+            appointmentId,
+            doctorId: appointment.doctorId,
+            slotTime: appointment.slotTime.toISOString(),
+          },
+        },
+      });
+
       // If payment was already CAPTURED, create Refund + reverse ledger + enqueue refund dispatch in SAME tx
       const paymentRows = await tx.$queryRaw<
         Array<{ id: string; status: string; amount_paise: number; provider_payment_id: string | null }>

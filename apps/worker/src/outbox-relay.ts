@@ -1,4 +1,4 @@
-import { PrismaClient } from '@prisma/client';
+import { PrismaClient, Prisma } from '@prisma/client';
 import { Queue } from 'bullmq';
 import type { Logger } from 'pino';
 
@@ -29,7 +29,7 @@ export async function pollAndPublishOutbox(
   const maxAttempts = options.maxAttempts ?? 3;
   const backoffDelayMs = options.backoffDelayMs ?? 500;
 
-  return prisma.$transaction(async (tx) => {
+  return prisma.$transaction(async (tx: Prisma.TransactionClient) => {
     const rows = await tx.$queryRaw<OutboxRow[]>`
       SELECT id, aggregate_type, aggregate_id, event_type, payload
       FROM outbox_events

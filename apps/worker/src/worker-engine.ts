@@ -1,6 +1,7 @@
-import { PrismaClient } from '@prisma/client';
+import { PrismaClient, Prisma } from '@prisma/client';
 import { Queue, Worker, Job } from 'bullmq';
 import Redis from 'ioredis';
+import { randomBytes } from 'crypto';
 import type { Logger } from 'pino';
 import type { Mailer } from './mailer.js';
 import { pollAndPublishOutbox } from './outbox-relay.js';
@@ -216,6 +217,13 @@ export class WorkerEngine {
 
       case 'WaitlistSlotOffered': {
         await this.handleWaitlistOffered(payload);
+        break;
+      }
+
+      case 'AppointmentSlotFreed': {
+        if (payload.doctorId && payload.slotTime) {
+          await this.handleAppointmentSlotFreed(payload.doctorId, payload.slotTime);
+        }
         break;
       }
 
@@ -464,6 +472,59 @@ export class WorkerEngine {
     });
   }
 
+  async handleAppointmentSlotFreed(doctorId: string, slotTimeIso: string) {
+    const slotDate = new Date(`${slotTimeIso.slice(0, 10)}T00:00:00.000Z`);
+    const nextInLine = await this.prisma.waitlist.findFirst({
+      where: {
+        doctorId,
+        slotDate,
+        status: 'WAITING',
+      },
+      orderBy: { createdAt: 'asc' },
+    });
+
+    if (!nextInLine) return null;
+
+    const claimExpiresAt = new Date(Date.now() + 15 * 60 * 1000);
+    const holdToken = randomBytes(24).toString('hex');
+
+    const key = `slot:hold:${doctorId}:${slotTimeIso}`;
+    const value = `${holdToken}:${nextInLine.patientId}`;
+    const holdRes = await this.queueConnection.set(key, value, 'EX', 900, 'NX');
+    if (holdRes !== 'OK') {
+      this.logger.warn({ doctorId, slotTimeIso }, 'Could not acquire slot hold for waitlist');
+      return null;
+    }
+
+    const updated = await this.prisma.waitlist.update({
+      where: { id: nextInLine.id },
+      data: {
+        status: 'OFFERED',
+        offeredAt: new Date(),
+        claimExpiresAt,
+        holdToken,
+        slotTime: slotTimeIso,
+      },
+    });
+
+    await this.prisma.outboxEvent.create({
+      data: {
+        aggregateType: 'WAITLIST',
+        aggregateId: nextInLine.id,
+        eventType: 'WaitlistSlotOffered',
+        payload: {
+          waitlistId: nextInLine.id,
+          patientId: nextInLine.patientId,
+          doctorId,
+          slotTime: slotTimeIso,
+          claimExpiresAt: claimExpiresAt.toISOString(),
+        },
+      },
+    });
+
+    return updated;
+  }
+
   private async processReminderJob(job: Job) {
     const { appointmentId, kind } = job.data as {
       appointmentId: string;
@@ -509,7 +570,7 @@ export class WorkerEngine {
     const expiryMinutes = (job.data as any)?.expiryMinutes ?? 15;
     const cutoff = new Date(Date.now() - expiryMinutes * 60 * 1000);
 
-    const released = await this.prisma.$transaction(async (tx) => {
+    const released = await this.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
       const candidates = await tx.$queryRaw<
         Array<{ id: string; doctor_id: string; patient_id: string; slot_time: Date }>
       >`
@@ -550,10 +611,41 @@ export class WorkerEngine {
             },
           },
         });
+        await tx.outboxEvent.create({
+          data: {
+            aggregateType: 'APPOINTMENT',
+            aggregateId: appt.id,
+            eventType: 'AppointmentSlotFreed',
+            payload: {
+              appointmentId: appt.id,
+              doctorId: appt.doctor_id,
+              slotTime: new Date(appt.slot_time).toISOString(),
+            },
+          },
+        });
       }
 
       return candidates.length;
     });
+
+    // Sweep expired waitlist offers and cascade to next in line
+    const expiredOffers = await this.prisma.waitlist.findMany({
+      where: {
+        status: 'OFFERED',
+        claimExpiresAt: { lt: new Date() },
+      },
+    });
+    for (const offer of expiredOffers) {
+      await this.prisma.waitlist.update({
+        where: { id: offer.id },
+        data: { status: 'EXPIRED' },
+      });
+      if (offer.holdToken && offer.slotTime) {
+        const holdKey = `slot:hold:${offer.doctorId}:${offer.slotTime}`;
+        await this.queueConnection.del(holdKey);
+        await this.handleAppointmentSlotFreed(offer.doctorId, offer.slotTime);
+      }
+    }
 
     // Clean up expired or old-revoked refresh tokens (> 7 days old)
     const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
@@ -582,7 +674,7 @@ export class WorkerEngine {
 
     let count = 0;
     for (const appt of noShowCandidates) {
-      await this.prisma.$transaction(async (tx) => {
+      await this.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
         const locked = await tx.appointment.findUnique({
           where: { id: appt.id },
           select: { status: true },
