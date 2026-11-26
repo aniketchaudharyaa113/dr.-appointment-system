@@ -5,6 +5,7 @@ import {
   BadRequestException,
   NotFoundException,
 } from '@nestjs/common';
+import { randomBytes } from 'crypto';
 import { AccessToken } from 'livekit-server-sdk';
 import { PrismaService } from '../../platform/database/prisma.service';
 import { RealtimeService } from '../../platform/realtime/realtime.service';
@@ -43,11 +44,17 @@ export class LiveKitService {
     appointmentId: string,
     userId: string,
     now: Date = new Date(),
+    deviceId?: string,
   ): Promise<VideoTokenResult> {
     const appointment = await this.prisma.appointment.findUnique({
       where: { id: appointmentId },
       include: {
-        doctor: true,
+        doctor: {
+          include: {
+            user: { select: { id: true, name: true } },
+          },
+        },
+        patient: { select: { id: true, name: true } },
         consultation: true,
       },
     });
@@ -121,10 +128,23 @@ export class LiveKitService {
       );
     }
 
-    const participantName = isDoctor ? 'Attending Doctor' : 'Patient';
+    const participantName = isDoctor
+      ? (appointment.doctor.user?.name
+          ? `Dr. ${appointment.doctor.user.name}`
+          : 'Doctor')
+      : (appointment.patient?.name || 'Patient');
+
+    const deviceSuffix = deviceId || randomBytes(4).toString('hex');
+    const identity = `${userId}#${deviceSuffix}`;
+
     const at = new AccessToken(env.LIVEKIT_API_KEY, env.LIVEKIT_API_SECRET, {
-      identity: userId,
+      identity,
       name: participantName,
+      metadata: JSON.stringify({
+        userId,
+        role: isDoctor ? 'DOCTOR' : 'PATIENT',
+        deviceId: deviceSuffix,
+      }),
       ttl: '1h',
     });
 

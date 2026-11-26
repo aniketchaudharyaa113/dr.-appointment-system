@@ -65,8 +65,14 @@ export class ConsultationController {
   async getVideoToken(
     @Param('id', new ZodValidationPipe(UuidSchema)) appointmentId: string,
     @CurrentUser() user: JwtPayload,
+    @Body() body?: { deviceId?: string },
   ) {
-    return this.livekitService.mintJoinToken(appointmentId, user.sub);
+    return this.livekitService.mintJoinToken(
+      appointmentId,
+      user.sub,
+      new Date(),
+      body?.deviceId,
+    );
   }
 
   @Post(':id/session-status')
