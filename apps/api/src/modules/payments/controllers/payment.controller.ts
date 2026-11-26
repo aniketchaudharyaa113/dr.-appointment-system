@@ -10,6 +10,7 @@ import {
   HttpCode,
   HttpStatus,
   BadRequestException,
+  NotFoundException,
   Inject,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
@@ -20,6 +21,7 @@ import { RolesGuard } from '../../identity/guards/roles.guard';
 import { Roles } from '../../identity/decorators/roles.decorator';
 import { CurrentUser } from '../../identity/decorators/current-user.decorator';
 import { ZodValidationPipe } from '../../../common/pipes/zod-validation.pipe';
+import { env } from '../../../common/config/env.schema';
 import {
   JwtPayload,
   CreatePaymentOrderSchema,
@@ -92,6 +94,9 @@ export class PaymentController {
       event: 'payment.captured' | 'payment.failed';
     },
   ) {
+    if (!env.ENABLE_DEV_ENDPOINTS) {
+      throw new NotFoundException('Dev simulation endpoints are disabled');
+    }
     if (!body.paymentId && !body.providerOrderId) {
       throw new BadRequestException('paymentId or providerOrderId is required');
     }

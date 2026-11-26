@@ -7,6 +7,7 @@ import {
   Query,
   UseGuards,
   Inject,
+  NotFoundException,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { z } from 'zod';
@@ -16,6 +17,7 @@ import { Roles } from '../../identity/decorators/roles.decorator';
 import { CurrentUser } from '../../identity/decorators/current-user.decorator';
 import { ZodValidationPipe } from '../../../common/pipes/zod-validation.pipe';
 import { RateLimit, RateLimitGuard } from '../../../common/guards/rate-limit.guard';
+import { env } from '../../../common/config/env.schema';
 import {
   JwtPayload,
   UuidSchema,
@@ -189,6 +191,9 @@ export class AmbulanceController {
   async simulateTrip(
     @Param('id', new ZodValidationPipe(UuidSchema)) requestId: string,
   ) {
+    if (!env.ENABLE_DEV_ENDPOINTS) {
+      throw new NotFoundException('Dev simulation endpoints are disabled');
+    }
     return this.ambulanceService.simulateDriverTrip(requestId);
   }
 }

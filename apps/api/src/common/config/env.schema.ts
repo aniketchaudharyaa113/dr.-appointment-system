@@ -18,6 +18,7 @@ export const EnvSchema = z
     COOKIE_SECRET: z.string().min(16, 'COOKIE_SECRET must be at least 16 characters'),
     CLINIC_TIMEZONE: z.string().default(SHARED_CLINIC_TIMEZONE),
     PLATFORM_COMMISSION_BPS: z.coerce.number().int().min(0).max(10000).default(DEFAULT_PLATFORM_COMMISSION_BPS),
+    ENABLE_DEV_ENDPOINTS: z.coerce.boolean().default(false),
     // Payments (fail-fast: no hardcoded secret defaults)
     PAYMENT_PROVIDER: z.enum(['RAZORPAY', 'STRIPE', 'FAKE']).default('FAKE'),
     PAYMENT_WEBHOOK_SECRET: z.string().min(8).optional(),
@@ -54,6 +55,14 @@ export const EnvSchema = z
           code: z.ZodIssueCode.custom,
           path: ['PAYMENT_PROVIDER'],
           message: 'PAYMENT_PROVIDER=FAKE is forbidden when NODE_ENV=production',
+        });
+      }
+
+      if (data.ENABLE_DEV_ENDPOINTS) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['ENABLE_DEV_ENDPOINTS'],
+          message: 'ENABLE_DEV_ENDPOINTS must be false when NODE_ENV=production',
         });
       }
 

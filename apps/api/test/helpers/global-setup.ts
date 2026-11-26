@@ -24,6 +24,7 @@ export async function setup() {
   process.env.MINIO_SECRET_KEY = process.env.MINIO_SECRET_KEY || 'minioadmin';
   process.env.MINIO_BUCKET = process.env.MINIO_BUCKET || 'medibook-records';
   process.env.CLINIC_TIMEZONE = 'Asia/Kolkata';
+  process.env.ENABLE_DEV_ENDPOINTS = 'true';
 
   console.log('🐳 Starting Testcontainers (pgvector/pgvector:pg16 + redis:7-alpine)...');
 

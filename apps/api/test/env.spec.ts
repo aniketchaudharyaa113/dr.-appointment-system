@@ -81,4 +81,27 @@ describe('Environment Schema Validation (Fail-Fast)', () => {
       expect(paths).toContain('LIVEKIT_API_KEY');
     }
   });
+
+  it('rejects ENABLE_DEV_ENDPOINTS=true when NODE_ENV=production (P2-12)', () => {
+    const prodDev = EnvSchema.safeParse({
+      ...baseValid,
+      NODE_ENV: 'production',
+      PAYMENT_PROVIDER: 'RAZORPAY',
+      RAZORPAY_KEY_ID: 'rzp_live_123',
+      RAZORPAY_KEY_SECRET: 'rzp_live_secret_123',
+      RAZORPAY_WEBHOOK_SECRET: 'rzp_live_whsec_123',
+      JWT_SECRET: 'a_very_long_production_secret_32_chars_ok',
+      COOKIE_SECRET: 'a_very_long_production_cookie_secret_ok',
+      LIVEKIT_API_KEY: 'livekit_live_key',
+      LIVEKIT_API_SECRET: 'livekit_live_secret_32_characters_minimum',
+      MINIO_ACCESS_KEY: 'minio_real_access_key',
+      MINIO_SECRET_KEY: 'minio_real_secret_key',
+      ENABLE_DEV_ENDPOINTS: true,
+    });
+    expect(prodDev.success).toBe(false);
+    if (!prodDev.success) {
+      const paths = prodDev.error.issues.map((i) => i.path.join('.'));
+      expect(paths).toContain('ENABLE_DEV_ENDPOINTS');
+    }
+  });
 });
