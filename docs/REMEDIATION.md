@@ -21,7 +21,7 @@ All fixes are committed atomically on `main` (baseline tag: `pre-agent-baseline`
 ## Phase 2 — P1: Broken or Missing Core Flows
 - [x] **P1-1** (`66d8523`): State machine in `appointment-state.ts` (LIVE -> IN_PROGRESS, ENDED -> COMPLETED, NO_SHOW sweep for expired confirmed appts + outbox events); consultation room UI controls for doctor start/end and red phone action
 - [x] **P1-2** (`66d8523`): Safe session status endpoint with upsert, transition validation, doctor-only restriction for LIVE/ENDED, and CONFIRMED/IN_PROGRESS requirement
-- [x] **P1-3** (`PENDING_COMMIT`): Chat, uploads, vitals guarded to CONFIRMED/IN_PROGRESS/COMPLETED; 7-day post-consultation window checked against `consultation.endedAt`; socket Zod schema validation & 4000 char cap; REST POST `/messages` emits to socket room; aligned socket `join_room` to deny non-participants (including ADMIN)
+- [x] **P1-3** (`1bce02b`): Chat, uploads, vitals guarded to CONFIRMED/IN_PROGRESS/COMPLETED; 7-day post-consultation window checked against `consultation.endedAt`; socket Zod schema validation & 4000 char cap; REST POST `/messages` emits to socket room; aligned socket `join_room` to deny non-participants (including ADMIN)
 - [ ] **P1-4**: Wire `WaitlistService.offerCancelledSlotToNext` into cancel/expiry/leave/refund via outbox, atomic claim w/ `updateMany`, leave-waitlist endpoint, offer expiration worker job
 - [ ] **P1-5**: Review model endpoint `POST /appointments/:id/review`, aggregate/denormalized rating calculation, doctor reviews UI
 - [ ] **P1-6**: `PATCH /lab-orders/:id` for ordering doctor with Zod schema, surface results in Health Passport
