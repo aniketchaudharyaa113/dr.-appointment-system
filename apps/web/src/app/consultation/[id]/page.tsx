@@ -15,14 +15,13 @@ import {
   Send,
   Paperclip,
   CheckCheck,
-  FileText,
   ShieldCheck,
   Bot,
-  User,
   AlertCircle,
   Download,
 } from 'lucide-react';
 import { fetchApi, formatIstTime, getAuthToken, getCurrentUser } from '@/lib/api';
+import { VitalsLabsPanel } from '@/components/clinical/vitals-labs-panel';
 
 interface ChatMessage {
   id: string;
@@ -70,8 +69,8 @@ export default function ConsultationRoomPage() {
   const [isMicOn, setIsMicOn] = useState(true);
   const [livekitStatus, setLivekitStatus] = useState<string>('Disconnected');
   const [livekitError, setLivekitError] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<'video' | 'prescription' | 'copilot'>(
-    initialTab === 'prescription' ? 'prescription' : 'video',
+  const [activeTab, setActiveTab] = useState<'video' | 'vitals' | 'prescription' | 'copilot'>(
+    initialTab === 'prescription' ? 'prescription' : initialTab === 'vitals' ? 'vitals' : 'video',
   );
 
   // Chat state
@@ -467,7 +466,14 @@ export default function ConsultationRoomPage() {
             onClick={() => setActiveTab('video')}
             className={`px-3 py-1.5 rounded-lg ${activeTab === 'video' ? 'bg-white dark:bg-slate-900 text-teal-600 shadow-xs' : 'text-slate-500'}`}
           >
-            Video & Chat
+            Video &amp; Chat
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab('vitals')}
+            className={`px-3 py-1.5 rounded-lg ${activeTab === 'vitals' ? 'bg-white dark:bg-slate-900 text-teal-600 shadow-xs' : 'text-slate-500'}`}
+          >
+            Vitals &amp; Labs
           </button>
           <button
             type="button"
@@ -759,6 +765,10 @@ export default function ConsultationRoomPage() {
             </div>
           )}
         </div>
+      )}
+
+      {activeTab === 'vitals' && (
+        <VitalsLabsPanel appointmentId={appointmentId} isDoctor={isDoctor} />
       )}
 
       {activeTab === 'copilot' && isDoctor && (
