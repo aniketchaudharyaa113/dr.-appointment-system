@@ -21,6 +21,16 @@ export interface WorkerEngineOptions {
   refundExecutor?: RefundExecutor;
 }
 
+export function escapeHtml(str?: string | null): string {
+  if (!str) return '';
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
+
 export class WorkerEngine {
   public readonly queueConnection: Redis;
   public readonly workerConnection: Redis;
@@ -264,8 +274,14 @@ export class WorkerEngine {
       timeStyle: 'short',
     }).format(appt.slotTime);
 
+    const safePatientName = escapeHtml(appt.patient.name);
+    const safeDoctorName = escapeHtml(appt.doctor.user.name);
+    const safeSpecialty = escapeHtml(appt.doctor.specialty);
+    const safeBookingRef = escapeHtml(appt.bookingRef || appt.id.slice(0, 8));
+    const safeConsultMode = escapeHtml(appt.consultationMode);
+
     const title = `Appointment Confirmed (${appt.bookingRef || appt.id.slice(0, 8)})`;
-    const body = `Your ${appt.consultationMode} consultation with ${appt.doctor.user.name} (${appt.doctor.specialty}) is confirmed for ${istTime} IST.`;
+    const body = `Your ${appt.consultationMode} consultation with Dr. ${appt.doctor.user.name} (${appt.doctor.specialty}) is confirmed for ${istTime} IST.`;
 
     // 1. In-app notification row for patient
     await this.prisma.notification.create({
@@ -282,13 +298,41 @@ export class WorkerEngine {
       },
     });
 
-    // 2. Real email via Nodemailer -> Mailpit
+    // 2. Real email to patient via Nodemailer -> Mailpit (escaped HTML)
     await this.mailer.sendMail({
       to: appt.patient.email,
       subject: `MediBook: ${title}`,
       text: `${body}\n\nBooking Reference: ${appt.bookingRef}\nManage your appointment in MediBook.`,
-      html: `<p>${body}</p><p><strong>Booking Reference:</strong> ${appt.bookingRef}</p>`,
+      html: `<p>Your <strong>${safeConsultMode}</strong> consultation with Dr. <strong>${safeDoctorName}</strong> (${safeSpecialty}) is confirmed for <strong>${escapeHtml(istTime)} IST</strong>.</p><p><strong>Booking Reference:</strong> ${safeBookingRef}</p>`,
     });
+
+    // P1-10 (a): Notify doctor as well
+    if (appt.doctor?.userId && appt.doctor?.user?.email) {
+      const docTitle = `New Appointment Confirmed (${appt.bookingRef || appt.id.slice(0, 8)})`;
+      const docBody = `New ${appt.consultationMode} consultation with patient ${appt.patient.name} confirmed for ${istTime} IST.`;
+
+      await this.prisma.notification.create({
+        data: {
+          userId: appt.doctor.userId,
+          type: 'APPOINTMENT_CONFIRMED',
+          title: docTitle,
+          body: docBody,
+          metadata: {
+            appointmentId: appt.id,
+            bookingRef: appt.bookingRef,
+            patientId: appt.patientId,
+            slotTime: appt.slotTime.toISOString(),
+          },
+        },
+      });
+
+      await this.mailer.sendMail({
+        to: appt.doctor.user.email,
+        subject: `MediBook: ${docTitle}`,
+        text: `${docBody}\n\nBooking Reference: ${appt.bookingRef}`,
+        html: `<p>You have a new <strong>${safeConsultMode}</strong> consultation with patient <strong>${safePatientName}</strong> confirmed for <strong>${escapeHtml(istTime)} IST</strong>.</p><p><strong>Booking Reference:</strong> ${safeBookingRef}</p>`,
+      });
+    }
 
     // 3. Schedule 24h and 1h delayed reminder jobs in BullMQ
     const nowMs = Date.now();
@@ -353,13 +397,19 @@ export class WorkerEngine {
     if (!appt) return;
 
     const isExpired = eventType === 'APPOINTMENT_EXPIRED';
+    const safeBookingRef = escapeHtml(appt.bookingRef || appt.id.slice(0, 8));
+    const safeDoctorName = escapeHtml(appt.doctor.user.name);
+    const safePatientName = escapeHtml(appt.patient.name);
+    const safeReason = escapeHtml(reason || appt.cancellationReason || 'Cancelled');
+
     const title = isExpired
       ? `Appointment Payment Window Expired (${appt.bookingRef || appt.id.slice(0, 8)})`
       : `Appointment Cancelled (${appt.bookingRef || appt.id.slice(0, 8)})`;
     const body = isExpired
-      ? `Your unpaid reservation with ${appt.doctor.user.name} expired and the slot was released.`
-      : `Your appointment with ${appt.doctor.user.name} was cancelled. Reason: ${reason || appt.cancellationReason || 'Cancelled'}.`;
+      ? `Your unpaid reservation with Dr. ${appt.doctor.user.name} expired and the slot was released.`
+      : `Your appointment with Dr. ${appt.doctor.user.name} was cancelled. Reason: ${reason || appt.cancellationReason || 'Cancelled'}.`;
 
+    // 1. Notify patient (in-app & email with escaped HTML)
     await this.prisma.notification.create({
       data: {
         userId: appt.patientId,
@@ -374,7 +424,39 @@ export class WorkerEngine {
       to: appt.patient.email,
       subject: `MediBook: ${title}`,
       text: body,
+      html: isExpired
+        ? `<p>Your unpaid reservation with Dr. <strong>${safeDoctorName}</strong> expired and the slot was released.</p><p><strong>Booking Reference:</strong> ${safeBookingRef}</p>`
+        : `<p>Your appointment with Dr. <strong>${safeDoctorName}</strong> was cancelled.</p><p><strong>Reason:</strong> ${safeReason}</p><p><strong>Booking Reference:</strong> ${safeBookingRef}</p>`,
     });
+
+    // P1-10 (a): Notify doctor as well
+    if (appt.doctor?.userId && appt.doctor?.user?.email) {
+      const docTitle = isExpired
+        ? `Slot Payment Expired (${safeBookingRef})`
+        : `Appointment Cancelled (${safeBookingRef})`;
+      const docBody = isExpired
+        ? `Unpaid reservation by patient ${appt.patient.name} expired and the slot was released.`
+        : `Appointment with patient ${appt.patient.name} was cancelled. Reason: ${reason || appt.cancellationReason || 'Cancelled'}.`;
+
+      await this.prisma.notification.create({
+        data: {
+          userId: appt.doctor.userId,
+          type: eventType,
+          title: docTitle,
+          body: docBody,
+          metadata: { appointmentId: appt.id, bookingRef: appt.bookingRef },
+        },
+      });
+
+      await this.mailer.sendMail({
+        to: appt.doctor.user.email,
+        subject: `MediBook: ${docTitle}`,
+        text: docBody,
+        html: isExpired
+          ? `<p>Unpaid reservation by patient <strong>${safePatientName}</strong> expired and the slot was released.</p><p><strong>Booking Reference:</strong> ${safeBookingRef}</p>`
+          : `<p>Appointment with patient <strong>${safePatientName}</strong> was cancelled.</p><p><strong>Reason:</strong> ${safeReason}</p><p><strong>Booking Reference:</strong> ${safeBookingRef}</p>`,
+      });
+    }
   }
 
   private async handleRefundDispatch(refundId?: string) {
@@ -420,14 +502,21 @@ export class WorkerEngine {
     if (!appointmentId) return;
     const appt = await this.prisma.appointment.findUnique({
       where: { id: appointmentId },
-      include: { patient: true },
+      include: {
+        patient: true,
+        doctor: { include: { user: true } },
+      },
     });
     if (!appt) return;
 
     const amountInr = ((payload.amountPaise || 0) / 100).toFixed(2);
-    const title = `Refund Initiated (₹${amountInr})`;
+    const safeBookingRef = escapeHtml(appt.bookingRef || appt.id);
+    const safeReason = escapeHtml(payload.reason || 'Refunded');
+
+    const title = `Refund Processed (₹${amountInr})`;
     const body = `A refund of ₹${amountInr} has been processed for booking ${appt.bookingRef || appt.id}. Reason: ${payload.reason || 'Refunded'}.`;
 
+    // 1. In-app notification and email to patient
     await this.prisma.notification.create({
       data: {
         userId: appt.patientId,
@@ -442,7 +531,31 @@ export class WorkerEngine {
       to: appt.patient.email,
       subject: `MediBook: ${title}`,
       text: body,
+      html: `<p>A refund of <strong>₹${amountInr}</strong> has been processed for booking <strong>${safeBookingRef}</strong>.</p><p><strong>Reason:</strong> ${safeReason}</p>`,
     });
+
+    // P1-10 (a): Notify doctor as well
+    if (appt.doctor?.userId && appt.doctor?.user?.email) {
+      const docTitle = `Refund Processed for Booking (${safeBookingRef})`;
+      const docBody = `A refund of ₹${amountInr} was processed for patient ${appt.patient.name}'s appointment (${appt.bookingRef || appt.id}). Reason: ${payload.reason || 'Refunded'}.`;
+
+      await this.prisma.notification.create({
+        data: {
+          userId: appt.doctor.userId,
+          type: 'PAYMENT_REFUNDED',
+          title: docTitle,
+          body: docBody,
+          metadata: payload,
+        },
+      });
+
+      await this.mailer.sendMail({
+        to: appt.doctor.user.email,
+        subject: `MediBook: ${docTitle}`,
+        text: docBody,
+        html: `<p>A refund of <strong>₹${amountInr}</strong> was processed for patient <strong>${escapeHtml(appt.patient.name)}</strong>'s appointment (${safeBookingRef}).</p><p><strong>Reason:</strong> ${safeReason}</p>`,
+      });
+    }
   }
 
   private async handleWaitlistOffered(payload: Record<string, any>) {

@@ -1,17 +1,78 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useI18n, type Locale } from '@/lib/i18n';
-import { getCurrentUser, setCurrentUser, type UserSession } from '@/lib/api';
-import { Activity, ShieldAlert, Calendar, Stethoscope, User, Moon, Sun, Globe, LogOut } from 'lucide-react';
+import { getCurrentUser, setCurrentUser, fetchApi, formatIstTime, type UserSession } from '@/lib/api';
+import {
+  Activity,
+  ShieldAlert,
+  Calendar,
+  Stethoscope,
+  User,
+  Moon,
+  Sun,
+  Globe,
+  LogOut,
+  Bell,
+  CheckCheck,
+} from 'lucide-react';
 
 export function Navbar() {
   const { t, locale, setLocale } = useI18n();
   const pathname = usePathname();
+  const queryClient = useQueryClient();
   const [user, setUser] = useState<UserSession | null>(null);
   const [isDark, setIsDark] = useState(false);
+  const [isNotifOpen, setIsNotifOpen] = useState(false);
+  const notifRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (notifRef.current && !notifRef.current.contains(e.target as Node)) {
+        setIsNotifOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  const notifsQuery = useQuery({
+    queryKey: ['my-notifications', user?.id],
+    enabled: Boolean(user?.token),
+    queryFn: () =>
+      fetchApi<
+        Array<{
+          id: string;
+          title: string;
+          body: string;
+          isRead: boolean;
+          createdAt: string;
+        }>
+      >('/notifications'),
+    refetchInterval: 30000,
+  });
+
+  const markReadMutation = useMutation({
+    mutationFn: (id: string) =>
+      fetchApi(`/notifications/${id}/read`, { method: 'POST' }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['my-notifications', user?.id] });
+    },
+  });
+
+  const markAllReadMutation = useMutation({
+    mutationFn: () =>
+      fetchApi('/notifications/read-all', { method: 'POST' }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['my-notifications', user?.id] });
+    },
+  });
+
+  const notifications = notifsQuery.data || [];
+  const unreadCount = notifications.filter((n) => !n.isRead).length;
 
   useEffect(() => {
     const syncUser = () => setUser(getCurrentUser());
@@ -132,6 +193,87 @@ export function Navbar() {
           >
             {isDark ? <Sun className="w-4 h-4 text-amber-400" /> : <Moon className="w-4 h-4 text-slate-600" />}
           </button>
+
+          {/* Notifications Bell (P1-10) */}
+          {user && (
+            <div className="relative" ref={notifRef}>
+              <button
+                type="button"
+                onClick={() => setIsNotifOpen((prev) => !prev)}
+                className="relative p-2 rounded-lg text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-900 transition-colors"
+                aria-label="Notifications"
+                title="Notifications"
+              >
+                <Bell className="w-4 h-4 text-slate-600 dark:text-slate-300" />
+                {unreadCount > 0 && (
+                  <span className="absolute 1 top-1 right-1 flex h-4 min-w-[16px] px-1 items-center justify-center rounded-full bg-rose-500 text-[9px] font-extrabold text-white ring-2 ring-white dark:ring-slate-950">
+                    {unreadCount > 9 ? '9+' : unreadCount}
+                  </span>
+                )}
+              </button>
+
+              {/* Notification Popover */}
+              {isNotifOpen && (
+                <div className="absolute right-0 mt-2 w-80 sm:w-96 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xl overflow-hidden z-50">
+                  <div className="flex items-center justify-between p-3.5 border-b border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-800/40">
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-xs font-bold text-slate-900 dark:text-white">Notifications</span>
+                      {unreadCount > 0 && (
+                        <span className="text-[10px] font-bold px-1.5 py-0.2 rounded-full bg-teal-100 dark:bg-teal-950 text-teal-700 dark:text-teal-300">
+                          {unreadCount} new
+                        </span>
+                      )}
+                    </div>
+                    {unreadCount > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => markAllReadMutation.mutate()}
+                        className="text-[11px] font-semibold text-teal-600 dark:text-teal-400 hover:underline flex items-center gap-1"
+                      >
+                        <CheckCheck className="w-3 h-3" />
+                        Mark all read
+                      </button>
+                    )}
+                  </div>
+
+                  <div className="max-h-80 overflow-y-auto divide-y divide-slate-100 dark:divide-slate-800/60">
+                    {notifications.length > 0 ? (
+                      notifications.map((notif) => (
+                        <div
+                          key={notif.id}
+                          onClick={() => {
+                            if (!notif.isRead) markReadMutation.mutate(notif.id);
+                          }}
+                          className={`p-3 text-left transition-colors cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800/50 ${
+                            !notif.isRead ? 'bg-teal-50/40 dark:bg-teal-950/20' : ''
+                          }`}
+                        >
+                          <div className="flex items-start justify-between gap-2">
+                            <p className={`text-xs ${!notif.isRead ? 'font-bold text-slate-900 dark:text-white' : 'font-medium text-slate-700 dark:text-slate-300'}`}>
+                              {notif.title}
+                            </p>
+                            {!notif.isRead && (
+                              <span className="w-2 h-2 rounded-full bg-teal-500 flex-shrink-0 mt-1" />
+                            )}
+                          </div>
+                          <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5 line-clamp-2">
+                            {notif.body}
+                          </p>
+                          <span className="text-[10px] text-slate-400 mt-1 block">
+                            {formatIstTime(notif.createdAt)}
+                          </span>
+                        </div>
+                      ))
+                    ) : (
+                      <div className="p-8 text-center text-xs text-slate-400">
+                        No notifications yet
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
 
           {/* User Auth Info */}
           {user ? (

@@ -52,4 +52,13 @@ export class NotificationsController {
       data: { isRead: true },
     });
   }
+
+  @Post('read-all')
+  @ApiOperation({ summary: 'Mark all in-app notifications as read' })
+  async markAllRead(@CurrentUser() user: JwtPayload) {
+    return this.prisma.notification.updateMany({
+      where: { userId: user.sub, isRead: false },
+      data: { isRead: true },
+    });
+  }
 }

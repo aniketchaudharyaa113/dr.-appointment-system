@@ -141,7 +141,7 @@ describe('Slice 2: Real Outbox Relay, BullMQ Workers, Mailpit, Reminders, Crash 
   }
 
   it('Outbox relay -> BullMQ (jobId=eventId) -> in-app Notification + Mailpit email + 24h/1h reminders + cancel cleanup', async () => {
-    const { patient, appt } = await seedAppointment(48);
+    const { patient, doctor, appt } = await seedAppointment(48);
     const engine = new WorkerEngine({
       prisma,
       redisUrl,
@@ -166,17 +166,22 @@ describe('Slice 2: Real Outbox Relay, BullMQ Workers, Mailpit, Reminders, Crash 
       // Verify in-app notification row & Mailpit email & delayed reminders
       await waitUntil(async () => {
         const notifs = await prisma.notification.findMany({ where: { userId: patient.id } });
-        return notifs.length >= 1;
+        const docNotifs = await prisma.notification.findMany({ where: { userId: doctor.userId } });
+        return notifs.length >= 1 && docNotifs.length >= 1;
       });
 
       const notifs = await prisma.notification.findMany({ where: { userId: patient.id } });
       expect(notifs[0].type).toBe('APPOINTMENT_CONFIRMED');
 
+      const docNotifs = await prisma.notification.findMany({ where: { userId: doctor.userId } });
+      expect(docNotifs.length).toBeGreaterThanOrEqual(1);
+      expect(docNotifs[0].type).toBe('APPOINTMENT_CONFIRMED');
+
       // Check Mailpit received the email
       const mpRes = await fetch(`${mailpitApiUrl}/messages`);
       const mpData = (await mpRes.json()) as { total: number; messages: Array<{ Subject: string; To: Array<{ Address: string }> }> };
       expect(mpData.total).toBeGreaterThanOrEqual(1);
-      expect(mpData.messages[0].To[0].Address).toBe(patient.email);
+      expect(mpData.messages.some((m) => m.To[0].Address === patient.email)).toBe(true);
 
       // Check 24h and 1h delayed jobs exist
       const rem24 = await engine.reminderQueue.getJob(`reminder-24h-${appt.id}`);
