@@ -2,9 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [main, rebuild/nest-next]
+    branches: [main]
   pull_request:
-    branches: [main, rebuild/nest-next]
+    branches: [main]
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
