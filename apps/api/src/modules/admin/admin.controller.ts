@@ -16,7 +16,13 @@ import { RolesGuard } from '../identity/guards/roles.guard';
 import { Roles } from '../identity/decorators/roles.decorator';
 import { CurrentUser } from '../identity/decorators/current-user.decorator';
 import { ZodValidationPipe } from '../../common/pipes/zod-validation.pipe';
-import { JwtPayload, VerifyDoctorSchema, UuidSchema } from '@medibook/shared';
+import {
+  JwtPayload,
+  VerifyDoctorSchema,
+  UuidSchema,
+  AdminCreateUserSchema,
+  AdminCreateUserInput,
+} from '@medibook/shared';
 import { DoctorVerificationStatus } from '@prisma/client';
 
 @ApiTags('Admin')
@@ -54,5 +60,19 @@ export class AdminController {
       ip,
       userAgent,
     );
+  }
+
+  @Post('users')
+  @ApiOperation({ summary: 'Create ADMIN or DRIVER user (Admin only)' })
+  async createPrivilegedUser(
+    @Body(new ZodValidationPipe(AdminCreateUserSchema)) body: AdminCreateUserInput,
+    @CurrentUser() admin: JwtPayload,
+    @Req() req: FastifyRequest,
+  ) {
+    const ip =
+      (req.headers['x-forwarded-for'] as string)?.split(',')[0].trim() ||
+      req.ip;
+    const userAgent = req.headers['user-agent'];
+    return this.adminService.createPrivilegedUser(body, admin.sub, ip, userAgent);
   }
 }

@@ -7,6 +7,8 @@ import {
 } from '../constants';
 
 export const UserRoleSchema = z.enum(USER_ROLES);
+export const PublicRegisterRoleSchema = z.enum(['PATIENT', 'DOCTOR']);
+export const AdminCreateRoleSchema = z.enum(['ADMIN', 'DRIVER']);
 export const ConsultationModeSchema = z.enum(CONSULTATION_MODES);
 export const AppointmentStatusSchema = z.enum(APPOINTMENT_STATUSES);
 export const PaymentStatusSchema = z.enum(PAYMENT_STATUSES);
@@ -14,10 +16,10 @@ export const UuidSchema = z.string().uuid();
 
 export const RegisterUserSchema = z.object({
   email: z.string().email(),
-  password: z.string().min(8, 'Password must be at least 8 characters long'),
+  password: z.string().min(8, 'Password must be at least 8 characters long').max(128),
   name: z.string().min(2, 'Name must be at least 2 characters'),
   phone: z.string().optional(),
-  role: UserRoleSchema.default('PATIENT'),
+  role: PublicRegisterRoleSchema.default('PATIENT'),
   specialty: z.string().optional(),
   qualifications: z.string().optional(),
   clinicName: z.string().optional(),
@@ -28,6 +30,17 @@ export const RegisterUserSchema = z.object({
   licenseNumber: z.string().optional(),
 });
 export type RegisterUserInput = z.infer<typeof RegisterUserSchema>;
+
+export const AdminCreateUserSchema = z.object({
+  email: z.string().email(),
+  password: z.string().min(8, 'Password must be at least 8 characters long').max(128),
+  name: z.string().min(2, 'Name must be at least 2 characters'),
+  phone: z.string().optional(),
+  role: AdminCreateRoleSchema,
+  vehicleNumber: z.string().min(3).max(30).optional(),
+  licensePlate: z.string().max(30).optional(),
+});
+export type AdminCreateUserInput = z.infer<typeof AdminCreateUserSchema>;
 
 export const LoginSchema = z.object({
   email: z.string().email(),

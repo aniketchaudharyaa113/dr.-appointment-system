@@ -3,6 +3,7 @@ import {
   ConflictException,
   UnauthorizedException,
   NotFoundException,
+  ForbiddenException,
   Inject,
 } from '@nestjs/common';
 import * as argon2 from 'argon2';
@@ -76,6 +77,12 @@ export class AuthService {
     ipAddress?: string,
     userAgent?: string,
   ) {
+    if (input.role !== 'PATIENT' && input.role !== 'DOCTOR') {
+      throw new ForbiddenException(
+        'Public registration is restricted to PATIENT or DOCTOR roles',
+      );
+    }
+
     const existing = await this.prisma.user.findUnique({
       where: { email: input.email.toLowerCase() },
     });
