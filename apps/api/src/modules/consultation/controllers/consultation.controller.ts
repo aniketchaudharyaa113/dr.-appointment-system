@@ -28,6 +28,7 @@ import { LiveKitService } from '../services/livekit.service';
 import { ChatService } from '../services/chat.service';
 import { AttachmentService } from '../services/attachment.service';
 import { PrescriptionService } from '../services/prescription.service';
+import { ClinicalService } from '../services/clinical.service';
 
 const MessagesQuerySchema = z.object({
   limit: z.coerce.number().int().positive().max(200).default(50),
@@ -44,6 +45,7 @@ export class ConsultationController {
     @Inject(ChatService) private readonly chatService: ChatService,
     @Inject(AttachmentService) private readonly attachmentService: AttachmentService,
     @Inject(PrescriptionService) private readonly prescriptionService: PrescriptionService,
+    @Inject(ClinicalService) private readonly clinicalService: ClinicalService,
   ) {}
 
   @Post(':id/consent')
@@ -185,5 +187,66 @@ export class ConsultationController {
     @CurrentUser() user: JwtPayload,
   ) {
     return this.prescriptionService.getPrescription(appointmentId, user.sub);
+  }
+
+  @Post(':id/vitals')
+  @ApiOperation({ summary: 'Record clinical vital signs for an appointment' })
+  async recordVitals(
+    @Param('id', new ZodValidationPipe(UuidSchema)) appointmentId: string,
+    @CurrentUser() user: JwtPayload,
+    @Body(
+      new ZodValidationPipe(
+        z.object({
+          systolicBp: z.number().int().min(50).max(250).optional(),
+          diastolicBp: z.number().int().min(30).max(180).optional(),
+          heartRate: z.number().int().min(30).max(250).optional(),
+          spO2: z.number().min(50).max(100).optional(),
+          temperatureF: z.number().min(90).max(110).optional(),
+          weightKg: z.number().min(1).max(350).optional(),
+          bloodGlucose: z.number().min(20).max(800).optional(),
+        }),
+      ),
+    )
+    body: any,
+  ) {
+    return this.clinicalService.recordVitals(appointmentId, user.sub, body);
+  }
+
+  @Get(':id/vitals')
+  @ApiOperation({ summary: 'Get vital signs recorded for an appointment' })
+  async getVitals(
+    @Param('id', new ZodValidationPipe(UuidSchema)) appointmentId: string,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.clinicalService.getVitals(appointmentId, user.sub);
+  }
+
+  @Post(':id/lab-orders')
+  @ApiOperation({ summary: 'Doctor orders diagnostic laboratory test' })
+  async createLabOrder(
+    @Param('id', new ZodValidationPipe(UuidSchema)) appointmentId: string,
+    @CurrentUser() user: JwtPayload,
+    @Body(
+      new ZodValidationPipe(
+        z.object({
+          testName: z.string().min(2).max(120),
+          testCode: z.string().min(2).max(30),
+          urgency: z.enum(['ROUTINE', 'URGENT', 'STAT']).optional(),
+          instructions: z.string().max(500).optional(),
+        }),
+      ),
+    )
+    body: any,
+  ) {
+    return this.clinicalService.createLabOrder(appointmentId, user.sub, body);
+  }
+
+  @Get(':id/lab-orders')
+  @ApiOperation({ summary: 'Get diagnostic lab orders for an appointment' })
+  async getLabOrders(
+    @Param('id', new ZodValidationPipe(UuidSchema)) appointmentId: string,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.clinicalService.getLabOrders(appointmentId, user.sub);
   }
 }
