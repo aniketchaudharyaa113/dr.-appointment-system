@@ -21,6 +21,8 @@ import {
   Download,
   Building,
   MessageSquare,
+  Plus,
+  Trash2,
 } from 'lucide-react';
 import { fetchApi, formatIstTime, getAuthToken, getCurrentUser } from '@/lib/api';
 import { VitalsLabsPanel } from '@/components/clinical/vitals-labs-panel';
@@ -83,13 +85,14 @@ export default function ConsultationRoomPage() {
   const [uploading, setUploading] = useState(false);
   const [chatError, setChatError] = useState<string | null>(null);
 
-  // Prescription form for doctors
+  // Prescription form for doctors (Multi-medicine with validation)
   const [rxDiagnosis, setRxDiagnosis] = useState('');
   const [rxAdvice, setRxAdvice] = useState('');
-  const [rxMedName, setRxMedName] = useState('');
-  const [rxMedDosage, setRxMedDosage] = useState('40mg');
-  const [rxMedFreq, setRxMedFreq] = useState('Once Daily');
-  const [rxMedDays, setRxMedDays] = useState(14);
+  const [rxMedicines, setRxMedicines] = useState<
+    Array<{ id: string; name: string; dosage: string; frequency: string; durationDays: number }>
+  >([
+    { id: 'med-1', name: '', dosage: '500mg', frequency: '1-0-1 (After Food)', durationDays: 5 },
+  ]);
   const [copilotNote, setCopilotNote] = useState<any>(null);
 
   const socketRef = useRef<Socket | null>(null);
@@ -392,26 +395,30 @@ export default function ConsultationRoomPage() {
   const saveRxMutation = useMutation({
     mutationFn: () => {
       const method = rxQuery.data ? 'PUT' : 'POST';
+      const validMeds = rxMedicines
+        .filter((m) => m.name.trim().length > 0)
+        .map((m) => ({
+          name: m.name.trim(),
+          dosage: m.dosage.trim() || 'Standard Dose',
+          frequency: m.frequency.trim() || '1-0-1',
+          durationDays: Math.max(1, Number(m.durationDays) || 1),
+        }));
+
       return fetchApi(`/consultations/${appointmentId}/prescriptions`, {
         method,
         body: JSON.stringify({
-          diagnosis: rxDiagnosis,
-          advice: rxAdvice,
-          medicines: rxMedName
-            ? [
-                {
-                  name: rxMedName,
-                  dosage: rxMedDosage,
-                  frequency: rxMedFreq,
-                  durationDays: Number(rxMedDays),
-                },
-              ]
-            : [],
+          diagnosis: rxDiagnosis.trim(),
+          advice: rxAdvice.trim(),
+          medicines: validMeds,
         }),
       });
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['consultation-prescription', appointmentId] });
+      alert('Prescription successfully saved and immutable version recorded.');
+    },
+    onError: (err: any) => {
+      alert(`Prescription failed: ${err.message || 'Validation error'}`);
     },
   });
 
@@ -799,60 +806,155 @@ export default function ConsultationRoomPage() {
           )}
 
           {isDoctor && (
-            <div className="pt-4 border-t border-slate-200 dark:border-slate-800 space-y-3 text-xs">
-              <h3 className="font-bold">Issue / Append Version</h3>
-              <input
-                type="text"
-                value={rxDiagnosis}
-                onChange={(e) => setRxDiagnosis(e.target.value)}
-                placeholder="Diagnosis"
-                className="w-full p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700"
-              />
-              <div className="grid grid-cols-4 gap-2">
+            <div className="pt-6 border-t border-slate-200 dark:border-slate-800 space-y-4 text-xs">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h3 className="font-bold text-sm text-slate-900 dark:text-white">
+                    {rxQuery.data ? 'Append New Prescription Version' : 'Issue Official Digital Prescription'}
+                  </h3>
+                  <p className="text-slate-400">
+                    Each version is cryptographically versioned and appended to the patient&apos;s longitudinal Health Passport.
+                  </p>
+                </div>
+              </div>
+
+              <div>
+                <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                  Primary Clinical Diagnosis *
+                </label>
                 <input
                   type="text"
-                  value={rxMedName}
-                  onChange={(e) => setRxMedName(e.target.value)}
-                  placeholder="Medicine"
-                  className="p-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700"
-                />
-                <input
-                  type="text"
-                  value={rxMedDosage}
-                  onChange={(e) => setRxMedDosage(e.target.value)}
-                  placeholder="Dosage"
-                  className="p-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700"
-                />
-                <input
-                  type="text"
-                  value={rxMedFreq}
-                  onChange={(e) => setRxMedFreq(e.target.value)}
-                  placeholder="Frequency"
-                  className="p-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700"
-                />
-                <input
-                  type="number"
-                  value={rxMedDays}
-                  onChange={(e) => setRxMedDays(Number(e.target.value))}
-                  placeholder="Days"
-                  className="p-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700"
+                  required
+                  value={rxDiagnosis}
+                  onChange={(e) => setRxDiagnosis(e.target.value)}
+                  placeholder="e.g. Essential Hypertension Grade II / Acute Bronchitis"
+                  className="w-full p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white"
                 />
               </div>
-              <input
-                type="text"
-                value={rxAdvice}
-                onChange={(e) => setRxAdvice(e.target.value)}
-                placeholder="Clinical advice"
-                className="w-full p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700"
-              />
-              <button
-                type="button"
-                disabled={saveRxMutation.isPending || rxDiagnosis.length < 3}
-                onClick={() => saveRxMutation.mutate()}
-                className="px-4 py-2 rounded-xl bg-teal-600 text-white font-bold"
-              >
-                {saveRxMutation.isPending ? 'Saving...' : 'Save Immutable Rx Version'}
-              </button>
+
+              {/* Multi-Medicine List */}
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <label className="font-semibold text-slate-700 dark:text-slate-300">
+                    Prescribed Medications ({rxMedicines.length}) *
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setRxMedicines((prev) => [
+                        ...prev,
+                        {
+                          id: `med-${Date.now()}`,
+                          name: '',
+                          dosage: '1 Tab',
+                          frequency: '1-0-1',
+                          durationDays: 5,
+                        },
+                      ])
+                    }
+                    className="px-2.5 py-1 rounded-lg bg-teal-50 dark:bg-teal-950/60 text-teal-700 dark:text-teal-300 border border-teal-200 dark:border-teal-800 text-[11px] font-bold flex items-center gap-1 hover:bg-teal-100"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>Add Medicine</span>
+                  </button>
+                </div>
+
+                <div className="space-y-2.5">
+                  {rxMedicines.map((med, idx) => (
+                    <div
+                      key={med.id}
+                      className="p-3 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 flex flex-col sm:flex-row items-start sm:items-center gap-2"
+                    >
+                      <span className="text-[10px] font-bold text-slate-400 w-5">{idx + 1}.</span>
+                      <input
+                        type="text"
+                        value={med.name}
+                        onChange={(e) => {
+                          const updated = [...rxMedicines];
+                          updated[idx].name = e.target.value;
+                          setRxMedicines(updated);
+                        }}
+                        placeholder="Drug / Brand Name (e.g. Telmisartan)"
+                        className="flex-1 p-2 rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs"
+                      />
+                      <input
+                        type="text"
+                        value={med.dosage}
+                        onChange={(e) => {
+                          const updated = [...rxMedicines];
+                          updated[idx].dosage = e.target.value;
+                          setRxMedicines(updated);
+                        }}
+                        placeholder="Dosage (e.g. 40mg)"
+                        className="w-24 p-2 rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs"
+                      />
+                      <input
+                        type="text"
+                        value={med.frequency}
+                        onChange={(e) => {
+                          const updated = [...rxMedicines];
+                          updated[idx].frequency = e.target.value;
+                          setRxMedicines(updated);
+                        }}
+                        placeholder="Freq (e.g. 1-0-0)"
+                        className="w-28 p-2 rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs"
+                      />
+                      <div className="flex items-center gap-1">
+                        <input
+                          type="number"
+                          min={1}
+                          value={med.durationDays}
+                          onChange={(e) => {
+                            const updated = [...rxMedicines];
+                            updated[idx].durationDays = Number(e.target.value);
+                            setRxMedicines(updated);
+                          }}
+                          placeholder="Days"
+                          className="w-16 p-2 rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs"
+                        />
+                        <span className="text-[10px] text-slate-400">d</span>
+                      </div>
+                      {rxMedicines.length > 1 && (
+                        <button
+                          type="button"
+                          onClick={() => setRxMedicines(rxMedicines.filter((_, i) => i !== idx))}
+                          className="p-1.5 text-slate-400 hover:text-rose-500 rounded-lg transition-colors"
+                          title="Remove medicine"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                  General Directions &amp; Clinical Advice
+                </label>
+                <textarea
+                  rows={2}
+                  value={rxAdvice}
+                  onChange={(e) => setRxAdvice(e.target.value)}
+                  placeholder="e.g. Low sodium diet, hydrate well, follow up in 14 days with repeat BP record"
+                  className="w-full p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white"
+                />
+              </div>
+
+              <div className="flex items-center justify-between pt-2">
+                <span className="text-[11px] text-slate-400">
+                  {rxDiagnosis.trim().length < 3 ? '⚠️ Enter diagnosis (min 3 chars)' : '✓ Validated and ready to issue'}
+                </span>
+                <button
+                  type="button"
+                  disabled={saveRxMutation.isPending || rxDiagnosis.trim().length < 3 || rxMedicines.every((m) => !m.name.trim())}
+                  onClick={() => saveRxMutation.mutate()}
+                  className="px-5 py-2.5 rounded-xl bg-teal-600 hover:bg-teal-700 disabled:opacity-50 text-white font-bold text-xs shadow-sm transition-colors"
+                >
+                  {saveRxMutation.isPending ? 'Signing Rx...' : 'Sign & Issue Digital Rx'}
+                </button>
+              </div>
             </div>
           )}
         </div>
