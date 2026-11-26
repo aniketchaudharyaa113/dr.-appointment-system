@@ -25,8 +25,8 @@ All fixes are committed atomically on `main` (baseline tag: `pre-agent-baseline`
 - [x] **P1-4** (`5525337`): Wire `AppointmentSlotFreed` outbox events into waitlist cascading offers, atomic claim with `updateMany` and mode support, `leaveWaitlist` endpoint with hold release and next-in-line cascade, offer expiration worker sweep
 - [x] **P1-5** (`f4c09ba`): Review model endpoint `POST /appointments/:id/review`, aggregate/denormalized rating calculation (`ratingAvg`, `ratingCount`), doctor reviews list UI & review modal for completed appointments
 - [x] **P1-6** (`86576b6`): `PATCH /lab-orders/:id` for ordering doctor with Zod schema (`UpdateLabResultsSchema`), completedAt and resultNotes migration, surfaced results and doctor notes in Health Passport
-- [ ] **P1-7**: Filter past slots in `holdSlot` & `bookAppointment` with minimum lead time and max advance
-- [ ] **P1-8**: Slot-hold hoarding prevention: `DELETE /appointments/hold` (release token), one active hold per patient in Redis, PATIENT-role restriction
+- [x] **P1-7** (`fc7fedb`): Filter out past slots and slots within 15-min lead time or >30-day advance in generation (`SlotService.getDoctorSlotsForDate`), hold, and booking alignment checks
+- [x] **P1-8** (`fc7fedb`): Slot-hold hoarding prevention: max 1 active hold lease per patient in Redis (`active_hold:<patientId>`) with auto-release of old holds, `DELETE /appointments/hold` endpoint with frontend release button, and PATIENT-role restriction on hold & book
 - [ ] **P1-9**: Doctor search SQL pagination, Haversine distance & rating filtering, AND condition for symptom+specialty, batch Redis slot checks
 - [ ] **P1-10**: Doctor notifications on booking/cancel/refund, HTML email escaping, notification dedup, navbar notifications bell/inbox UI
 - [ ] **P1-11**: Wire Admin and Doctor dashboards to real endpoints (pending doctors, verification, reconcile, real ledger, real audit, real earnings)
