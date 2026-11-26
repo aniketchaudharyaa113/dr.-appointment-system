@@ -18,6 +18,7 @@ import { ZodValidationPipe } from '../../common/pipes/zod-validation.pipe';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { CurrentUser } from './decorators/current-user.decorator';
 import { LoginRateLimitGuard } from './rate-limit/login-rate-limit.guard';
+import { RateLimit, RateLimitGuard } from '../../common/guards/rate-limit.guard';
 import {
   RegisterUserSchema,
   RegisterUserInput,
@@ -34,6 +35,8 @@ export class AuthController {
   constructor(@Inject(AuthService) private readonly authService: AuthService) {}
 
   @Post('register')
+  @UseGuards(RateLimitGuard)
+  @RateLimit({ keyPrefix: 'register', limit: 5, windowSeconds: 60 })
   @UsePipes(new ZodValidationPipe(RegisterUserSchema))
   @ApiOperation({ summary: 'Register a new patient or doctor account' })
   @ApiResponse({ status: 201, description: 'Account registered successfully' })
@@ -42,9 +45,7 @@ export class AuthController {
     @Req() req: FastifyRequest,
     @Res() res: FastifyReply,
   ) {
-    const ip =
-      (req.headers['x-forwarded-for'] as string)?.split(',')[0].trim() ||
-      req.ip;
+    const ip = req.ip;
     const userAgent = req.headers['user-agent'];
 
     const result = await this.authService.register(body, ip, userAgent);
@@ -74,9 +75,7 @@ export class AuthController {
     @Req() req: FastifyRequest,
     @Res() res: FastifyReply,
   ) {
-    const ip =
-      (req.headers['x-forwarded-for'] as string)?.split(',')[0].trim() ||
-      req.ip;
+    const ip = req.ip;
     const userAgent = req.headers['user-agent'];
 
     const result = await this.authService.login(body, ip, userAgent);
@@ -108,9 +107,7 @@ export class AuthController {
     const cookies = (req as any).cookies || {};
     const token = cookies.refreshToken || body?.refreshToken;
 
-    const ip =
-      (req.headers['x-forwarded-for'] as string)?.split(',')[0].trim() ||
-      req.ip;
+    const ip = req.ip;
     const userAgent = req.headers['user-agent'];
 
     const result = await this.authService.rotateRefreshToken(token, ip, userAgent);

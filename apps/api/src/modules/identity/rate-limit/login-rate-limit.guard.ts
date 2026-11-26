@@ -9,6 +9,15 @@ import {
 import { FastifyRequest } from 'fastify';
 import { RedisService } from '../../platform/redis/redis.service';
 
+const ATOMIC_INCR_EXPIRE_LUA = `
+local current = redis.call('INCR', KEYS[1])
+if current == 1 then
+  redis.call('EXPIRE', KEYS[1], tonumber(ARGV[1]))
+end
+local ttl = redis.call('TTL', KEYS[1])
+return { current, ttl }
+`;
+
 @Injectable()
 export class LoginRateLimitGuard implements CanActivate {
   constructor(@Inject(RedisService) private readonly redis: RedisService) {}
@@ -17,10 +26,7 @@ export class LoginRateLimitGuard implements CanActivate {
     const request = context.switchToHttp().getRequest<FastifyRequest>();
     const body = (request.body as Record<string, any>) || {};
     const email = (body.email as string)?.toLowerCase().trim() || 'unknown';
-    const ip =
-      (request.headers['x-forwarded-for'] as string)?.split(',')[0].trim() ||
-      request.ip ||
-      'unknown-ip';
+    const ip = request.ip || 'unknown-ip';
 
     const key = `ratelimit:login:${ip}:${email}`;
     const client = this.redis.getClient();
@@ -31,13 +37,16 @@ export class LoginRateLimitGuard implements CanActivate {
     }
 
     try {
-      const current = await client.incr(key);
-      if (current === 1) {
-        await client.expire(key, 60); // 1-minute window
-      }
+      const result = (await client.eval(
+        ATOMIC_INCR_EXPIRE_LUA,
+        1,
+        key,
+        '60',
+      )) as [number, number];
+      const current = Number(result?.[0] ?? 0);
+      const ttl = Math.max(1, Number(result?.[1] ?? 60));
 
       if (current > 5) {
-        const ttl = await client.ttl(key);
         throw new HttpException(
           {
             statusCode: HttpStatus.TOO_MANY_REQUESTS,

@@ -12,6 +12,7 @@ import { RolesGuard } from '../../identity/guards/roles.guard';
 import { Roles } from '../../identity/decorators/roles.decorator';
 import { CurrentUser } from '../../identity/decorators/current-user.decorator';
 import { ZodValidationPipe } from '../../../common/pipes/zod-validation.pipe';
+import { RateLimit, RateLimitGuard } from '../../../common/guards/rate-limit.guard';
 import {
   JwtPayload,
   AiTriageQuerySchema,
@@ -22,6 +23,8 @@ import { AiClientService } from '../services/ai-client.service';
 
 @ApiTags('AI Gateway')
 @Controller('ai')
+@UseGuards(RateLimitGuard)
+@RateLimit({ keyPrefix: 'ai', limit: 20, windowSeconds: 60 })
 export class AiController {
   constructor(
     @Inject(AiClientService) private readonly aiService: AiClientService,

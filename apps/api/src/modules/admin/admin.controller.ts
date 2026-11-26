@@ -48,9 +48,7 @@ export class AdminController {
     @CurrentUser() admin: JwtPayload,
     @Req() req: FastifyRequest,
   ) {
-    const ip =
-      (req.headers['x-forwarded-for'] as string)?.split(',')[0].trim() ||
-      req.ip;
+    const ip = req.ip;
     const userAgent = req.headers['user-agent'];
 
     return this.adminService.verifyDoctor(
@@ -69,9 +67,7 @@ export class AdminController {
     @CurrentUser() admin: JwtPayload,
     @Req() req: FastifyRequest,
   ) {
-    const ip =
-      (req.headers['x-forwarded-for'] as string)?.split(',')[0].trim() ||
-      req.ip;
+    const ip = req.ip;
     const userAgent = req.headers['user-agent'];
     return this.adminService.createPrivilegedUser(body, admin.sub, ip, userAgent);
   }

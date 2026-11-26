@@ -12,6 +12,7 @@ import { BookingService } from '../services/booking.service';
 import { JwtAuthGuard } from '../../identity/guards/jwt-auth.guard';
 import { CurrentUser } from '../../identity/decorators/current-user.decorator';
 import { ZodValidationPipe } from '../../../common/pipes/zod-validation.pipe';
+import { RateLimit, RateLimitGuard } from '../../../common/guards/rate-limit.guard';
 import {
   JwtPayload,
   HoldSlotSchema,
@@ -48,6 +49,8 @@ export class AppointmentController {
   }
 
   @Post('hold')
+  @UseGuards(RateLimitGuard)
+  @RateLimit({ keyPrefix: 'appt_hold', limit: 20, windowSeconds: 60 })
   @ApiOperation({ summary: 'Hold a slot for 10 minutes with Redis unguessable token lease' })
   async holdSlot(
     @Body(new ZodValidationPipe(HoldSlotSchema)) body: HoldSlotInput,
@@ -57,6 +60,8 @@ export class AppointmentController {
   }
 
   @Post('book')
+  @UseGuards(RateLimitGuard)
+  @RateLimit({ keyPrefix: 'appt_book', limit: 15, windowSeconds: 60 })
   @ApiOperation({ summary: 'Create PENDING_PAYMENT booking after verifying Redis hold token' })
   async bookAppointment(
     @Body(new ZodValidationPipe(BookAppointmentSchema)) body: BookAppointmentInput,

@@ -15,6 +15,7 @@ import { RolesGuard } from '../../identity/guards/roles.guard';
 import { Roles } from '../../identity/decorators/roles.decorator';
 import { CurrentUser } from '../../identity/decorators/current-user.decorator';
 import { ZodValidationPipe } from '../../../common/pipes/zod-validation.pipe';
+import { RateLimit, RateLimitGuard } from '../../../common/guards/rate-limit.guard';
 import {
   JwtPayload,
   UuidSchema,
@@ -83,7 +84,8 @@ export class AmbulanceController {
   }
 
   @Post('requests')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, RateLimitGuard)
+  @RateLimit({ keyPrefix: 'ambulance_req', limit: 10, windowSeconds: 60 })
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Patient initiates emergency ambulance dispatch' })
   async createRequest(

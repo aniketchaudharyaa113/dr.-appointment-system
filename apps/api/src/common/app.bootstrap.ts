@@ -17,6 +17,7 @@ import { MetricsService } from '../modules/platform/metrics/metrics.service';
 export async function createConfiguredApp(): Promise<NestFastifyApplication> {
   const adapter = new FastifyAdapter({
     logger: false,
+    trustProxy: 1,
     genReqId: (req: any) => {
       const incomingId = req.headers['x-request-id'] as string;
       return incomingId || randomUUID();
