@@ -32,6 +32,9 @@ interface HealthPassportResponse {
     urgency: string;
     status: string;
     instructions?: string | null;
+    resultsJson?: Record<string, any> | null;
+    resultNotes?: string | null;
+    completedAt?: string | null;
     doctorName: string;
     createdAt: string;
   }>;
@@ -168,19 +171,56 @@ export default function HealthPassportPage() {
               {data?.labOrders && data.labOrders.length > 0 ? (
                 <div className="space-y-3">
                   {data.labOrders.map((o) => (
-                    <div key={o.id} className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/60 flex justify-between gap-3">
-                      <div>
-                        <p className="font-bold text-sm">
-                          {o.testName} <span className="text-xs font-mono text-slate-500">({o.testCode})</span>
-                        </p>
-                        <p className="text-xs text-slate-500 mt-0.5">Ordered by {o.doctorName}</p>
+                    <div key={o.id} className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/60 space-y-2">
+                      <div className="flex justify-between items-start gap-3">
+                        <div>
+                          <p className="font-bold text-sm">
+                            {o.testName} <span className="text-xs font-mono text-slate-500">({o.testCode})</span>
+                          </p>
+                          <p className="text-xs text-slate-500 mt-0.5">Ordered by {o.doctorName}</p>
+                        </div>
+                        <div className="text-right">
+                          <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
+                            o.status === 'COMPLETED'
+                              ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300'
+                              : 'bg-cyan-100 text-cyan-700 dark:bg-cyan-950 dark:text-cyan-300'
+                          }`}>
+                            {o.status}
+                          </span>
+                          <p className="text-[10px] text-slate-500 mt-1">{o.urgency}</p>
+                        </div>
                       </div>
-                      <div className="text-right">
-                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-cyan-100 text-cyan-700 dark:bg-cyan-950 dark:text-cyan-300">
-                          {o.status}
-                        </span>
-                        <p className="text-[10px] text-slate-500 mt-1">{o.urgency}</p>
-                      </div>
+
+                      {/* Diagnostic Results & Doctor Notes */}
+                      {(o.resultsJson || o.resultNotes) && (
+                        <div className="pt-2 border-t border-slate-200/60 dark:border-slate-700/60 space-y-1">
+                          {o.resultsJson && (
+                            <div className="p-2.5 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-xs font-mono">
+                              <span className="text-[10px] font-sans font-bold uppercase tracking-wider text-slate-400 block mb-1">
+                                Laboratory Findings
+                              </span>
+                              {o.resultsJson.summary ? (
+                                <p className="font-sans text-xs text-slate-700 dark:text-slate-200">{String(o.resultsJson.summary)}</p>
+                              ) : (
+                                <pre className="text-[11px] whitespace-pre-wrap text-teal-700 dark:text-teal-300">
+                                  {JSON.stringify(o.resultsJson, null, 2)}
+                                </pre>
+                              )}
+                            </div>
+                          )}
+                          {o.resultNotes && (
+                            <p className="text-xs text-slate-600 dark:text-slate-300 italic">
+                              <span className="font-semibold not-italic text-slate-700 dark:text-slate-200">Doctor Note: </span>
+                              {o.resultNotes}
+                            </p>
+                          )}
+                          {o.completedAt && (
+                            <span className="text-[10px] text-slate-400 block">
+                              Completed {formatIstTime(o.completedAt)}
+                            </span>
+                          )}
+                        </div>
+                      )}
                     </div>
                   ))}
                 </div>

@@ -26,8 +26,10 @@ export interface CreateLabOrderDto {
 }
 
 export interface UpdateLabResultsDto {
-  status: 'SAMPLE_COLLECTED' | 'PROCESSING' | 'COMPLETED' | 'CANCELLED';
+  status?: 'SAMPLE_COLLECTED' | 'PROCESSING' | 'COMPLETED' | 'CANCELLED';
+  results?: string | Record<string, any>;
   resultsJson?: Record<string, any>;
+  resultNotes?: string;
 }
 
 @Injectable()
@@ -195,7 +197,7 @@ export class ClinicalService {
   }
 
   /**
-   * Updates diagnostic lab order results
+   * Updates diagnostic lab order results (Ordering doctor only)
    */
   async updateLabResults(orderId: string, userId: string, dto: UpdateLabResultsDto) {
     const order = await this.prisma.labOrder.findUnique({
@@ -211,11 +213,26 @@ export class ClinicalService {
       throw new ForbiddenException('Only the ordering physician can record laboratory results');
     }
 
+    let finalResultsJson: any = dto.resultsJson;
+    if (dto.results !== undefined) {
+      if (typeof dto.results === 'string') {
+        finalResultsJson = { summary: dto.results };
+      } else {
+        finalResultsJson = dto.results;
+      }
+    }
+
+    const nextStatus = dto.status || 'COMPLETED';
+    const isCompleted = nextStatus === 'COMPLETED' || finalResultsJson !== undefined;
+    const completedAt = isCompleted ? (order.completedAt || new Date()) : undefined;
+
     return this.prisma.labOrder.update({
       where: { id: orderId },
       data: {
-        status: dto.status,
-        resultsJson: dto.resultsJson !== undefined ? dto.resultsJson : undefined,
+        status: nextStatus,
+        resultsJson: finalResultsJson !== undefined ? finalResultsJson : undefined,
+        resultNotes: dto.resultNotes !== undefined ? dto.resultNotes : undefined,
+        completedAt,
       },
     });
   }
@@ -267,6 +284,9 @@ export class ClinicalService {
         urgency: o.urgency,
         status: o.status,
         instructions: o.instructions,
+        resultsJson: o.resultsJson,
+        resultNotes: o.resultNotes,
+        completedAt: o.completedAt ? o.completedAt.toISOString() : null,
         doctorName: o.doctor.user.name,
         createdAt: o.createdAt.toISOString(),
       })),
