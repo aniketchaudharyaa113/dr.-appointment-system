@@ -80,8 +80,15 @@ export class DoctorController {
     @Param('id', new ZodValidationPipe(UuidSchema)) doctorId: string,
     @Body(new ZodValidationPipe(LeaveRangeSchema))
     body: { startDate: string; endDate: string },
+    @CurrentUser() user: JwtPayload,
   ) {
-    return this.leaveService.previewLeaveImpact(doctorId, body.startDate, body.endDate);
+    return this.leaveService.previewLeaveImpact(
+      doctorId,
+      body.startDate,
+      body.endDate,
+      user.sub,
+      user.role,
+    );
   }
 
   @Post(':id/leaves')
@@ -101,6 +108,7 @@ export class DoctorController {
       body.endDate,
       body.reason,
       user.sub,
+      user.role,
     );
   }
 }
