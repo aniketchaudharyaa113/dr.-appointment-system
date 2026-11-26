@@ -12,10 +12,41 @@ export class MetricsService {
   public readonly ambulanceDispatchDuration: client.Histogram;
   public readonly ledgerZeroSumChecksTotal: client.Counter;
   public readonly activeSocketsGauge: client.Gauge;
+  public readonly bookingsTotal: client.Counter;
+  public readonly paymentCapturesTotal: client.Counter;
+  public readonly refundsTotal: client.Counter;
+  public readonly dlqSizeGauge: client.Gauge;
 
   constructor() {
     this.registry = new client.Registry();
     client.collectDefaultMetrics({ register: this.registry, prefix: 'medibook_' });
+
+    this.bookingsTotal = new client.Counter({
+      name: 'medibook_business_bookings_total',
+      help: 'Total number of appointment bookings created',
+      labelNames: ['mode', 'status'],
+      registers: [this.registry],
+    });
+
+    this.paymentCapturesTotal = new client.Counter({
+      name: 'medibook_business_payment_captures_total',
+      help: 'Total number of successfully captured payments',
+      labelNames: ['provider'],
+      registers: [this.registry],
+    });
+
+    this.refundsTotal = new client.Counter({
+      name: 'medibook_business_refunds_total',
+      help: 'Total number of payment refunds issued',
+      labelNames: ['reason_type'],
+      registers: [this.registry],
+    });
+
+    this.dlqSizeGauge = new client.Gauge({
+      name: 'medibook_dlq_size',
+      help: 'Current dead letter queue size',
+      registers: [this.registry],
+    });
 
     this.httpRequestsTotal = new client.Counter({
       name: 'medibook_http_requests_total',

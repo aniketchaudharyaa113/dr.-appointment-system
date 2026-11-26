@@ -29,4 +29,20 @@ describe('Prometheus /metrics Endpoint (Real HTTP)', () => {
     expect(metricsRes.body).toContain('medibook_http_requests_total{');
     expect(metricsRes.body).toContain('/api/health/ready');
   });
+
+  it('labels unknown / non-existent routes as unmatched_route rather than exploding cardinality with raw path', async () => {
+    const randomNotFound = await ctx.app.inject({
+      method: 'GET',
+      url: `/some/random/unmapped/path/${Date.now()}?token=secret123`,
+    });
+    expect(randomNotFound.statusCode).toBe(404);
+
+    const metricsRes = await ctx.app.inject({
+      method: 'GET',
+      url: '/metrics',
+    });
+    expect(metricsRes.statusCode).toBe(200);
+    expect(metricsRes.body).toContain('path="unmatched_route"');
+    expect(metricsRes.body).not.toContain('/some/random/unmapped/path');
+  });
 });

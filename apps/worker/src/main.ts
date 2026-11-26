@@ -72,6 +72,9 @@ async function bootstrap() {
         '# HELP medibook_worker_dlq_total Total jobs in dead-letter queue',
         '# TYPE medibook_worker_dlq_total gauge',
         `medibook_worker_dlq_total ${(dlqCounts.waiting ?? 0) + (dlqCounts.completed ?? 0)}`,
+        '# HELP medibook_worker_dlq_size Current DLQ backlog size',
+        '# TYPE medibook_worker_dlq_size gauge',
+        `medibook_worker_dlq_size ${dlqCounts.waiting ?? 0}`,
       ].join('\n');
       res.writeHead(200, { 'Content-Type': 'text/plain; version=0.0.4' });
       res.end(lines + '\n');

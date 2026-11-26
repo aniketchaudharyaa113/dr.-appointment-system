@@ -77,7 +77,9 @@ export async function createConfiguredApp(): Promise<NestFastifyApplication> {
     .getHttpAdapter()
     .getInstance()
     .addHook('onResponse', (request: any, reply: any, done: () => void) => {
-      const path = request.routeOptions?.url || request.url?.split('?')[0] || 'unknown';
+      const path =
+        request.routeOptions?.url ||
+        (reply.statusCode === 404 ? 'unmatched_route' : 'unknown');
       if (path !== '/metrics') {
         metricsService.httpRequestsTotal.inc({
           method: request.method || 'GET',
