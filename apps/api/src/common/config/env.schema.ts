@@ -46,12 +46,36 @@ export const EnvSchema = z
     AI_SERVICE_URL: z.string().default('http://localhost:8000'),
   })
   .superRefine((data, ctx) => {
-    if (data.NODE_ENV === 'production' && data.PAYMENT_PROVIDER === 'FAKE') {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ['PAYMENT_PROVIDER'],
-        message: 'PAYMENT_PROVIDER=FAKE is forbidden when NODE_ENV=production',
-      });
+    if (data.NODE_ENV === 'production') {
+      if (data.PAYMENT_PROVIDER === 'FAKE') {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['PAYMENT_PROVIDER'],
+          message: 'PAYMENT_PROVIDER=FAKE is forbidden when NODE_ENV=production',
+        });
+      }
+
+      const weakSecrets: Array<[keyof typeof data, string[]]> = [
+        ['JWT_SECRET', ['medibook-production-jwt-secret-key-32chars-min', 'changeme']],
+        ['COOKIE_SECRET', ['medibook-super-secure-cookie-secret-32-chars', 'changeme']],
+        ['LIVEKIT_API_KEY', ['devkey']],
+        ['LIVEKIT_API_SECRET', ['secret_32_characters_minimum_len', 'secret']],
+        ['MINIO_ACCESS_KEY', ['minioadmin']],
+        ['MINIO_SECRET_KEY', ['minioadmin']],
+        ['RAZORPAY_WEBHOOK_SECRET', ['webhook_secret_123']],
+        ['PAYMENT_WEBHOOK_SECRET', ['fake_webhook_secret_for_testing_123', 'dev_webhook_secret_key_for_hmac_verification']],
+      ];
+
+      for (const [key, forbidden] of weakSecrets) {
+        const val = data[key];
+        if (typeof val === 'string' && forbidden.includes(val)) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: [key],
+            message: `${String(key)} must not use a known weak/default value in production`,
+          });
+        }
+      }
     }
     if (data.PAYMENT_PROVIDER === 'FAKE' && !data.PAYMENT_WEBHOOK_SECRET) {
       ctx.addIssue({

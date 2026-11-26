@@ -48,4 +48,25 @@ describe('Environment Schema Validation (Fail-Fast)', () => {
     });
     expect(parsed.success).toBe(false);
   });
+
+  it('rejects known-weak default secrets when NODE_ENV=production', () => {
+    const weakProd = EnvSchema.safeParse({
+      ...baseValid,
+      NODE_ENV: 'production',
+      PAYMENT_PROVIDER: 'RAZORPAY',
+      RAZORPAY_KEY_ID: 'rzp_live_123',
+      RAZORPAY_KEY_SECRET: 'rzp_live_secret_123',
+      RAZORPAY_WEBHOOK_SECRET: 'rzp_live_whsec_123',
+      JWT_SECRET: 'medibook-production-jwt-secret-key-32chars-min',
+      MINIO_ACCESS_KEY: 'minioadmin',
+      LIVEKIT_API_KEY: 'devkey',
+    });
+    expect(weakProd.success).toBe(false);
+    if (!weakProd.success) {
+      const paths = weakProd.error.issues.map((i) => i.path.join('.'));
+      expect(paths).toContain('JWT_SECRET');
+      expect(paths).toContain('MINIO_ACCESS_KEY');
+      expect(paths).toContain('LIVEKIT_API_KEY');
+    }
+  });
 });

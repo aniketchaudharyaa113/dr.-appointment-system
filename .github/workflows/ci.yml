@@ -104,6 +104,18 @@ jobs:
         run: pnpm install --frozen-lockfile && npx playwright install chromium --with-deps
 
       - name: Boot production Docker Compose stack behind Nginx
+        env:
+          POSTGRES_PASSWORD: ci_pg_strong_password_2026
+          JWT_SECRET: ci_strong_jwt_secret_key_for_github_actions_e2e_2026
+          COOKIE_SECRET: ci_strong_cookie_secret_key_for_e2e_2026
+          PAYMENT_PROVIDER: RAZORPAY
+          RAZORPAY_KEY_ID: rzp_test_ci_key_id
+          RAZORPAY_KEY_SECRET: rzp_test_ci_key_secret_2026
+          RAZORPAY_WEBHOOK_SECRET: rzp_test_ci_webhook_secret_2026
+          LIVEKIT_API_KEY: ci_livekit_key_2026
+          LIVEKIT_API_SECRET: ci_livekit_secret_key_for_e2e_32_chars_2026
+          MINIO_ACCESS_KEY: ci_minio_access_2026
+          MINIO_SECRET_KEY: ci_minio_secret_2026
         run: docker compose up -d --build postgres redis minio mailpit livekit api-1 api-2 worker web nginx
 
       - name: Seed database inside API container
