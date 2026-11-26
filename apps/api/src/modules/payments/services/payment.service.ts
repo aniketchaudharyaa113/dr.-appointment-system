@@ -32,7 +32,7 @@ export class PaymentService {
     @Inject(LedgerService) private readonly ledgerService: LedgerService,
     @Inject(RefundPolicyService) private readonly refundPolicy: RefundPolicyService,
     @Inject(RealtimeService) private readonly realtime: RealtimeService,
-  ) {}
+  ) { }
 
   /**
    * Initiates payment order for an appointment in PENDING_PAYMENT state.
@@ -384,13 +384,13 @@ export class PaymentService {
       await this.ledgerService.recordPaymentCapture(
         payment.id,
         payment.amount_paise,
-        1000,
+        this.ledgerService.commissionBps,
         tx,
       );
       await this.ledgerService.recordRefund(
         payment.id,
         payment.amount_paise,
-        1000,
+        this.ledgerService.commissionBps,
         tx,
       );
 
@@ -450,7 +450,7 @@ export class PaymentService {
     await this.ledgerService.recordPaymentCapture(
       payment.id,
       payment.amount_paise,
-      1000,
+      this.ledgerService.commissionBps,
       tx,
     );
 
@@ -627,13 +627,13 @@ export class PaymentService {
 
     const payment = params.paymentId
       ? await this.prisma.payment.findUnique({
-          where: { id: params.paymentId },
-          include: { appointment: true },
-        })
+        where: { id: params.paymentId },
+        include: { appointment: true },
+      })
       : await this.prisma.payment.findUnique({
-          where: { providerOrderId: params.providerOrderId },
-          include: { appointment: true },
-        });
+        where: { providerOrderId: params.providerOrderId },
+        include: { appointment: true },
+      });
 
     if (!payment) {
       throw new NotFoundException('Payment not found');

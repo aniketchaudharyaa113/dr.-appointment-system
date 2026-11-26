@@ -24,6 +24,18 @@ describe('Environment Schema Validation (Fail-Fast)', () => {
       expect(parsed.data.PORT).toBe(4000);
       expect(parsed.data.CLINIC_TIMEZONE).toBe('Asia/Kolkata');
       expect(parsed.data.PAYMENT_PROVIDER).toBe('FAKE');
+      expect(parsed.data.PLATFORM_COMMISSION_BPS).toBe(1000);
+    }
+  });
+
+  it('allows customizing PLATFORM_COMMISSION_BPS', () => {
+    const parsed = EnvSchema.safeParse({
+      ...baseValid,
+      PLATFORM_COMMISSION_BPS: '1500',
+    });
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data.PLATFORM_COMMISSION_BPS).toBe(1500);
     }
   });
 

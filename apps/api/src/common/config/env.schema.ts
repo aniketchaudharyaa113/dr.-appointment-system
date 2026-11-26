@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import * as dotenv from 'dotenv';
+import { DEFAULT_PLATFORM_COMMISSION_BPS } from '@medibook/shared';
 
 dotenv.config();
 
@@ -16,6 +17,7 @@ export const EnvSchema = z
     CORS_ORIGIN: z.string().default('http://localhost:3000'),
     COOKIE_SECRET: z.string().min(16, 'COOKIE_SECRET must be at least 16 characters'),
     CLINIC_TIMEZONE: z.string().default('Asia/Kolkata'),
+    PLATFORM_COMMISSION_BPS: z.coerce.number().int().min(0).max(10000).default(DEFAULT_PLATFORM_COMMISSION_BPS),
     // Payments (fail-fast: no hardcoded secret defaults)
     PAYMENT_PROVIDER: z.enum(['RAZORPAY', 'STRIPE', 'FAKE']).default('FAKE'),
     PAYMENT_WEBHOOK_SECRET: z.string().min(8).optional(),

@@ -96,7 +96,7 @@ export class RefundPolicyService {
     await this.ledgerService.recordRefund(
       params.paymentId,
       params.refundAmountPaise,
-      1000,
+      this.ledgerService.commissionBps,
       tx,
     );
 

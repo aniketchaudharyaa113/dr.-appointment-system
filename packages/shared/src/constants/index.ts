@@ -55,3 +55,4 @@ export const SLOT_HOLD_DURATION_SECONDS = 600; // 10 minutes
 export const WAITLIST_CLAIM_WINDOW_SECONDS = 900; // 15 minutes
 export const DRIVER_DISPATCH_TIMEOUT_SECONDS = 20; // 20 seconds
 export const DRIVER_HEARTBEAT_TTL_SECONDS = 15; // 15 seconds
+export const DEFAULT_PLATFORM_COMMISSION_BPS = 1000; // 10%

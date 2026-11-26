@@ -1,5 +1,6 @@
 import { Injectable, Logger, Inject } from '@nestjs/common';
 import { PrismaService } from '../../platform/database/prisma.service';
+import { env } from '../../../common/config/env.schema';
 
 export interface LedgerPostingResult {
   transactionId: string;
@@ -11,7 +12,7 @@ export interface LedgerPostingResult {
 @Injectable()
 export class LedgerService {
   private readonly logger = new Logger(LedgerService.name);
-  private readonly commissionBps = 1000; // 10%
+  readonly commissionBps = env.PLATFORM_COMMISSION_BPS;
 
   constructor(@Inject(PrismaService) private readonly prisma: PrismaService) {}
 
