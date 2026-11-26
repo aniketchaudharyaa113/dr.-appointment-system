@@ -23,9 +23,11 @@ import {
   MessageSquare,
   Plus,
   Trash2,
+  Clock,
 } from 'lucide-react';
 import { fetchApi, getAuthToken } from '@/lib/api';
 import { useAuth } from '@/lib/auth-context';
+import { registerSocket } from '@/lib/socket-registry';
 import { ClientTime } from '@/components/client-time';
 import { VitalsLabsPanel } from '@/components/clinical/vitals-labs-panel';
 
@@ -76,6 +78,12 @@ export default function ConsultationRoomPage() {
   const [isMicOn, setIsMicOn] = useState(true);
   const [livekitStatus, setLivekitStatus] = useState<string>('Disconnected');
   const [livekitError, setLivekitError] = useState<string | null>(null);
+  const [permissionError, setPermissionError] = useState<string | null>(null);
+  const [secondsUntilOpen, setSecondsUntilOpen] = useState<number | null>(null);
+  const [isSlotExpired, setIsSlotExpired] = useState(false);
+  const [showEndModal, setShowEndModal] = useState(false);
+  const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const attachedAudiosRef = useRef<HTMLAudioElement[]>([]);
   const [activeTab, setActiveTab] = useState<'video' | 'vitals' | 'prescription' | 'copilot'>(
     initialTab === 'prescription' ? 'prescription' : initialTab === 'vitals' ? 'vitals' : 'video',
   );
@@ -139,10 +147,37 @@ export default function ConsultationRoomPage() {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, isTyping]);
 
-  // Connect Socket.IO /consultation namespace with JWT
+  // Slot Time 10-minute window countdown
   useEffect(() => {
-    const token = getAuthToken();
-    if (!token || !appointmentId) return;
+    const slotTimeStr = apptQuery.data?.slotTime;
+    if (!slotTimeStr) return;
+
+    const slotTime = new Date(slotTimeStr).getTime();
+    const openTime = slotTime - 10 * 60 * 1000;
+    const closeTime = slotTime + 60 * 60 * 1000;
+
+    const checkTimes = () => {
+      const now = Date.now();
+      if (now < openTime) {
+        setSecondsUntilOpen(Math.ceil((openTime - now) / 1000));
+        setIsSlotExpired(false);
+      } else if (now > closeTime) {
+        setSecondsUntilOpen(0);
+        setIsSlotExpired(true);
+      } else {
+        setSecondsUntilOpen(0);
+        setIsSlotExpired(false);
+      }
+    };
+
+    checkTimes();
+    const interval = setInterval(checkTimes, 1000);
+    return () => clearInterval(interval);
+  }, [apptQuery.data?.slotTime]);
+
+  // Connect Socket.IO /consultation namespace with dynamic token callback
+  useEffect(() => {
+    if (!appointmentId || !currentUser) return;
 
     const socketOrigin =
       typeof window !== 'undefined' && process.env.NEXT_PUBLIC_SOCKET_URL
@@ -150,10 +185,13 @@ export default function ConsultationRoomPage() {
         : undefined;
 
     const sock = io(socketOrigin ? `${socketOrigin}/consultation` : '/consultation', {
-      auth: { token },
+      auth: (cb) => {
+        cb({ token: getAuthToken() || '' });
+      },
       transports: ['websocket', 'polling'],
     });
     socketRef.current = sock;
+    const unregisterSocket = registerSocket(sock);
 
     sock.on('connect', () => {
       sock.emit('join_room', { appointmentId }, (ack: any) => {
@@ -169,32 +207,75 @@ export default function ConsultationRoomPage() {
 
     sock.on('user_typing', (evt: { userId: string; isTyping: boolean }) => {
       if (evt.userId !== currentUser?.id) {
-        setIsTyping(evt.isTyping);
+        if (typingTimeoutRef.current) {
+          clearTimeout(typingTimeoutRef.current);
+          typingTimeoutRef.current = null;
+        }
+        if (evt.isTyping) {
+          setIsTyping(true);
+          typingTimeoutRef.current = setTimeout(() => {
+            setIsTyping(false);
+          }, 3000);
+        } else {
+          setIsTyping(false);
+        }
       }
     });
 
     return () => {
+      unregisterSocket();
       sock.disconnect();
       socketRef.current = null;
+      if (typingTimeoutRef.current) {
+        clearTimeout(typingTimeoutRef.current);
+        typingTimeoutRef.current = null;
+      }
     };
-  }, [appointmentId, currentUser?.id]);
+  }, [appointmentId, currentUser]);
 
-  // Connect LiveKit room once consented
+  // Connect LiveKit room once consented and within time window
   useEffect(() => {
-    if (!hasConsented || !appointmentId || !currentUser?.token) return;
+    if (!hasConsented || !appointmentId || !currentUser) return;
     if (apptQuery.data && apptQuery.data.consultationMode !== 'VIDEO') {
       setLivekitStatus(
         apptQuery.data.consultationMode === 'IN_CLINIC'
           ? 'In-Clinic Mode'
-          : 'Live Chat Mode'
+          : 'Live Chat Mode',
       );
       return;
     }
+
+    if (secondsUntilOpen !== null && secondsUntilOpen > 0) {
+      setLivekitStatus('Waiting for room to open...');
+      return;
+    }
+
+    if (isSlotExpired) {
+      setLivekitStatus('Consultation window ended');
+      return;
+    }
+
     let cancelled = false;
+    let retryTimeout: NodeJS.Timeout | null = null;
+    let retryAttempt = 0;
+
+    const cleanupAudio = () => {
+      attachedAudiosRef.current.forEach((el) => {
+        try {
+          el.pause();
+          el.remove();
+        } catch {
+          // ignore
+        }
+      });
+      attachedAudiosRef.current = [];
+    };
 
     const connectLiveKit = async () => {
+      if (cancelled) return;
       try {
         setLivekitError(null);
+        setPermissionError(null);
         setLivekitStatus('Requesting join token...');
         const tokenData = await fetchApi<{
           token: string;
@@ -216,14 +297,23 @@ export default function ConsultationRoomPage() {
           if (track.kind === Track.Kind.Audio) {
             const el = track.attach();
             document.body.appendChild(el);
+            attachedAudiosRef.current.push(el);
+          }
+        });
+
+        room.on(RoomEvent.TrackUnsubscribed, (track) => {
+          if (track.kind === Track.Kind.Audio) {
+            cleanupAudio();
           }
         });
 
         room.on(RoomEvent.Disconnected, () => {
+          cleanupAudio();
           setLivekitStatus('Disconnected');
         });
 
         await room.connect(tokenData.livekitUrl, tokenData.token);
+        retryAttempt = 0;
         setLivekitStatus(`Connected (${tokenData.roomName})`);
 
         try {
@@ -237,13 +327,25 @@ export default function ConsultationRoomPage() {
               t.attach(localVideoRef.current);
             }
           }
-        } catch {
-          // Graceful fallback when running in headless browser / without camera
+        } catch (mediaErr: any) {
+          if (
+            mediaErr?.name === 'NotAllowedError' ||
+            mediaErr?.name === 'PermissionDeniedError' ||
+            String(mediaErr).toLowerCase().includes('permission') ||
+            String(mediaErr).toLowerCase().includes('not allowed')
+          ) {
+            setPermissionError(
+              'Permission Denied — Camera or microphone access is blocked. Please enable camera and mic permissions in your browser settings to participate in video consultation.',
+            );
+          }
         }
       } catch (err: any) {
         if (!cancelled) {
-          setLivekitStatus('Waiting / Outside Join Window');
           setLivekitError(err.message);
+          const delay = Math.min(30000, 1000 * Math.pow(2, retryAttempt));
+          retryAttempt++;
+          setLivekitStatus(`Connection error. Retrying in ${Math.round(delay / 1000)}s...`);
+          retryTimeout = setTimeout(connectLiveKit, delay);
         }
       }
     };
@@ -252,10 +354,12 @@ export default function ConsultationRoomPage() {
 
     return () => {
       cancelled = true;
+      if (retryTimeout) clearTimeout(retryTimeout);
+      cleanupAudio();
       roomRef.current?.disconnect();
       roomRef.current = null;
     };
-  }, [hasConsented, appointmentId, currentUser?.token]);
+  }, [hasConsented, appointmentId, currentUser, secondsUntilOpen, isSlotExpired, isMicOn, isCameraOn]);
 
   const consentMutation = useMutation({
     mutationFn: () =>
@@ -538,12 +642,36 @@ export default function ConsultationRoomPage() {
               playsInline
               className="absolute inset-0 w-full h-full object-cover"
             />
-            <div className="relative z-10 flex items-center justify-between text-white text-xs">
-              <span className="bg-black/50 px-3 py-1 rounded-full">{livekitStatus}</span>
-              {livekitError && (
-                <span className="bg-amber-900/80 text-amber-200 px-3 py-1 rounded-full text-[11px]">
-                  {livekitError}
-                </span>
+            <div className="relative z-10 flex flex-col gap-2 w-full text-white text-xs">
+              <div className="flex items-center justify-between">
+                <span className="bg-black/50 px-3 py-1 rounded-full">{livekitStatus}</span>
+                {livekitError && (
+                  <span className="bg-amber-900/80 text-amber-200 px-3 py-1 rounded-full text-[11px]">
+                    {livekitError}
+                  </span>
+                )}
+              </div>
+              {permissionError && (
+                <div className="p-2.5 rounded-xl bg-rose-950/80 border border-rose-500/50 text-rose-200 text-xs flex items-center gap-2">
+                  <AlertCircle className="w-4 h-4 shrink-0 text-rose-400" />
+                  <span>{permissionError}</span>
+                </div>
+              )}
+              {secondsUntilOpen !== null && secondsUntilOpen > 0 && (
+                <div className="p-3 rounded-xl bg-amber-950/80 border border-amber-500/50 text-amber-200 text-xs flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Clock className="w-4 h-4 text-amber-400 animate-pulse" />
+                    <span>Room opens 10 min prior to slot:</span>
+                  </div>
+                  <span className="font-mono font-bold bg-amber-900/60 px-2 py-0.5 rounded text-amber-100">
+                    {Math.floor(secondsUntilOpen / 60)}m {secondsUntilOpen % 60}s
+                  </span>
+                </div>
+              )}
+              {isSlotExpired && (
+                <div className="p-2.5 rounded-xl bg-slate-800 border border-slate-700 text-slate-300 text-xs text-center">
+                  Consultation window has concluded.
+                </div>
               )}
             </div>
 
@@ -609,11 +737,7 @@ export default function ConsultationRoomPage() {
                 <button
                   type="button"
                   disabled={updateStatusMutation.isPending}
-                  onClick={() => {
-                    if (window.confirm('Are you sure you want to end and complete this consultation?')) {
-                      updateStatusMutation.mutate('ENDED');
-                    }
-                  }}
+                  onClick={() => setShowEndModal(true)}
                   className="px-3 py-1.5 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold transition shadow-xs disabled:opacity-50"
                 >
                   End &amp; Complete
@@ -645,19 +769,8 @@ export default function ConsultationRoomPage() {
               </button>
               <button
                 type="button"
-                onClick={() => {
-                  if (isDoctor) {
-                    if (window.confirm('End and complete consultation session?')) {
-                      updateStatusMutation.mutate('ENDED');
-                    }
-                  } else {
-                    if (window.confirm('Leave consultation room?')) {
-                      roomRef.current?.disconnect();
-                      setActiveTab('prescription');
-                    }
-                  }
-                }}
-                className="p-3 rounded-full bg-rose-600 hover:bg-rose-700 text-white"
+                onClick={() => setShowEndModal(true)}
+                className="p-3 rounded-full bg-rose-600 hover:bg-rose-700 text-white shadow-md transition-colors"
                 title={isDoctor ? 'End & Complete Consultation' : 'Leave Consultation'}
               >
                 <PhoneOff className="w-5 h-5" />
@@ -992,6 +1105,52 @@ export default function ConsultationRoomPage() {
               ))}
             </div>
           )}
+        </div>
+      )}
+
+      {/* Red Confirmation Modal: End Consultation */}
+      {showEndModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4">
+          <div className="w-full max-w-sm rounded-3xl bg-white dark:bg-slate-900 p-6 border border-rose-200 dark:border-rose-900 shadow-2xl space-y-4">
+            <div className="w-12 h-12 rounded-2xl bg-rose-100 dark:bg-rose-950/80 text-rose-600 flex items-center justify-center mx-auto">
+              <PhoneOff className="w-6 h-6" />
+            </div>
+            <div className="text-center space-y-1">
+              <h3 className="text-base font-bold text-slate-900 dark:text-white">
+                End Consultation Session?
+              </h3>
+              <p className="text-xs text-slate-500 dark:text-slate-400">
+                {isDoctor
+                  ? 'This will finalize the appointment, conclude active video & chat, and archive the medical consultation session.'
+                  : 'Are you sure you want to leave the active consultation room?'}
+              </p>
+            </div>
+            <div className="grid grid-cols-2 gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => setShowEndModal(false)}
+                className="py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-bold text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={updateStatusMutation.isPending}
+                onClick={() => {
+                  if (isDoctor) {
+                    updateStatusMutation.mutate('ENDED');
+                  } else {
+                    roomRef.current?.disconnect();
+                    setActiveTab('prescription');
+                  }
+                  setShowEndModal(false);
+                }}
+                className="py-2.5 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold shadow-md disabled:opacity-50"
+              >
+                {updateStatusMutation.isPending ? 'Ending...' : 'End Consultation'}
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>
