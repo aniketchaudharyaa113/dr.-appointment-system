@@ -5,6 +5,7 @@ import {
   BadRequestException,
   ForbiddenException,
   Inject,
+  Logger,
 } from '@nestjs/common';
 import { randomBytes } from 'crypto';
 import { PrismaService } from '../../platform/database/prisma.service';
@@ -19,6 +20,8 @@ import { getIstDateCompact, getIstDateString } from '../../../common/utils/ist-t
 
 @Injectable()
 export class BookingService {
+  private readonly logger = new Logger(BookingService.name);
+
   constructor(
     @Inject(PrismaService) private readonly prisma: PrismaService,
     @Inject(RedisService) private readonly redis: RedisService,
@@ -297,45 +300,80 @@ export class BookingService {
         return appt;
       });
 
-      // 5. Release Redis hold upon successful creation & invalidate cached next slot
-      await this.redis.releaseSlotHold(
-        doctorId,
-        normalizedIso,
-        holdToken,
-        patientId,
-      );
-      await this.redis.clearActivePatientHold(patientId);
-      await this.redis.getClient().del(`cache:next_slot:${doctorId}`);
-
-      await this.audit.log({
-        userId: patientId,
-        action: 'APPOINTMENT_CREATED_PENDING_PAYMENT',
-        resource: 'APPOINTMENT',
-        resourceId: appointment.id,
-        details: {
-          bookingRef: appointment.bookingRef,
+      // 5. Post-commit side effects: best-effort with logging so Redis/Audit errors don't fail a created appointment
+      try {
+        await this.redis.releaseSlotHold(
           doctorId,
-          slotTime: normalizedIso,
-        },
-      });
-
-      if (idemKey) {
-        await this.redis.setIdempotency(idemKey, appointment, 86400);
+          normalizedIso,
+          holdToken,
+          patientId,
+        );
+        await this.redis.clearActivePatientHold(patientId);
+        await this.redis.getClient().del(`cache:next_slot:${doctorId}`);
+      } catch (err: any) {
+        this.logger.warn(`Failed to clean up Redis slot holds after booking ${appointment.id}: ${err.message}`);
       }
 
-      this.realtime.emitToUser(patientId, 'booking_updated', {
-        appointmentId: appointment.id,
-        bookingRef: appointment.bookingRef,
-        status: appointment.status,
-      });
+      try {
+        await this.audit.log({
+          userId: patientId,
+          action: 'APPOINTMENT_CREATED_PENDING_PAYMENT',
+          resource: 'APPOINTMENT',
+          resourceId: appointment.id,
+          details: {
+            bookingRef: appointment.bookingRef,
+            doctorId,
+            slotTime: normalizedIso,
+          },
+        });
+      } catch (err: any) {
+        this.logger.warn(`Failed to record audit log for appointment ${appointment.id}: ${err.message}`);
+      }
+
+      if (idemKey) {
+        try {
+          await this.redis.setIdempotency(idemKey, appointment, 86400);
+        } catch (err: any) {
+          this.logger.warn(`Failed to set idempotency record for ${idemKey}: ${err.message}`);
+        }
+      }
+
+      try {
+        this.realtime.emitToUser(patientId, 'booking_updated', {
+          appointmentId: appointment.id,
+          bookingRef: appointment.bookingRef,
+          status: appointment.status,
+        });
+      } catch (err: any) {
+        this.logger.warn(`Failed to emit realtime update for appointment ${appointment.id}: ${err.message}`);
+      }
 
       return appointment;
     } catch (error: any) {
-      if (
-        error.code === 'P2002' ||
-        error.message?.includes('idx_appointments_doctor_slot_active') ||
-        error.message?.includes('Unique constraint failed')
-      ) {
+      if (error.code === 'P2002') {
+        const target = Array.isArray(error.meta?.target)
+          ? error.meta.target.join(',')
+          : String(error.meta?.target || '');
+        if (
+          target.includes('slot') ||
+          target.includes('doctor') ||
+          target.includes('idx_appointments_doctor_slot_active') ||
+          error.message?.includes('idx_appointments_doctor_slot_active')
+        ) {
+          throw new ConflictException(
+            'Slot is already booked by another patient (Concurrency Conflict)',
+          );
+        }
+        if (target.includes('bookingRef') || target.includes('booking_ref')) {
+          throw new ConflictException(
+            'Booking reference generation conflict. Please retry your booking request.',
+          );
+        }
+        throw new ConflictException(
+          `Unique constraint violation on ${target || 'unknown target'}`,
+        );
+      }
+      if (error.message?.includes('idx_appointments_doctor_slot_active')) {
         throw new ConflictException(
           'Slot is already booked by another patient (Concurrency Conflict)',
         );
