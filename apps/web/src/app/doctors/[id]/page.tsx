@@ -128,6 +128,7 @@ export default function DoctorProfilePage() {
       setActionError(null);
       setSelectedSlot(slot);
       setHoldData(res);
+      queryClient.invalidateQueries({ queryKey: ['doctor-slots', doctorId, selectedDate] });
     },
     onError: (err: Error) => {
       setActionError(err.message);

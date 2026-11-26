@@ -30,6 +30,7 @@ import { useAuth } from '@/lib/auth-context';
 import { registerSocket } from '@/lib/socket-registry';
 import { ClientTime } from '@/components/client-time';
 import { VitalsLabsPanel } from '@/components/clinical/vitals-labs-panel';
+import { useToast } from '@/components/toast';
 
 interface ChatMessage {
   id: string;
@@ -71,6 +72,7 @@ export default function ConsultationRoomPage() {
   const initialTab = searchParams.get('tab') || 'video';
 
   const { user: currentUser } = useAuth();
+  const toast = useToast();
   const isDoctor = currentUser?.role === 'DOCTOR';
 
   const [hasConsented, setHasConsented] = useState(false);
@@ -521,10 +523,10 @@ export default function ConsultationRoomPage() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['consultation-prescription', appointmentId] });
-      alert('Prescription successfully saved and immutable version recorded.');
+      toast.success('Prescription successfully saved and immutable version recorded.');
     },
     onError: (err: any) => {
-      alert(`Prescription failed: ${err.message || 'Validation error'}`);
+      toast.error(`Prescription failed: ${err.message || 'Validation error'}`);
     },
   });
 

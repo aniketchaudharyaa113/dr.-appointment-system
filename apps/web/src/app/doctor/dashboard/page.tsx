@@ -22,6 +22,7 @@ import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip } from 'recha
 import { fetchApi } from '@/lib/api';
 import { formatPaise } from '@/lib/utils';
 import { RoleGuard } from '@/components/role-guard';
+import { useToast } from '@/components/toast';
 
 interface DoctorDashboardData {
   doctorId: string;
@@ -91,6 +92,7 @@ const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 
 
 export default function DoctorDashboardPage() {
   const queryClient = useQueryClient();
+  const toast = useToast();
   const [activeTab, setActiveTab] = useState<'queue' | 'availability' | 'earnings'>('queue');
 
   const [newLeaveStart, setNewLeaveStart] = useState('');
@@ -168,7 +170,7 @@ export default function DoctorDashboardPage() {
       setDryRunImpact(res.conflictCount ?? 0);
     },
     onError: (err: any) => {
-      alert(`Dry run failed: ${err.message || 'Validation error'}`);
+      toast.error(`Dry run failed: ${err.message || 'Validation error'}`);
     },
   });
 
@@ -182,7 +184,7 @@ export default function DoctorDashboardPage() {
     },
     onSuccess: (res: any) => {
       queryClient.invalidateQueries({ queryKey: ['doctor-dashboard'] });
-      alert(
+      toast.success(
         `Leave scheduled successfully. ${res?.cancelledAppointmentsCount ?? 0} conflicting appointments were automatically cancelled and 100% refunded to patients.`
       );
       setNewLeaveStart('');
@@ -191,7 +193,7 @@ export default function DoctorDashboardPage() {
       setDryRunImpact(null);
     },
     onError: (err: any) => {
-      alert(`Failed to apply leave: ${err.message || 'Operation failed'}`);
+      toast.error(`Failed to apply leave: ${err.message || 'Operation failed'}`);
     },
   });
 
@@ -204,10 +206,10 @@ export default function DoctorDashboardPage() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['doctor-dashboard'] });
       queryClient.invalidateQueries({ queryKey: ['doctor-profile'] });
-      alert('Doctor license and professional profile successfully saved.');
+      toast.success('Doctor license and professional profile successfully saved.');
     },
     onError: (err: any) => {
-      alert(`Failed to update profile: ${err.message || 'Validation error'}`);
+      toast.error(`Failed to update profile: ${err.message || 'Validation error'}`);
     },
   });
 
@@ -219,16 +221,16 @@ export default function DoctorDashboardPage() {
       }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['doctor-profile'] });
-      alert('Weekly schedule and recurring working hours saved.');
+      toast.success('Weekly schedule and recurring working hours saved.');
     },
     onError: (err: any) => {
-      alert(`Failed to save availability schedule: ${err.message || 'Validation error'}`);
+      toast.error(`Failed to save availability schedule: ${err.message || 'Validation error'}`);
     },
   });
 
   const handleDryRunLeave = () => {
     if (!newLeaveStart || !newLeaveEnd) {
-      alert('Please select both start and end dates');
+      toast.error('Please select both start and end dates');
       return;
     }
     previewMutation.mutate({ startDate: newLeaveStart, endDate: newLeaveEnd });
@@ -236,7 +238,7 @@ export default function DoctorDashboardPage() {
 
   const handleApplyLeave = () => {
     if (!newLeaveStart || !newLeaveEnd) {
-      alert('Please select both start and end dates');
+      toast.error('Please select both start and end dates');
       return;
     }
     applyLeaveMutation.mutate({

@@ -16,6 +16,7 @@ import {
 import { fetchApi } from '@/lib/api';
 import { formatPaise } from '@/lib/utils';
 import { RoleGuard } from '@/components/role-guard';
+import { useToast } from '@/components/toast';
 
 interface AdminStats {
   pendingDoctorsCount: number;
@@ -59,6 +60,7 @@ interface AuditLogItem {
 
 export default function AdminPage() {
   const queryClient = useQueryClient();
+  const toast = useToast();
   const [activeTab, setActiveTab] = useState<'stats' | 'verification' | 'ledger' | 'audit'>('stats');
 
   // Stats query
@@ -108,10 +110,10 @@ export default function AdminPage() {
     onSuccess: (_, vars) => {
       queryClient.invalidateQueries({ queryKey: ['admin-pending-doctors'] });
       queryClient.invalidateQueries({ queryKey: ['admin-stats'] });
-      alert(vars.status === 'APPROVED' ? 'Doctor successfully verified and activated.' : 'Doctor application rejected.');
+      toast.success(vars.status === 'APPROVED' ? 'Doctor successfully verified and activated.' : 'Doctor application rejected.');
     },
     onError: (err: any) => {
-      alert(`Error updating verification status: ${err.message || 'Action failed'}`);
+      toast.error(`Error updating verification status: ${err.message || 'Action failed'}`);
     },
   });
 
@@ -121,10 +123,10 @@ export default function AdminPage() {
     onSuccess: (res) => {
       queryClient.invalidateQueries({ queryKey: ['admin-stats'] });
       queryClient.invalidateQueries({ queryKey: ['admin-ledgers'] });
-      alert(res?.message || 'Payment reconciliation completed successfully.');
+      toast.success(res?.message || 'Payment reconciliation completed successfully.');
     },
     onError: (err: any) => {
-      alert(`Reconciliation error: ${err.message || 'Operation failed'}`);
+      toast.error(`Reconciliation error: ${err.message || 'Operation failed'}`);
     },
   });
 
