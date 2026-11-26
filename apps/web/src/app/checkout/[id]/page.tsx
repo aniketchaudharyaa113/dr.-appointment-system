@@ -117,7 +117,7 @@ export default function CheckoutPage() {
         amount: amountPaise,
         currency: paymentOrder.currency || 'INR',
         name: 'MediBook Telehealth',
-        description: `Consultation with Dr. ${appt.doctorName}`,
+        description: `Consultation with ${/^dr\.?\s/i.test(appt.doctorName) ? appt.doctorName : `Dr. ${appt.doctorName}`}`,
         order_id: paymentOrder.providerOrderId,
         prefill: {
           name: user?.name || '',
@@ -175,6 +175,10 @@ export default function CheckoutPage() {
     },
   });
 
+  const checkoutInitiatedRef = useRef(false);
+  const { mutate: triggerCheckout, isPending: isCreatingCheckout, isError: isCheckoutError } =
+    createCheckoutMutation;
+
   // Automatically create payment order once PENDING_PAYMENT appointment loads
   useEffect(() => {
     const appt = apptQuery.data;
@@ -200,12 +204,14 @@ export default function CheckoutPage() {
     if (
       appt.status === 'PENDING_PAYMENT' &&
       !paymentOrder &&
-      !createCheckoutMutation.isPending &&
-      !createCheckoutMutation.isError
+      !checkoutInitiatedRef.current &&
+      !isCreatingCheckout &&
+      !isCheckoutError
     ) {
-      createCheckoutMutation.mutate();
+      checkoutInitiatedRef.current = true;
+      triggerCheckout();
     }
-  }, [apptQuery.data, appointmentId, router, paymentOrder, createCheckoutMutation]);
+  }, [apptQuery.data, appointmentId, router, paymentOrder, isCreatingCheckout, isCheckoutError, triggerCheckout]);
 
   // Countdown from appointment createdAt + 15 minutes
   useEffect(() => {

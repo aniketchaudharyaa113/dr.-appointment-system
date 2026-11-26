@@ -320,7 +320,7 @@ export default function DoctorProfilePage() {
                 </div>
               ) : (
                 <p className="text-xs text-slate-400 italic">
-                  Be the first patient to review Dr. {doctor.user.name} after your consultation!
+                  Be the first patient to review {/^dr\.?\s/i.test(doctor.user.name) ? doctor.user.name : `Dr. ${doctor.user.name}`} after your consultation!
                 </p>
               )}
             </div>

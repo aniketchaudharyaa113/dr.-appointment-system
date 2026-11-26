@@ -28,6 +28,7 @@ export interface AuthContextValue {
   isAuthenticated: boolean;
   isLoading: boolean;
   login: (email: string, password: string) => Promise<AuthUser>;
+  register: (payload: Record<string, any>) => Promise<AuthUser>;
   logout: () => Promise<void>;
   refresh: () => Promise<void>;
 }
@@ -116,6 +117,34 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     [fetchUserProfile],
   );
 
+  const register = useCallback(
+    async (payload: Record<string, any>): Promise<AuthUser> => {
+      const res = await fetchApi<{
+        user: { id: string; email: string; name: string; role: UserSession['role'] };
+        accessToken: string;
+      }>('/auth/register', {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      });
+
+      setAuthToken(res.accessToken);
+      const profile = await fetchUserProfile();
+      if (profile) return profile;
+
+      const fallbackUser: AuthUser = {
+        id: res.user.id,
+        name: res.user.name,
+        email: res.user.email,
+        role: res.user.role,
+        token: res.accessToken,
+      };
+      setUser(fallbackUser);
+      setCurrentUser(fallbackUser);
+      return fallbackUser;
+    },
+    [fetchUserProfile],
+  );
+
   useEffect(() => {
     let mounted = true;
     (async () => {
@@ -148,10 +177,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       isAuthenticated: Boolean(user),
       isLoading,
       login,
+      register,
       logout,
       refresh,
     }),
-    [user, isLoading, login, logout, refresh],
+    [user, isLoading, login, register, logout, refresh],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

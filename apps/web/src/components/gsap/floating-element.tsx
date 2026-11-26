@@ -17,9 +17,9 @@ interface FloatingElementProps {
  */
 export function FloatingElement({
   children,
-  yOffset = 10,
+  yOffset = 8,
   xOffset = 0,
-  duration = 3,
+  duration = 3.2,
   delay = 0,
   className = '',
 }: FloatingElementProps) {
@@ -29,7 +29,7 @@ export function FloatingElement({
     () => {
       if (isReducedMotion() || !elementRef.current) return;
 
-      const tween = gsap.to(elementRef.current, {
+      gsap.to(elementRef.current, {
         y: `-=${yOffset}`,
         x: xOffset !== 0 ? `+=${xOffset}` : undefined,
         duration,
@@ -38,12 +38,8 @@ export function FloatingElement({
         repeat: -1,
         yoyo: true,
       });
-
-      return () => {
-        tween.kill();
-      };
     },
-    { scope: elementRef }
+    { scope: elementRef, dependencies: [yOffset, xOffset, duration, delay] },
   );
 
   return (

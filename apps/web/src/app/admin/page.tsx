@@ -53,8 +53,9 @@ interface AuditLogItem {
   action: string;
   actor: string;
   resource: string;
-  patientId: string;
-  timestamp: string;
+  patientId?: string;
+  createdAt?: string;
+  timestamp?: string;
   ip: string;
 }
 
@@ -74,8 +75,8 @@ export default function AdminPage() {
   const { data: pendingDoctors = [], isLoading: doctorsLoading } = useQuery<PendingDoctor[]>({
     queryKey: ['admin-pending-doctors'],
     queryFn: async () => {
-      const res = await fetchApi<{ doctors: any[] }>('/admin/doctors/pending');
-      const docs = res.doctors || [];
+      const res = await fetchApi<any[] | { doctors: any[] }>('/admin/doctors/pending');
+      const docs = Array.isArray(res) ? res : res?.doctors || [];
       return docs.map((d: any) => ({
         id: d.id,
         name: d.user?.name || 'Dr. ' + (d.specialty || 'Physician'),
@@ -83,7 +84,7 @@ export default function AdminPage() {
         specialty: d.specialty || 'General Medicine',
         licenseNumber: d.licenseNumber || 'PENDING_VERIF',
         yearsOfExperience: d.experienceYears || 5,
-        submittedAt: new Date(d.createdAt).toLocaleString(),
+        submittedAt: d.user?.createdAt || d.createdAt ? new Date(d.user?.createdAt || d.createdAt).toLocaleString() : '—',
       }));
     },
   });
@@ -119,11 +120,13 @@ export default function AdminPage() {
 
   // Reconciliation mutation
   const reconcileMutation = useMutation({
-    mutationFn: () => fetchApi<{ reconciledCount: number; message: string }>('/admin/payments/reconcile', { method: 'POST' }),
+    mutationFn: () => fetchApi<{ reconciledCount: number; message?: string }>('/admin/payments/reconcile', { method: 'POST' }),
     onSuccess: (res) => {
       queryClient.invalidateQueries({ queryKey: ['admin-stats'] });
       queryClient.invalidateQueries({ queryKey: ['admin-ledgers'] });
-      toast.success(res?.message || 'Payment reconciliation completed successfully.');
+      toast.success(
+        res?.message || `Reconciled ${res?.reconciledCount ?? 0} stuck payment transaction(s).`,
+      );
     },
     onError: (err: any) => {
       toast.error(`Reconciliation error: ${err.message || 'Operation failed'}`);
@@ -145,25 +148,25 @@ export default function AdminPage() {
         <div className="flex items-center gap-1 bg-slate-100 dark:bg-slate-800 p-1 rounded-xl text-xs font-semibold overflow-x-auto">
           <button
             onClick={() => setActiveTab('stats')}
-            className={`px-3.5 py-2 rounded-lg transition-colors whitespace-nowrap ${activeTab === 'stats' ? 'bg-white dark:bg-slate-900 text-teal-600 dark:text-teal-400 shadow-xs' : 'text-slate-500'}`}
+            className={`px-3.5 py-2 rounded-lg transition-colors whitespace-nowrap ${activeTab === 'stats' ? 'bg-white dark:bg-slate-900 text-teal-600 dark:text-teal-400 shadow-sm' : 'text-slate-500'}`}
           >
             Overview Stats
           </button>
           <button
             onClick={() => setActiveTab('verification')}
-            className={`px-3.5 py-2 rounded-lg transition-colors whitespace-nowrap ${activeTab === 'verification' ? 'bg-white dark:bg-slate-900 text-teal-600 dark:text-teal-400 shadow-xs' : 'text-slate-500'}`}
+            className={`px-3.5 py-2 rounded-lg transition-colors whitespace-nowrap ${activeTab === 'verification' ? 'bg-white dark:bg-slate-900 text-teal-600 dark:text-teal-400 shadow-sm' : 'text-slate-500'}`}
           >
             Verification ({pendingDoctors.length})
           </button>
           <button
             onClick={() => setActiveTab('ledger')}
-            className={`px-3.5 py-2 rounded-lg transition-colors whitespace-nowrap ${activeTab === 'ledger' ? 'bg-white dark:bg-slate-900 text-teal-600 dark:text-teal-400 shadow-xs' : 'text-slate-500'}`}
+            className={`px-3.5 py-2 rounded-lg transition-colors whitespace-nowrap ${activeTab === 'ledger' ? 'bg-white dark:bg-slate-900 text-teal-600 dark:text-teal-400 shadow-sm' : 'text-slate-500'}`}
           >
             Double-Entry Ledger
           </button>
           <button
             onClick={() => setActiveTab('audit')}
-            className={`px-3.5 py-2 rounded-lg transition-colors whitespace-nowrap ${activeTab === 'audit' ? 'bg-white dark:bg-slate-900 text-teal-600 dark:text-teal-400 shadow-xs' : 'text-slate-500'}`}
+            className={`px-3.5 py-2 rounded-lg transition-colors whitespace-nowrap ${activeTab === 'audit' ? 'bg-white dark:bg-slate-900 text-teal-600 dark:text-teal-400 shadow-sm' : 'text-slate-500'}`}
           >
             Audit Trail
           </button>
@@ -174,7 +177,7 @@ export default function AdminPage() {
       {activeTab === 'stats' && (
         <div className="space-y-6">
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
-            <div className="p-5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xs flex items-center gap-4">
+            <div className="p-5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm flex items-center gap-4">
               <div className="p-3 bg-amber-50 dark:bg-amber-950/50 rounded-xl text-amber-600">
                 <Users className="w-6 h-6" />
               </div>
@@ -186,7 +189,7 @@ export default function AdminPage() {
               </div>
             </div>
 
-            <div className="p-5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xs flex items-center gap-4">
+            <div className="p-5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm flex items-center gap-4">
               <div className="p-3 bg-rose-50 dark:bg-rose-950/50 rounded-xl text-rose-600">
                 <AlertTriangle className="w-6 h-6" />
               </div>
@@ -198,7 +201,7 @@ export default function AdminPage() {
               </div>
             </div>
 
-            <div className="p-5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xs flex items-center gap-4">
+            <div className="p-5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm flex items-center gap-4">
               <div className="p-3 bg-emerald-50 dark:bg-emerald-950/50 rounded-xl text-emerald-600">
                 <CreditCard className="w-6 h-6" />
               </div>
@@ -210,7 +213,7 @@ export default function AdminPage() {
               </div>
             </div>
 
-            <div className="p-5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xs flex items-center gap-4">
+            <div className="p-5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm flex items-center gap-4">
               <div className="p-3 bg-teal-50 dark:bg-teal-950/50 rounded-xl text-teal-600">
                 <Video className="w-6 h-6" />
               </div>
@@ -222,7 +225,7 @@ export default function AdminPage() {
               </div>
             </div>
 
-            <div className="p-5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xs flex items-center gap-4">
+            <div className="p-5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm flex items-center gap-4">
               <div className="p-3 bg-blue-50 dark:bg-blue-950/50 rounded-xl text-blue-600">
                 <ShieldCheck className="w-6 h-6" />
               </div>
@@ -234,7 +237,7 @@ export default function AdminPage() {
               </div>
             </div>
 
-            <div className="p-5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xs flex items-center gap-4">
+            <div className="p-5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm flex items-center gap-4">
               <div className="p-3 bg-purple-50 dark:bg-purple-950/50 rounded-xl text-purple-600">
                 <UserCheck className="w-6 h-6" />
               </div>
@@ -417,7 +420,9 @@ export default function AdminPage() {
                 <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
                   {auditLogs.map((log) => (
                     <tr key={log.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/40 font-mono text-[11px]">
-                      <td className="p-3.5 text-slate-400">{new Date(log.timestamp).toLocaleString()}</td>
+                      <td className="p-3.5 text-slate-400">
+                        {new Date(log.createdAt || log.timestamp || Date.now()).toLocaleString()}
+                      </td>
                       <td className="p-3.5">
                         <span className="font-bold text-teal-600">{log.action}</span>
                       </td>

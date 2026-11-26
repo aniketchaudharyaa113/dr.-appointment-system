@@ -32,6 +32,15 @@ interface EmergencyMapProps {
   onlineUnits: OnlineUnit[];
 }
 
+function escapeHtml(raw: string): string {
+  return raw
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 export function EmergencyMap({
   pickup,
   ambulance,
@@ -89,7 +98,7 @@ export function EmergencyMap({
         layersRef.current.pickup = L.marker([pickup.lat, pickup.lng], {
           icon: pickupIcon,
         })
-          .bindPopup(pickup.label || 'Emergency Pickup')
+          .bindPopup(escapeHtml(pickup.label || 'Emergency Pickup'))
           .addTo(map);
       }
 
@@ -104,7 +113,7 @@ export function EmergencyMap({
         });
         return L.marker([h.latitude, h.longitude], { icon })
           .bindPopup(
-            `<strong>${h.name}</strong><br/>Emergency: ${h.emergencyPhone}${
+            `<strong>${escapeHtml(h.name)}</strong><br/>Emergency: ${escapeHtml(h.emergencyPhone)}${
               h.distanceKm !== undefined ? `<br/>${h.distanceKm} km away` : ''
             }`,
           )
@@ -123,7 +132,7 @@ export function EmergencyMap({
             iconAnchor: [17, 9],
           });
           return L.marker([u.latitude!, u.longitude!], { icon })
-            .bindPopup(`Unit ${u.vehicleNumber}`)
+            .bindPopup(`Unit ${escapeHtml(u.vehicleNumber)}`)
             .addTo(map);
         });
 
@@ -131,9 +140,9 @@ export function EmergencyMap({
       if (ambulance) {
         const ambIcon = L.divIcon({
           className: 'medibook-active-amb',
-          html: `<div style="padding:3px 8px;border-radius:9999px;background:#059669;color:#fff;font-size:11px;font-weight:800;border:2px solid #fff;box-shadow:0 0 0 6px rgba(5,150,105,0.3);white-space:nowrap">🚑 ${
-            ambulance.vehicleNumber || 'DISPATCHED'
-          }</div>`,
+          html: `<div style="padding:3px 8px;border-radius:9999px;background:#059669;color:#fff;font-size:11px;font-weight:800;border:2px solid #fff;box-shadow:0 0 0 6px rgba(5,150,105,0.3);white-space:nowrap">🚑 ${escapeHtml(
+            ambulance.vehicleNumber || 'DISPATCHED',
+          )}</div>`,
           iconSize: [88, 24],
           iconAnchor: [44, 12],
         });

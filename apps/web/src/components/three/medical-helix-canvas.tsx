@@ -1,18 +1,20 @@
 'use client';
 
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState, useCallback } from 'react';
 import * as THREE from 'three';
-import { Pause, Play } from 'lucide-react';
+import { Pause, Play, Activity, ShieldCheck, HeartPulse } from 'lucide-react';
 
 /**
- * Interactive 3D Medical Double-Helix & Cellular Telemetry Mesh using Three.js.
- * Respects `prefers-reduced-motion` and provides an accessible Pause/Play toggle (WCAG 2.2.2).
+ * Interactive 3D Medical Double-Helix & Cellular Telemetry Card using Three.js.
+ * Respects `prefers-reduced-motion`, stops RAF completely when paused, disposes GPU
+ * resources cleanly on unmount, and provides an accessible Pause/Play toggle (WCAG 2.2.2).
  */
 export function MedicalHelixCanvas() {
   const containerRef = useRef<HTMLDivElement>(null);
   const [isPaused, setIsPaused] = useState(false);
   const [webglReady, setWebglReady] = useState(true);
   const pausedRef = useRef(false);
+  const startRafRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
     const mq = window.matchMedia('(prefers-reduced-motion: reduce)');
@@ -26,14 +28,23 @@ export function MedicalHelixCanvas() {
 
     let renderer: THREE.WebGLRenderer | null = null;
     let animationId = 0;
+    let resizeObserver: ResizeObserver | null = null;
+
+    let nodeGeo: THREE.SphereGeometry | null = null;
+    let rungGeo: THREE.CylinderGeometry | null = null;
+    let particleGeo: THREE.BufferGeometry | null = null;
+    let tealMat: THREE.MeshStandardMaterial | null = null;
+    let cyanMat: THREE.MeshStandardMaterial | null = null;
+    let rungMat: THREE.MeshStandardMaterial | null = null;
+    let particleMat: THREE.PointsMaterial | null = null;
 
     try {
       const width = container.clientWidth || 480;
-      const height = container.clientHeight || 420;
+      const height = container.clientHeight || 400;
 
       const scene = new THREE.Scene();
-      const camera = new THREE.PerspectiveCamera(45, width / height, 0.1, 100);
-      camera.position.set(0, 0, 11.5);
+      const camera = new THREE.PerspectiveCamera(44, width / height, 0.1, 100);
+      camera.position.set(0, 0, 11.2);
 
       renderer = new THREE.WebGLRenderer({
         antialias: true,
@@ -48,49 +59,47 @@ export function MedicalHelixCanvas() {
       helixGroup.rotation.z = Math.PI / 9;
       scene.add(helixGroup);
 
-      // Lighting
-      const ambient = new THREE.AmbientLight(0xffffff, 0.7);
+      const ambient = new THREE.AmbientLight(0xffffff, 0.75);
       scene.add(ambient);
 
-      const keyLight = new THREE.DirectionalLight(0x14b8a6, 2.2);
+      const keyLight = new THREE.DirectionalLight(0x2dd4bf, 2.3);
       keyLight.position.set(6, 8, 10);
       scene.add(keyLight);
 
-      const rimLight = new THREE.DirectionalLight(0x38bdf8, 1.4);
+      const rimLight = new THREE.DirectionalLight(0x38bdf8, 1.5);
       rimLight.position.set(-6, -4, 6);
       scene.add(rimLight);
 
-      // Materials
-      const tealMat = new THREE.MeshStandardMaterial({
-        color: 0x0d9488,
+      tealMat = new THREE.MeshStandardMaterial({
+        color: 0x14b8a6,
         emissive: 0x0f766e,
-        emissiveIntensity: 0.35,
-        roughness: 0.25,
-        metalness: 0.3,
+        emissiveIntensity: 0.4,
+        roughness: 0.22,
+        metalness: 0.35,
       });
 
-      const cyanMat = new THREE.MeshStandardMaterial({
-        color: 0x06b6d4,
-        emissive: 0x0e7490,
-        emissiveIntensity: 0.35,
-        roughness: 0.25,
-        metalness: 0.3,
+      cyanMat = new THREE.MeshStandardMaterial({
+        color: 0x38bdf8,
+        emissive: 0x0369a1,
+        emissiveIntensity: 0.38,
+        roughness: 0.22,
+        metalness: 0.35,
       });
 
-      const rungMat = new THREE.MeshStandardMaterial({
+      rungMat = new THREE.MeshStandardMaterial({
         color: 0x99f6e4,
-        roughness: 0.4,
-        metalness: 0.1,
+        roughness: 0.35,
+        metalness: 0.15,
         transparent: true,
         opacity: 0.65,
       });
 
-      const nodeGeo = new THREE.SphereGeometry(0.16, 16, 16);
-      const rungGeo = new THREE.CylinderGeometry(0.03, 0.03, 1, 8);
+      nodeGeo = new THREE.SphereGeometry(0.15, 16, 16);
+      rungGeo = new THREE.CylinderGeometry(0.028, 0.028, 1, 8);
 
       const turns = 26;
-      const radius = 1.65;
-      const verticalStep = 0.27;
+      const radius = 1.62;
+      const verticalStep = 0.26;
 
       for (let i = 0; i < turns; i++) {
         const angle = i * 0.48;
@@ -119,21 +128,20 @@ export function MedicalHelixCanvas() {
         }
       }
 
-      // Ambient cellular particles
-      const particleCount = 70;
-      const particleGeo = new THREE.BufferGeometry();
+      const particleCount = 64;
+      particleGeo = new THREE.BufferGeometry();
       const positions = new Float32Array(particleCount * 3);
       for (let i = 0; i < particleCount; i++) {
-        positions[i * 3] = (Math.random() - 0.5) * 10;
-        positions[i * 3 + 1] = (Math.random() - 0.5) * 9;
-        positions[i * 3 + 2] = (Math.random() - 0.5) * 6;
+        positions[i * 3] = (Math.random() - 0.5) * 9.5;
+        positions[i * 3 + 1] = (Math.random() - 0.5) * 8.5;
+        positions[i * 3 + 2] = (Math.random() - 0.5) * 5.5;
       }
       particleGeo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-      const particleMat = new THREE.PointsMaterial({
+      particleMat = new THREE.PointsMaterial({
         color: 0x2dd4bf,
-        size: 0.08,
+        size: 0.075,
         transparent: true,
-        opacity: 0.65,
+        opacity: 0.6,
       });
       const particles = new THREE.Points(particleGeo, particleMat);
       scene.add(particles);
@@ -143,41 +151,63 @@ export function MedicalHelixCanvas() {
 
       const onPointerMove = (e: PointerEvent) => {
         const rect = container.getBoundingClientRect();
-        targetMouseX = ((e.clientX - rect.left) / rect.width - 0.5) * 0.5;
-        targetMouseY = ((e.clientY - rect.top) / rect.height - 0.5) * 0.35;
+        targetMouseX = ((e.clientX - rect.left) / rect.width - 0.5) * 0.45;
+        targetMouseY = ((e.clientY - rect.top) / rect.height - 0.5) * 0.3;
       };
       container.addEventListener('pointermove', onPointerMove, { passive: true });
 
-      const onResize = () => {
+      const handleResize = () => {
         if (!container || !renderer) return;
         const w = container.clientWidth || 480;
-        const h = container.clientHeight || 420;
+        const h = container.clientHeight || 400;
         camera.aspect = w / h;
         camera.updateProjectionMatrix();
         renderer.setSize(w, h);
+        renderer.render(scene, camera);
       };
-      window.addEventListener('resize', onResize);
 
-      // Render at least one frame even if reduced-motion is enabled
+      resizeObserver = new ResizeObserver(handleResize);
+      resizeObserver.observe(container);
+
+      // Render static frame even when paused
       renderer.render(scene, camera);
 
       const animate = () => {
+        if (pausedRef.current || !renderer) {
+          animationId = 0;
+          return;
+        }
+        helixGroup.rotation.y += 0.007;
+        particles.rotation.y -= 0.0018;
+        helixGroup.rotation.x += (targetMouseY - helixGroup.rotation.x) * 0.05;
+        camera.position.x += (targetMouseX * 1.1 - camera.position.x) * 0.05;
+        camera.lookAt(0, 0, 0);
+        renderer.render(scene, camera);
         animationId = requestAnimationFrame(animate);
-        if (!pausedRef.current && renderer) {
-          helixGroup.rotation.y += 0.008;
-          particles.rotation.y -= 0.002;
-          helixGroup.rotation.x += (targetMouseY - helixGroup.rotation.x) * 0.05;
-          camera.position.x += (targetMouseX * 1.2 - camera.position.x) * 0.05;
-          camera.lookAt(0, 0, 0);
-          renderer.render(scene, camera);
+      };
+
+      startRafRef.current = () => {
+        if (!animationId && !pausedRef.current) {
+          animationId = requestAnimationFrame(animate);
         }
       };
-      animationId = requestAnimationFrame(animate);
+
+      if (!pausedRef.current) {
+        animationId = requestAnimationFrame(animate);
+      }
 
       return () => {
-        cancelAnimationFrame(animationId);
+        startRafRef.current = null;
+        if (animationId) cancelAnimationFrame(animationId);
         container.removeEventListener('pointermove', onPointerMove);
-        window.removeEventListener('resize', onResize);
+        resizeObserver?.disconnect();
+        nodeGeo?.dispose();
+        rungGeo?.dispose();
+        particleGeo?.dispose();
+        tealMat?.dispose();
+        cyanMat?.dispose();
+        rungMat?.dispose();
+        particleMat?.dispose();
         if (renderer && renderer.domElement.parentNode === container) {
           container.removeChild(renderer.domElement);
           renderer.dispose();
@@ -188,48 +218,78 @@ export function MedicalHelixCanvas() {
     }
   }, []);
 
-  const togglePause = () => {
-    const next = !isPaused;
+  const togglePause = useCallback(() => {
+    const next = !pausedRef.current;
     pausedRef.current = next;
     setIsPaused(next);
-  };
+    if (!next) {
+      startRafRef.current?.();
+    }
+  }, []);
 
   return (
-    <div className="relative w-full h-[340px] sm:h-[420px] rounded-3xl overflow-hidden bg-gradient-to-br from-teal-950/90 via-slate-900 to-cyan-950/80 border border-teal-500/20 shadow-2xl">
-      {/* Subtle radial glow */}
+    <div className="relative w-full h-[380px] sm:h-[440px] rounded-3xl overflow-hidden bg-gradient-to-br from-[#071521] via-[#0b1f2e] to-[#06101a] border border-slate-200/20 dark:border-teal-500/20 shadow-[0_24px_60px_-15px_rgba(13,148,136,0.28)] flex flex-col justify-between">
+      {/* Radial depth glow */}
       <div
         aria-hidden="true"
-        className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_50%_45%,rgba(20,184,166,0.22),transparent_65%)]"
+        className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_55%_45%,rgba(20,184,166,0.24),transparent_62%)]"
       />
 
+      {/* Embedded Top Clinical HUD Bar */}
+      <div className="relative z-10 flex items-center justify-between px-4 pt-4">
+        <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-slate-950/75 backdrop-blur-md border border-teal-500/30 text-[11px] font-semibold text-teal-300">
+          <span className="h-2 w-2 rounded-full bg-emerald-400" aria-hidden="true" />
+          <span>Clinical Telemetry &amp; RAG Engine</span>
+        </div>
+
+        <button
+          type="button"
+          onClick={togglePause}
+          aria-label={isPaused ? 'Play 3D molecular animation' : 'Pause 3D molecular animation'}
+          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-slate-950/75 hover:bg-slate-900 text-slate-200 border border-slate-700/70 text-[11px] font-semibold backdrop-blur-md shadow-sm transition-colors"
+        >
+          {isPaused ? <Play className="w-3 h-3" aria-hidden="true" /> : <Pause className="w-3 h-3" aria-hidden="true" />}
+          <span>{isPaused ? 'Play 3D' : 'Pause 3D'}</span>
+        </button>
+      </div>
+
+      {/* Interactive Three.js Viewport */}
       {webglReady ? (
         <div
           ref={containerRef}
           aria-hidden="true"
-          className="w-full h-full cursor-grab active:cursor-grabbing"
+          className="absolute inset-0 w-full h-full cursor-grab active:cursor-grabbing"
         />
       ) : (
-        <div className="w-full h-full flex items-center justify-center text-teal-300 text-xs font-medium">
+        <div className="flex-1 flex items-center justify-center text-teal-300 text-xs font-medium px-6 text-center">
           Interactive Clinical Telemetry Preview
         </div>
       )}
 
-      {/* Floating telemetry HUD overlay */}
-      <div className="pointer-events-none absolute top-4 left-4 flex items-center gap-2 px-3 py-1.5 rounded-full bg-slate-950/70 backdrop-blur-md border border-teal-500/30 text-[11px] font-semibold text-teal-300">
-        <span className="h-2 w-2 rounded-full bg-emerald-400" />
-        <span>Live Bio-Telemetry &amp; RAG Engine</span>
+      {/* Embedded Bottom Telemetry Strip */}
+      <div className="relative z-10 mx-4 mb-4 p-3 rounded-2xl bg-slate-950/75 backdrop-blur-md border border-white/10 grid grid-cols-3 gap-2 text-center">
+        <div className="px-2">
+          <p className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold flex items-center justify-center gap-1">
+            <Activity className="w-3 h-3 text-teal-400" aria-hidden="true" />
+            Uptime
+          </p>
+          <p className="font-mono text-xs sm:text-sm font-bold text-white tabular-nums mt-0.5">99.98%</p>
+        </div>
+        <div className="px-2 border-x border-white/10">
+          <p className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold flex items-center justify-center gap-1">
+            <HeartPulse className="w-3 h-3 text-rose-400" aria-hidden="true" />
+            Vitals Sync
+          </p>
+          <p className="font-mono text-xs sm:text-sm font-bold text-emerald-400 tabular-nums mt-0.5">Live WebRTC</p>
+        </div>
+        <div className="px-2">
+          <p className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold flex items-center justify-center gap-1">
+            <ShieldCheck className="w-3 h-3 text-cyan-400" aria-hidden="true" />
+            Hold Lock
+          </p>
+          <p className="font-mono text-xs sm:text-sm font-bold text-cyan-300 tabular-nums mt-0.5">Redis Atomic</p>
+        </div>
       </div>
-
-      {/* Accessible Pause/Play control for persistent motion (WCAG 2.2.2) */}
-      <button
-        type="button"
-        onClick={togglePause}
-        aria-label={isPaused ? 'Play 3D molecular animation' : 'Pause 3D molecular animation'}
-        className="absolute bottom-4 right-4 z-10 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-950/80 hover:bg-slate-900 text-slate-200 border border-slate-700/80 text-xs font-semibold backdrop-blur-md shadow-lg"
-      >
-        {isPaused ? <Play className="w-3.5 h-3.5" /> : <Pause className="w-3.5 h-3.5" />}
-        <span>{isPaused ? 'Play 3D' : 'Pause 3D'}</span>
-      </button>
     </div>
   );
 }

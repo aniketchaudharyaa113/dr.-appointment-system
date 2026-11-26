@@ -47,6 +47,8 @@ export function VitalsLabsPanel({
   const [urgency, setUrgency] = useState<'ROUTINE' | 'URGENT' | 'STAT'>('ROUTINE');
   const [instructions, setInstructions] = useState('Morning sample preferred');
 
+  const [formError, setFormError] = useState<string | null>(null);
+
   const vitalsQuery = useQuery({
     queryKey: ['consultation-vitals', appointmentId],
     queryFn: () => fetchApi<VitalRecord[]>(`/consultations/${appointmentId}/vitals`),
@@ -58,20 +60,29 @@ export function VitalsLabsPanel({
   });
 
   const recordVitalsMutation = useMutation({
-    mutationFn: () =>
-      fetchApi<VitalRecord>(`/consultations/${appointmentId}/vitals`, {
+    mutationFn: () => {
+      const payload = {
+        systolicBp: Number(systolicBp) || undefined,
+        diastolicBp: Number(diastolicBp) || undefined,
+        heartRate: Number(heartRate) || undefined,
+        spO2: Number(spO2) || undefined,
+        temperatureF: Number(temperatureF) || undefined,
+        bloodGlucose: Number(bloodGlucose) || undefined,
+      };
+      if (Object.values(payload).every((v) => v === undefined)) {
+        throw new Error('Please enter at least one clinical vital sign reading');
+      }
+      return fetchApi<VitalRecord>(`/consultations/${appointmentId}/vitals`, {
         method: 'POST',
-        body: JSON.stringify({
-          systolicBp: Number(systolicBp) || undefined,
-          diastolicBp: Number(diastolicBp) || undefined,
-          heartRate: Number(heartRate) || undefined,
-          spO2: Number(spO2) || undefined,
-          temperatureF: Number(temperatureF) || undefined,
-          bloodGlucose: Number(bloodGlucose) || undefined,
-        }),
-      }),
+        body: JSON.stringify(payload),
+      });
+    },
     onSuccess: () => {
+      setFormError(null);
       queryClient.invalidateQueries({ queryKey: ['consultation-vitals', appointmentId] });
+    },
+    onError: (err: Error) => {
+      setFormError(err.message);
     },
   });
 
@@ -87,7 +98,11 @@ export function VitalsLabsPanel({
         }),
       }),
     onSuccess: () => {
+      setFormError(null);
       queryClient.invalidateQueries({ queryKey: ['consultation-labs', appointmentId] });
+    },
+    onError: (err: Error) => {
+      setFormError(err.message);
     },
   });
 
@@ -247,6 +262,11 @@ export function VitalsLabsPanel({
             <Plus className="w-4 h-4" />
             {recordVitalsMutation.isPending ? 'Recording...' : 'Record Vitals'}
           </button>
+          {formError && (
+            <p role="alert" className="text-xs font-semibold text-rose-600 dark:text-rose-400">
+              {formError}
+            </p>
+          )}
         </form>
       </section>
 

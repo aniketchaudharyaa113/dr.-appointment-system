@@ -61,6 +61,33 @@ export default function BookingConfirmedPage() {
     );
   }
 
+  if (appt.status !== 'CONFIRMED' && appt.status !== 'IN_PROGRESS' && appt.status !== 'COMPLETED') {
+    return (
+      <div className="max-w-2xl mx-auto px-4 py-16 text-center space-y-4">
+        <AlertCircle className="w-10 h-10 text-amber-500 mx-auto" />
+        <h1 className="text-xl font-bold text-slate-900 dark:text-white">
+          Appointment Status: {appt.status}
+        </h1>
+        <p className="text-xs sm:text-sm text-slate-500">
+          This appointment is not confirmed yet. Complete payment or view your appointments list.
+        </p>
+        <div className="flex items-center justify-center gap-3">
+          {appt.status === 'PENDING_PAYMENT' && (
+            <Link
+              href={`/checkout/${appt.id}`}
+              className="px-5 py-2.5 rounded-xl bg-teal-600 text-white text-xs font-bold"
+            >
+              Complete Payment
+            </Link>
+          )}
+          <Link href="/appointments" className="text-xs font-semibold text-teal-600 underline">
+            Go to My Appointments
+          </Link>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8 py-12 space-y-8">
       <div className="p-8 rounded-3xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xl text-center space-y-6">

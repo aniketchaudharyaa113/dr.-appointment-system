@@ -121,6 +121,7 @@ export default function EmergencyPage() {
 
   const onlineDriversQuery = useQuery<OnlineUnit[]>({
     queryKey: ['online-ambulance-drivers', pickupLat, pickupLng],
+    enabled: hasSession,
     queryFn: () =>
       fetchApi<OnlineUnit[]>(
         `/ambulance/drivers/online?lat=${pickupLat}&lng=${pickupLng}`,

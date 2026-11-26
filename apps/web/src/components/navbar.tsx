@@ -58,33 +58,34 @@ export function Navbar() {
 
   const notifsQuery = useQuery({
     queryKey: ['my-notifications', user?.id],
-    enabled: Boolean(user),
     queryFn: () =>
       fetchApi<
         Array<{
           id: string;
+          type: string;
           title: string;
           body: string;
           isRead: boolean;
           createdAt: string;
         }>
       >('/notifications'),
-    refetchInterval: 30000,
+    enabled: !!user,
+    refetchInterval: 20000,
   });
 
   const markReadMutation = useMutation({
     mutationFn: (id: string) =>
-      fetchApi(`/notifications/${id}/read`, { method: 'POST' }),
+      fetchApi(`/notifications/${id}/read`, { method: 'PATCH' }),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['my-notifications', user?.id] });
+      queryClient.invalidateQueries({ queryKey: ['my-notifications'] });
     },
   });
 
   const markAllReadMutation = useMutation({
     mutationFn: () =>
-      fetchApi('/notifications/read-all', { method: 'POST' }),
+      fetchApi('/notifications/read-all', { method: 'PATCH' }),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['my-notifications', user?.id] });
+      queryClient.invalidateQueries({ queryKey: ['my-notifications'] });
     },
   });
 
@@ -105,37 +106,48 @@ export function Navbar() {
   ].filter((link) => link.roles.includes(user?.role));
 
   return (
-    <header className="sticky top-0 z-40 w-full border-b border-slate-200 dark:border-slate-800 bg-white/95 dark:bg-slate-950/95 backdrop-blur-md">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
+    <header className="sticky top-0 z-40 w-full border-b border-slate-200/80 dark:border-slate-800/80 bg-white/85 dark:bg-[#060b14]/85 backdrop-blur-xl">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between gap-4">
         {/* Brand */}
-        <Link href="/" className="flex items-center gap-2.5 group">
-          <div className="w-10 h-10 rounded-xl bg-teal-600 text-white flex items-center justify-center shadow-md shadow-teal-500/20 group-hover:scale-105 transition-transform">
-            <Activity className="w-6 h-6" />
+        <Link href="/" className="flex items-center gap-3 group shrink-0">
+          <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-teal-500 to-teal-700 text-white flex items-center justify-center shadow-md shadow-teal-600/20 group-hover:scale-105 transition-transform">
+            <Activity className="w-5 h-5" aria-hidden="true" />
           </div>
-          <div>
-            <div className="flex items-center gap-1.5">
-              <span className="font-bold text-xl tracking-tight text-slate-900 dark:text-white">MediBook</span>
-              <span className="text-[10px] font-semibold uppercase px-1.5 py-0.5 rounded bg-teal-100 dark:bg-teal-950 text-teal-700 dark:text-teal-300">
-                Telehealth
+          <div className="leading-tight">
+            <div className="flex items-center gap-2">
+              <span className="font-display font-extrabold text-lg tracking-tight text-slate-900 dark:text-white">
+                {t.nav.brand}
+              </span>
+              <span className="hidden sm:inline-block text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full bg-teal-50 dark:bg-teal-950/80 text-teal-700 dark:text-teal-300 border border-teal-200/60 dark:border-teal-800/60">
+                Clinical
               </span>
             </div>
-            <p className="text-[11px] text-slate-500 dark:text-slate-400 font-medium">Care & Dispatch</p>
+            <p className="text-[11px] text-slate-500 dark:text-slate-400 font-medium">
+              Telehealth &amp; EMS
+            </p>
           </div>
         </Link>
 
-        {/* Desktop Nav */}
-        <nav className="hidden md:flex items-center gap-1" aria-label="Main Navigation">
+        {/* Desktop Pill Nav */}
+        <nav
+          className="hidden md:flex items-center gap-1 bg-slate-100/80 dark:bg-slate-900/80 p-1 rounded-full border border-slate-200/70 dark:border-slate-800/80"
+          aria-label="Main Navigation"
+        >
           {navLinks.map((link) => {
             const Icon = link.icon;
-            const isActive = pathname === link.href;
+            const isActive = pathname === link.href || (link.href !== '/' && pathname.startsWith(link.href + '/'));
             if (link.highlight) {
               return (
                 <Link
                   key={link.href}
                   href={link.href}
-                  className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-sm font-semibold text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/40 transition-colors"
+                  className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs sm:text-sm font-semibold transition-all ${
+                    isActive
+                      ? 'bg-rose-600 text-white shadow-sm'
+                      : 'text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/60'
+                  }`}
                 >
-                  <Icon className="w-4 h-4 animate-pulse" />
+                  <Icon className="w-4 h-4" aria-hidden="true" />
                   <span>{link.label}</span>
                 </Link>
               );
@@ -144,13 +156,13 @@ export function Navbar() {
               <Link
                 key={link.href}
                 href={link.href}
-                className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-sm font-medium transition-colors ${
+                className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs sm:text-sm font-medium transition-all ${
                   isActive
-                    ? 'bg-teal-50 dark:bg-teal-950/50 text-teal-700 dark:text-teal-300 font-semibold'
-                    : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-900'
+                    ? 'bg-white dark:bg-slate-800 text-teal-700 dark:text-teal-300 font-semibold shadow-sm'
+                    : 'text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white'
                 }`}
               >
-                <Icon className="w-4 h-4 opacity-75" />
+                <Icon className="w-4 h-4 opacity-80" aria-hidden="true" />
                 <span>{link.label}</span>
               </Link>
             );
@@ -158,14 +170,14 @@ export function Navbar() {
         </nav>
 
         {/* Actions */}
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 shrink-0">
           {/* Language Selector */}
-          <div className="relative flex items-center bg-slate-100 dark:bg-slate-900 rounded-lg p-0.5 text-xs font-medium">
-            <Globe className="w-3.5 h-3.5 ml-1.5 text-slate-500" />
+          <div className="relative flex items-center bg-slate-100/90 dark:bg-slate-900 rounded-full px-2 py-1 text-xs font-medium border border-slate-200/60 dark:border-slate-800">
+            <Globe className="w-3.5 h-3.5 text-slate-500 shrink-0" aria-hidden="true" />
             <select
               value={locale}
               onChange={(e) => setLocale(e.target.value as Locale)}
-              className="bg-transparent border-none py-1 pl-1 pr-2 text-xs font-semibold text-slate-700 dark:text-slate-200 focus:outline-none cursor-pointer"
+              className="bg-transparent border-none py-0.5 pl-1 pr-1.5 text-xs font-semibold text-slate-700 dark:text-slate-200 focus:outline-none cursor-pointer"
               aria-label="Select Language"
             >
               <option value="en" className="dark:bg-slate-900">EN</option>
@@ -176,49 +188,39 @@ export function Navbar() {
 
           {/* Theme Toggle */}
           <button
+            type="button"
             onClick={toggleTheme}
-            className="p-2 rounded-lg text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-900 transition-colors"
+            className="p-2 rounded-full text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-900 border border-transparent hover:border-slate-200 dark:hover:border-slate-800 transition-colors"
             aria-label="Toggle Dark Mode"
           >
-            {isDark ? <Sun className="w-4 h-4 text-amber-400" /> : <Moon className="w-4 h-4 text-slate-600" />}
+            {isDark ? <Sun className="w-4 h-4 text-amber-400" aria-hidden="true" /> : <Moon className="w-4 h-4 text-slate-600" aria-hidden="true" />}
           </button>
 
-          {/* Mobile Menu Toggle Button */}
-          <button
-            type="button"
-            onClick={() => setIsMobileMenuOpen((prev) => !prev)}
-            className="md:hidden p-2 rounded-lg text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-900 transition-colors"
-            aria-label="Toggle Navigation Menu"
-          >
-            {isMobileMenuOpen ? <X className="w-5 h-5 text-slate-700 dark:text-slate-200" /> : <Menu className="w-5 h-5 text-slate-700 dark:text-slate-200" />}
-          </button>
-
-          {/* Notifications Bell (P1-10) */}
+          {/* Notifications Bell */}
           {user && (
             <div className="relative" ref={notifRef}>
               <button
                 type="button"
                 onClick={() => setIsNotifOpen((prev) => !prev)}
-                className="relative p-2 rounded-lg text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-900 transition-colors"
+                className="relative p-2 rounded-full text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-900 transition-colors"
                 aria-label="Notifications"
                 title="Notifications"
               >
-                <Bell className="w-4 h-4 text-slate-600 dark:text-slate-300" />
+                <Bell className="w-4 h-4" aria-hidden="true" />
                 {unreadCount > 0 && (
-                  <span className="absolute 1 top-1 right-1 flex h-4 min-w-[16px] px-1 items-center justify-center rounded-full bg-rose-500 text-[9px] font-extrabold text-white ring-2 ring-white dark:ring-slate-950">
+                  <span className="absolute top-0.5 right-0.5 flex h-4 min-w-[16px] px-1 items-center justify-center rounded-full bg-rose-500 text-[9px] font-extrabold text-white ring-2 ring-white dark:ring-slate-950">
                     {unreadCount > 9 ? '9+' : unreadCount}
                   </span>
                 )}
               </button>
 
-              {/* Notification Popover */}
               {isNotifOpen && (
-                <div className="absolute right-0 mt-2 w-80 sm:w-96 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xl overflow-hidden z-50">
+                <div className="absolute right-0 mt-2 w-80 max-w-[calc(100vw-2rem)] sm:w-96 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-2xl overflow-hidden z-50 animate-slide-down-fade">
                   <div className="flex items-center justify-between p-3.5 border-b border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-800/40">
-                    <div className="flex items-center gap-1.5">
+                    <div className="flex items-center gap-2">
                       <span className="text-xs font-bold text-slate-900 dark:text-white">Notifications</span>
                       {unreadCount > 0 && (
-                        <span className="text-[10px] font-bold px-1.5 py-0.2 rounded-full bg-teal-100 dark:bg-teal-950 text-teal-700 dark:text-teal-300">
+                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-teal-100 dark:bg-teal-950 text-teal-700 dark:text-teal-300">
                           {unreadCount} new
                         </span>
                       )}
@@ -229,7 +231,7 @@ export function Navbar() {
                         onClick={() => markAllReadMutation.mutate()}
                         className="text-[11px] font-semibold text-teal-600 dark:text-teal-400 hover:underline flex items-center gap-1"
                       >
-                        <CheckCheck className="w-3 h-3" />
+                        <CheckCheck className="w-3 h-3" aria-hidden="true" />
                         Mark all read
                       </button>
                     )}
@@ -238,12 +240,13 @@ export function Navbar() {
                   <div className="max-h-80 overflow-y-auto divide-y divide-slate-100 dark:divide-slate-800/60">
                     {notifications.length > 0 ? (
                       notifications.map((notif) => (
-                        <div
+                        <button
                           key={notif.id}
+                          type="button"
                           onClick={() => {
                             if (!notif.isRead) markReadMutation.mutate(notif.id);
                           }}
-                          className={`p-3 text-left transition-colors cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800/50 ${
+                          className={`w-full p-3.5 text-left transition-colors hover:bg-slate-50 dark:hover:bg-slate-800/50 ${
                             !notif.isRead ? 'bg-teal-50/40 dark:bg-teal-950/20' : ''
                           }`}
                         >
@@ -255,13 +258,13 @@ export function Navbar() {
                               <span className="w-2 h-2 rounded-full bg-teal-500 flex-shrink-0 mt-1" />
                             )}
                           </div>
-                          <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5 line-clamp-2">
+                          <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5 line-clamp-2">
                             {notif.body}
                           </p>
                           <span className="text-[10px] text-slate-400 mt-1 block">
                             {formatIstTime(notif.createdAt)}
                           </span>
-                        </div>
+                        </button>
                       ))
                     ) : (
                       <div className="p-8 text-center text-xs text-slate-400">
@@ -277,32 +280,47 @@ export function Navbar() {
           {/* User Auth Info */}
           {user ? (
             <div className="flex items-center gap-2 pl-2 border-l border-slate-200 dark:border-slate-800">
-              <span className="text-xs font-semibold px-2 py-1 bg-slate-100 dark:bg-slate-900 rounded-md text-slate-700 dark:text-slate-300">
-                {user.name.split(' ')[0]} ({user.role})
+              <span className="text-xs font-semibold px-2.5 py-1 bg-slate-100 dark:bg-slate-900 rounded-full text-slate-700 dark:text-slate-300 border border-slate-200/70 dark:border-slate-800">
+                {user.name.split(' ')[0]} <span className="text-teal-600 dark:text-teal-400">• {user.role}</span>
               </span>
               <button
+                type="button"
                 onClick={handleLogout}
-                className="p-1.5 text-slate-400 hover:text-rose-500 transition-colors"
+                className="p-1.5 rounded-full text-slate-400 hover:text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/40 transition-colors"
                 title="Sign Out"
                 aria-label="Sign Out"
               >
-                <LogOut className="w-4 h-4" />
+                <LogOut className="w-4 h-4" aria-hidden="true" />
               </button>
             </div>
           ) : (
             <Link
               href="/auth/login"
-              className="px-3.5 py-1.5 rounded-lg text-xs font-semibold bg-teal-600 hover:bg-teal-700 text-white shadow-sm transition-colors"
+              className="px-4 py-2 rounded-full text-xs font-bold bg-slate-900 dark:bg-teal-600 hover:bg-teal-700 dark:hover:bg-teal-500 text-white shadow-sm transition-colors"
             >
               {t.nav.login}
             </Link>
           )}
+
+          {/* Mobile Menu Toggle Button */}
+          <button
+            type="button"
+            onClick={() => setIsMobileMenuOpen((prev) => !prev)}
+            className="md:hidden p-2 rounded-full text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-900 transition-colors"
+            aria-label="Toggle Navigation Menu"
+            aria-expanded={isMobileMenuOpen}
+          >
+            {isMobileMenuOpen ? <X className="w-5 h-5" aria-hidden="true" /> : <Menu className="w-5 h-5" aria-hidden="true" />}
+          </button>
         </div>
       </div>
 
       {/* Mobile Nav Drawer */}
       {isMobileMenuOpen && (
-        <nav className="md:hidden border-t border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 px-4 pt-2 pb-4 space-y-1 shadow-lg animate-in slide-in-from-top duration-200" aria-label="Mobile Navigation">
+        <nav
+          className="md:hidden border-t border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 px-4 pt-2 pb-4 space-y-1 shadow-xl animate-slide-down-fade"
+          aria-label="Mobile Navigation"
+        >
           {navLinks.map((link) => {
             const Icon = link.icon;
             const isActive = pathname === link.href;
@@ -311,15 +329,15 @@ export function Navbar() {
                 key={link.href}
                 href={link.href}
                 onClick={() => setIsMobileMenuOpen(false)}
-                className={`flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-sm font-medium transition-colors ${
+                className={`flex items-center gap-2.5 px-3.5 py-2.5 rounded-xl text-sm font-medium transition-colors ${
                   isActive
-                    ? 'bg-teal-50 dark:bg-teal-950/50 text-teal-700 dark:text-teal-300 font-semibold'
+                    ? 'bg-teal-50 dark:bg-teal-950/60 text-teal-700 dark:text-teal-300 font-semibold'
                     : link.highlight
-                    ? 'text-rose-600 dark:text-rose-400 font-semibold hover:bg-rose-50 dark:hover:bg-rose-950/40'
-                    : 'text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-900'
+                      ? 'text-rose-600 dark:text-rose-400 font-semibold hover:bg-rose-50 dark:hover:bg-rose-950/40'
+                      : 'text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-900'
                 }`}
               >
-                <Icon className="w-4 h-4" />
+                <Icon className="w-4 h-4" aria-hidden="true" />
                 <span>{link.label}</span>
               </Link>
             );

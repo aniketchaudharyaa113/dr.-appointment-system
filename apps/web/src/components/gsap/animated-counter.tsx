@@ -12,25 +12,30 @@ interface AnimatedCounterProps {
   formatter?: (val: number) => string;
 }
 
+/**
+ * Renders the exact target metric immediately (never stuck at 0),
+ * and smoothly counts up when scrolled into view if motion is enabled.
+ */
 export function AnimatedCounter({
   value,
-  duration = 1.8,
+  duration = 1.4,
   prefix = '',
   suffix = '',
   className = '',
   formatter,
 }: AnimatedCounterProps) {
   const containerRef = useRef<HTMLSpanElement>(null);
-  const [displayValue, setDisplayValue] = useState<number>(0);
+  const [displayValue, setDisplayValue] = useState<number>(value);
 
   useGSAP(
     () => {
-      if (isReducedMotion()) {
+      if (isReducedMotion() || !containerRef.current) {
         setDisplayValue(value);
         return;
       }
 
-      const obj = { count: 0 };
+      const startVal = Math.max(0, Math.floor(value * 0.45));
+      const obj = { count: startVal };
 
       const tween = gsap.to(obj, {
         count: value,
@@ -38,19 +43,23 @@ export function AnimatedCounter({
         ease: 'power2.out',
         scrollTrigger: {
           trigger: containerRef.current,
-          start: 'top 90%',
+          start: 'top 95%',
           once: true,
         },
         onUpdate: () => {
-          setDisplayValue(Math.floor(obj.count));
+          setDisplayValue(Math.round(obj.count));
+        },
+        onComplete: () => {
+          setDisplayValue(value);
         },
       });
 
       return () => {
         tween.kill();
+        setDisplayValue(value);
       };
     },
-    { scope: containerRef, dependencies: [value, duration] }
+    { scope: containerRef, dependencies: [value, duration] },
   );
 
   const formatted = formatter

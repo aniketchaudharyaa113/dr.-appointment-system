@@ -3,23 +3,86 @@
 @tailwind utilities;
 
 :root {
-  --background: #f8fafc;
-  --foreground: #0f172a;
+  --surface-canvas: #f7fafb;
+  --surface-card: #ffffff;
+  --text-primary: #0b132b;
+  --brand-accent: #0d9488;
+  --scrollbar-track: #eef2f6;
+  --scrollbar-thumb: #94a3b8;
   color-scheme: light dark;
+  accent-color: var(--brand-accent);
+  scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
 }
 
+/* Pre-hydration dark fallback when user hasn't explicitly forced light theme */
 @media (prefers-color-scheme: dark) {
-  :root {
-    --background: #090d16;
-    --foreground: #f8fafc;
+  :root:not(.light) {
+    --surface-canvas: #060b14;
+    --surface-card: #0d1526;
+    --text-primary: #f1f5f9;
+    --brand-accent: #2dd4bf;
+    --scrollbar-track: #0f172a;
+    --scrollbar-thumb: #475569;
   }
 }
 
+/* Explicit next-themes class synchronization */
+html.light {
+  color-scheme: light;
+  --surface-canvas: #f7fafb;
+  --surface-card: #ffffff;
+  --text-primary: #0b132b;
+  --brand-accent: #0d9488;
+  --scrollbar-track: #eef2f6;
+  --scrollbar-thumb: #94a3b8;
+}
+
+html.dark {
+  color-scheme: dark;
+  --surface-canvas: #060b14;
+  --surface-card: #0d1526;
+  --text-primary: #f1f5f9;
+  --brand-accent: #2dd4bf;
+  --scrollbar-track: #0f172a;
+  --scrollbar-thumb: #475569;
+}
+
 body {
-  color: var(--foreground);
-  background: var(--background);
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  color: var(--text-primary);
+  background-color: var(--surface-canvas);
+  line-height: 1.5;
   min-height: 100vh;
+  overflow-x: clip;
+}
+
+h1,
+h2,
+h3,
+.font-display {
+  text-wrap: balance;
+}
+
+p {
+  text-wrap: pretty;
+}
+
+/* Subtle clinical architectural background pattern */
+.bg-clinical-grid {
+  background-image:
+    radial-gradient(at 18% 0%, rgba(13, 148, 136, 0.08) 0px, transparent 52%),
+    radial-gradient(at 88% 8%, rgba(6, 182, 212, 0.07) 0px, transparent 48%),
+    linear-gradient(to right, rgba(15, 23, 42, 0.03) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(15, 23, 42, 0.03) 1px, transparent 1px);
+  background-size: 100% 100%, 100% 100%, 40px 40px, 40px 40px;
+}
+
+html.dark .bg-clinical-grid {
+  background-image:
+    radial-gradient(at 18% 0%, rgba(20, 184, 166, 0.14) 0px, transparent 52%),
+    radial-gradient(at 88% 8%, rgba(56, 189, 248, 0.11) 0px, transparent 48%),
+    linear-gradient(to right, rgba(255, 255, 255, 0.035) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(255, 255, 255, 0.035) 1px, transparent 1px);
+  background-size: 100% 100%, 100% 100%, 40px 40px, 40px 40px;
 }
 
 .visually-hidden:where(:not(:focus-within, :active)) {
@@ -35,7 +98,7 @@ body {
 }
 
 :where(a, button, input, select, textarea, summary, [tabindex]):focus-visible {
-  outline: 2px solid #0d9488;
+  outline: 2px solid var(--brand-accent);
   outline-offset: 3px;
 }
 
@@ -48,10 +111,21 @@ body {
 
 @media (prefers-reduced-motion: no-preference) {
   :where(button, a) {
-    transition: box-shadow 150ms ease-out, scale 150ms ease-out, background-color 150ms ease-out, border-color 150ms ease-out;
+    transition:
+      box-shadow 160ms ease-out,
+      transform 160ms ease-out,
+      background-color 160ms ease-out,
+      border-color 160ms ease-out,
+      color 160ms ease-out;
   }
 
   button:active:not(:disabled) {
-    scale: 0.98;
+    transform: scale(0.985);
+  }
+}
+
+@media (forced-colors: active) {
+  .clinical-card {
+    border: 1px solid CanvasText;
   }
 }

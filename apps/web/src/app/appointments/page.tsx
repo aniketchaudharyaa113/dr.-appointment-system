@@ -169,7 +169,7 @@ export default function MyAppointmentsPage() {
       )}
 
       {/* Search & Filter Bar */}
-      <div className="p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xs space-y-3">
+      <div className="p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm space-y-3">
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
           <div>
             <label className="block text-slate-500 font-medium mb-1">Status</label>
@@ -358,7 +358,7 @@ export default function MyAppointmentsPage() {
                   </>
                 )}
 
-                {apt.status === 'CONFIRMED' && (
+                {(apt.status === 'CONFIRMED' || apt.status === 'IN_PROGRESS') && (
                   <>
                     <Link
                       href={`/consultation/${apt.id}`}
@@ -368,13 +368,15 @@ export default function MyAppointmentsPage() {
                       Join Call
                     </Link>
 
-                    <button
-                      type="button"
-                      onClick={() => setCancelModalApt(apt)}
-                      className="px-3.5 py-2 rounded-xl border border-rose-200 dark:border-rose-900/60 text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/40 font-semibold text-xs transition-colors"
-                    >
-                      Cancel
-                    </button>
+                    {apt.status === 'CONFIRMED' && (
+                      <button
+                        type="button"
+                        onClick={() => setCancelModalApt(apt)}
+                        className="px-3.5 py-2 rounded-xl border border-rose-200 dark:border-rose-900/60 text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/40 font-semibold text-xs transition-colors"
+                      >
+                        Cancel
+                      </button>
+                    )}
                   </>
                 )}
 
@@ -427,7 +429,7 @@ export default function MyAppointmentsPage() {
 
       {/* Cancellation Modal */}
       {cancelModalApt && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-xs">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
           <div className="bg-white dark:bg-slate-900 rounded-3xl p-6 max-w-md w-full border border-slate-200 dark:border-slate-800 shadow-2xl space-y-4">
             <div className="flex items-center gap-3 text-rose-600">
               <div className="w-10 h-10 rounded-full bg-rose-100 dark:bg-rose-950 flex items-center justify-center">
@@ -475,7 +477,7 @@ export default function MyAppointmentsPage() {
 
       {/* Review Modal */}
       {reviewModalApt && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-xs">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
           <div className="bg-white dark:bg-slate-900 rounded-3xl p-6 max-w-md w-full border border-slate-200 dark:border-slate-800 shadow-2xl space-y-4">
             <div className="flex items-center gap-3 text-amber-500">
               <div className="w-10 h-10 rounded-full bg-amber-100 dark:bg-amber-950 flex items-center justify-center">

@@ -96,3 +96,12 @@ All fixes are committed atomically on `main` (baseline tag: `pre-agent-baseline`
 - [x] **GSAP-6**: 3D interactive physics tilt on clinical specialty cards with icon hover rotation
 - [x] **GSAP-7**: Doctor directory cards staggered entrance on search and filtering
 
+## Phase 9 — Full-Stack Bug Fixes & Premium Clinical UI/UX Redesign
+- [x] **FIX-1**: Fix `/emergency` unauthenticated redirect by gating `/ambulance/drivers/online` on session state (`enabled: hasSession`)
+- [x] **FIX-2**: Fix `/admin` pending doctors list parsing (`Array.isArray`), audit log timestamps (`createdAt`), `rejectionReason` schema & audit logging, and reconciliation toast counts
+- [x] **FIX-3**: Fix `/consultation/[id]` LiveKit WebRTC reconnection on mic/camera toggle, `+30m` join window alignment, `TrackUnsubscribed` single-track detach, `SCHEDULED -> ENDED` state transition, `soapNote` AI Copilot mapping, missing Rx 404 handling, and `Dr. Dr.` duplicate prefix removal
+- [x] **FIX-4**: Fix `/doctors` search (`General Physician` / `General Medicine` alignment, free-text doctor/specialty fallback alongside `pg_trgm`, seeded symptom mappings) and debounced query transitions
+- [x] **FIX-5**: Sync `AuthProvider` state on `/auth/register`, persist doctor `experienceYears`, keep `Join Call` button on `IN_PROGRESS` appointments, validate `/appointments/[id]/confirmed` status, and harden Stripe HMAC-SHA256 webhook verification + AI `booking_agent.py` API payload parsing
+- [x] **UI-5**: Overhaul `apps/web` clinical UI/UX with self-hosted `Plus Jakarta Sans`, `Inter`, and `JetBrains Mono` typography, synchronized `.dark` / `color-scheme` CSS tokens, refined ambient hero & integrated 3D Bio-Helix HUD, safe GSAP/ScrollTrigger animations without hidden `opacity: 0` traps, responsive consultation layout, and valid Tailwind v3 utility classes
+
+

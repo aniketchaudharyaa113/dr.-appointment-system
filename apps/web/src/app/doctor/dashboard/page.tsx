@@ -23,6 +23,8 @@ import { fetchApi } from '@/lib/api';
 import { formatPaise } from '@/lib/utils';
 import { RoleGuard } from '@/components/role-guard';
 import { useToast } from '@/components/toast';
+import { useAuth } from '@/lib/auth-context';
+import { ClientTime } from '@/components/client-time';
 
 interface DoctorDashboardData {
   doctorId: string;
@@ -93,6 +95,8 @@ const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 
 export default function DoctorDashboardPage() {
   const queryClient = useQueryClient();
   const toast = useToast();
+  const { user } = useAuth();
+  const isDoctorUser = user?.role === 'DOCTOR';
   const [activeTab, setActiveTab] = useState<'queue' | 'availability' | 'earnings'>('queue');
 
   const [newLeaveStart, setNewLeaveStart] = useState('');
@@ -123,11 +127,13 @@ export default function DoctorDashboardPage() {
   const { data, isLoading, error } = useQuery<DoctorDashboardData>({
     queryKey: ['doctor-dashboard'],
     queryFn: () => fetchApi('/doctors/me/dashboard'),
+    enabled: isDoctorUser,
   });
 
   const { data: profile } = useQuery<DoctorProfileData>({
     queryKey: ['doctor-profile'],
     queryFn: () => fetchApi('/doctors/me/profile'),
+    enabled: isDoctorUser,
   });
 
   useEffect(() => {
@@ -161,13 +167,13 @@ export default function DoctorDashboardPage() {
   const previewMutation = useMutation({
     mutationFn: (body: { startDate: string; endDate: string }) => {
       if (!data?.doctorId) throw new Error('Doctor profile not loaded');
-      return fetchApi<{ conflictCount: number }>(`/doctors/${data.doctorId}/leaves/preview`, {
+      return fetchApi<{ affectedCount?: number; conflictCount?: number }>(`/doctors/${data.doctorId}/leaves/preview`, {
         method: 'POST',
         body: JSON.stringify(body),
       });
     },
     onSuccess: (res) => {
-      setDryRunImpact(res.conflictCount ?? 0);
+      setDryRunImpact(res.affectedCount ?? res.conflictCount ?? 0);
     },
     onError: (err: any) => {
       toast.error(`Dry run failed: ${err.message || 'Validation error'}`);
@@ -184,8 +190,9 @@ export default function DoctorDashboardPage() {
     },
     onSuccess: (res: any) => {
       queryClient.invalidateQueries({ queryKey: ['doctor-dashboard'] });
+      const cancelled = res?.cancelledCount ?? res?.cancelledAppointmentsCount ?? 0;
       toast.success(
-        `Leave scheduled successfully. ${res?.cancelledAppointmentsCount ?? 0} conflicting appointments were automatically cancelled and 100% refunded to patients.`
+        `Leave scheduled successfully. ${cancelled} conflicting appointments were automatically cancelled and 100% refunded to patients.`
       );
       setNewLeaveStart('');
       setNewLeaveEnd('');
@@ -273,20 +280,24 @@ export default function DoctorDashboardPage() {
 
   if (isLoading) {
     return (
-      <div className="max-w-6xl mx-auto px-4 py-24 text-center">
-        <Loader2 className="w-10 h-10 animate-spin text-teal-600 mx-auto" />
-        <p className="text-xs text-slate-500 mt-3">Loading clinical dashboard...</p>
-      </div>
+      <RoleGuard allowedRoles={['DOCTOR']}>
+        <div className="max-w-6xl mx-auto px-4 py-24 text-center">
+          <Loader2 className="w-10 h-10 animate-spin text-teal-600 mx-auto" />
+          <p className="text-xs text-slate-500 mt-3">Loading clinical dashboard...</p>
+        </div>
+      </RoleGuard>
     );
   }
 
   if (error || !data) {
     return (
-      <div className="max-w-6xl mx-auto px-4 py-24 text-center">
-        <AlertTriangle className="w-10 h-10 text-rose-500 mx-auto" />
-        <h2 className="text-lg font-bold text-slate-800 dark:text-white mt-2">Doctor Profile Not Found</h2>
-        <p className="text-xs text-slate-500 mt-1">Please ensure you are logged in with an active Doctor account.</p>
-      </div>
+      <RoleGuard allowedRoles={['DOCTOR']}>
+        <div className="max-w-6xl mx-auto px-4 py-24 text-center">
+          <AlertTriangle className="w-10 h-10 text-rose-500 mx-auto" />
+          <h2 className="text-lg font-bold text-slate-800 dark:text-white mt-2">Doctor Profile Not Found</h2>
+          <p className="text-xs text-slate-500 mt-1">Please ensure you are logged in with an active Doctor account.</p>
+        </div>
+      </RoleGuard>
     );
   }
 
@@ -352,19 +363,19 @@ export default function DoctorDashboardPage() {
         <div className="flex items-center gap-1 bg-slate-100 dark:bg-slate-800 p-1 rounded-xl text-xs font-semibold">
           <button
             onClick={() => setActiveTab('queue')}
-            className={`px-3.5 py-2 rounded-lg transition-colors ${activeTab === 'queue' ? 'bg-white dark:bg-slate-900 text-teal-600 dark:text-teal-400 shadow-xs' : 'text-slate-500'}`}
+            className={`px-3.5 py-2 rounded-lg transition-colors ${activeTab === 'queue' ? 'bg-white dark:bg-slate-900 text-teal-600 dark:text-teal-400 shadow-sm' : 'text-slate-500'}`}
           >
             Today&apos;s Queue ({todayQueue.length})
           </button>
           <button
             onClick={() => setActiveTab('availability')}
-            className={`px-3.5 py-2 rounded-lg transition-colors ${activeTab === 'availability' ? 'bg-white dark:bg-slate-900 text-teal-600 dark:text-teal-400 shadow-xs' : 'text-slate-500'}`}
+            className={`px-3.5 py-2 rounded-lg transition-colors ${activeTab === 'availability' ? 'bg-white dark:bg-slate-900 text-teal-600 dark:text-teal-400 shadow-sm' : 'text-slate-500'}`}
           >
             Leaves & Schedule
           </button>
           <button
             onClick={() => setActiveTab('earnings')}
-            className={`px-3.5 py-2 rounded-lg transition-colors ${activeTab === 'earnings' ? 'bg-white dark:bg-slate-900 text-teal-600 dark:text-teal-400 shadow-xs' : 'text-slate-500'}`}
+            className={`px-3.5 py-2 rounded-lg transition-colors ${activeTab === 'earnings' ? 'bg-white dark:bg-slate-900 text-teal-600 dark:text-teal-400 shadow-sm' : 'text-slate-500'}`}
           >
             Earnings & Reviews
           </button>
@@ -373,25 +384,25 @@ export default function DoctorDashboardPage() {
 
       {/* KPI Stats Bar */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-        <div className="p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xs">
+        <div className="p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm">
           <span className="text-xs text-slate-400 flex items-center gap-1.5 font-medium">
             <Clock className="w-3.5 h-3.5 text-teal-600" /> Today&apos;s Patients
           </span>
           <p className="text-xl font-bold text-slate-900 dark:text-white mt-1">{stats.todayQueueCount}</p>
         </div>
-        <div className="p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xs">
+        <div className="p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm">
           <span className="text-xs text-slate-400 flex items-center gap-1.5 font-medium">
             <Users className="w-3.5 h-3.5 text-blue-600" /> Upcoming
           </span>
           <p className="text-xl font-bold text-slate-900 dark:text-white mt-1">{stats.upcomingCount}</p>
         </div>
-        <div className="p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xs">
+        <div className="p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm">
           <span className="text-xs text-slate-400 flex items-center gap-1.5 font-medium">
             <CheckCircle className="w-3.5 h-3.5 text-emerald-600" /> Completed
           </span>
           <p className="text-xl font-bold text-slate-900 dark:text-white mt-1">{stats.totalConsultations}</p>
         </div>
-        <div className="p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xs">
+        <div className="p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm">
           <span className="text-xs text-slate-400 flex items-center gap-1.5 font-medium">
             <DollarSign className="w-3.5 h-3.5 text-purple-600" /> Total Earnings
           </span>
@@ -419,7 +430,7 @@ export default function DoctorDashboardPage() {
                   <div className="space-y-1">
                     <div className="flex items-center gap-2">
                       <span className="font-mono font-bold text-xs text-teal-600">
-                        {new Date(apt.slotTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                        <ClientTime datetime={apt.slotTime} mode="time" />
                       </span>
                       <span className="text-slate-400">•</span>
                       <h3 className="font-bold text-base text-slate-900 dark:text-white">
@@ -498,9 +509,10 @@ export default function DoctorDashboardPage() {
                       id={`day-${day.dayOfWeek}`}
                       checked={day.enabled}
                       onChange={(e) => {
-                        const updated = [...weeklySchedule];
-                        updated[idx].enabled = e.target.checked;
-                        setWeeklySchedule(updated);
+                        const enabled = e.target.checked;
+                        setWeeklySchedule((prev) =>
+                          prev.map((d, i) => (i === idx ? { ...d, enabled } : d)),
+                        );
                       }}
                       className="rounded text-teal-600 focus:ring-teal-500 w-4 h-4"
                     />
@@ -516,9 +528,10 @@ export default function DoctorDashboardPage() {
                         type="time"
                         value={day.startTime}
                         onChange={(e) => {
-                          const updated = [...weeklySchedule];
-                          updated[idx].startTime = e.target.value;
-                          setWeeklySchedule(updated);
+                          const startTime = e.target.value;
+                          setWeeklySchedule((prev) =>
+                            prev.map((d, i) => (i === idx ? { ...d, startTime } : d)),
+                          );
                         }}
                         className="p-1.5 rounded-lg bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs text-slate-800 dark:text-slate-200"
                       />
@@ -527,9 +540,10 @@ export default function DoctorDashboardPage() {
                         type="time"
                         value={day.endTime}
                         onChange={(e) => {
-                          const updated = [...weeklySchedule];
-                          updated[idx].endTime = e.target.value;
-                          setWeeklySchedule(updated);
+                          const endTime = e.target.value;
+                          setWeeklySchedule((prev) =>
+                            prev.map((d, i) => (i === idx ? { ...d, endTime } : d)),
+                          );
                         }}
                         className="p-1.5 rounded-lg bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs text-slate-800 dark:text-slate-200"
                       />
@@ -624,7 +638,7 @@ export default function DoctorDashboardPage() {
                 <button
                   type="submit"
                   disabled={updateProfileMutation.isPending}
-                  className="px-3.5 py-1.5 rounded-xl bg-teal-600 hover:bg-teal-700 text-white font-bold text-xs shadow-xs transition-colors disabled:opacity-50"
+                  className="px-3.5 py-1.5 rounded-xl bg-teal-600 hover:bg-teal-700 text-white font-bold text-xs shadow-sm transition-colors disabled:opacity-50"
                 >
                   {updateProfileMutation.isPending ? 'Updating...' : 'Update Details'}
                 </button>
@@ -737,7 +751,7 @@ export default function DoctorDashboardPage() {
                     </div>
                     {r.comment && <p className="text-slate-500">{r.comment}</p>}
                     <span className="text-[10px] text-slate-400 block pt-0.5">
-                      {new Date(r.createdAt).toLocaleDateString()}
+                      <ClientTime datetime={r.createdAt} mode="datetime" />
                     </span>
                   </div>
                 ))}

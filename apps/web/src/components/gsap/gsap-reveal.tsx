@@ -15,13 +15,15 @@ interface GsapRevealProps {
 
 /**
  * ScrollTrigger-backed entrance reveal with GSAP.
+ * Guarantees final visible state (opacity: 1) and uses compositor-only transforms
+ * so elements are never left hidden even if reduced-motion or StrictMode triggers.
  */
 export function GsapReveal({
   children,
   direction = 'up',
   delay = 0,
-  duration = 0.9,
-  distance = 36,
+  duration = 0.65,
+  distance = 18,
   className = '',
   triggerOnce = true,
 }: GsapRevealProps) {
@@ -29,45 +31,56 @@ export function GsapReveal({
 
   useGSAP(
     () => {
-      if (isReducedMotion() || !elRef.current) return;
+      const el = elRef.current;
+      if (!el || isReducedMotion()) return;
 
-      let fromVars: gsap.TweenVars = {
-        opacity: 0,
-        ease: 'power3.out',
-        duration,
-        delay,
-        scrollTrigger: {
-          trigger: elRef.current,
-          start: 'top 88%',
-          once: triggerOnce,
-        },
-      };
-
+      const offsetProps: gsap.TweenVars = {};
       switch (direction) {
         case 'up':
-          fromVars.y = distance;
+          offsetProps.y = distance;
           break;
         case 'down':
-          fromVars.y = -distance;
+          offsetProps.y = -distance;
           break;
         case 'left':
-          fromVars.x = distance;
+          offsetProps.x = distance;
           break;
         case 'right':
-          fromVars.x = -distance;
+          offsetProps.x = -distance;
           break;
         case 'zoom':
-          fromVars.scale = 0.85;
+          offsetProps.scale = 0.96;
           break;
       }
 
-      const tween = gsap.from(elRef.current, fromVars);
+      const tween = gsap.fromTo(
+        el,
+        { ...offsetProps, opacity: 0.92 },
+        {
+          x: 0,
+          y: 0,
+          scale: 1,
+          opacity: 1,
+          ease: 'power3.out',
+          duration,
+          delay,
+          clearProps: 'transform,opacity',
+          scrollTrigger: {
+            trigger: el,
+            start: 'top 94%',
+            once: triggerOnce,
+          },
+        },
+      );
 
       return () => {
         tween.kill();
+        if (el) {
+          gsap.set(el, { clearProps: 'transform,opacity' });
+        }
       };
     },
-    { scope: elRef, dependencies: [direction, delay, duration, distance] }
+    { scope: elRef, dependencies: [direction, delay, duration, distance] },
   );
 
   return (

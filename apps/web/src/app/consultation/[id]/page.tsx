@@ -114,6 +114,15 @@ export default function ConsultationRoomPage() {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const chatEndRef = useRef<HTMLDivElement>(null);
 
+  const isMicOnRef = useRef(isMicOn);
+  const isCameraOnRef = useRef(isCameraOn);
+  useEffect(() => {
+    isMicOnRef.current = isMicOn;
+  }, [isMicOn]);
+  useEffect(() => {
+    isCameraOnRef.current = isCameraOn;
+  }, [isCameraOn]);
+
   const apptQuery = useQuery<AppointmentDetail>({
     queryKey: ['appointment', appointmentId],
     queryFn: () => fetchApi<AppointmentDetail>(`/appointments/${appointmentId}`),
@@ -128,7 +137,17 @@ export default function ConsultationRoomPage() {
 
   const rxQuery = useQuery<any>({
     queryKey: ['consultation-prescription', appointmentId],
-    queryFn: () => fetchApi(`/consultations/${appointmentId}/prescriptions`),
+    queryFn: async () => {
+      try {
+        return await fetchApi(`/consultations/${appointmentId}/prescriptions`);
+      } catch (err: any) {
+        const msg = String(err?.message || '').toLowerCase();
+        if (msg.includes('not found') || msg.includes('404')) {
+          return null;
+        }
+        throw err;
+      }
+    },
     enabled: !!appointmentId && !!currentUser?.token && activeTab === 'prescription',
     retry: false,
   });
@@ -149,14 +168,14 @@ export default function ConsultationRoomPage() {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, isTyping]);
 
-  // Slot Time 10-minute window countdown
+  // Slot Time 10-minute pre-open / +30-minute close window countdown (matches LiveKitService)
   useEffect(() => {
     const slotTimeStr = apptQuery.data?.slotTime;
     if (!slotTimeStr) return;
 
     const slotTime = new Date(slotTimeStr).getTime();
     const openTime = slotTime - 10 * 60 * 1000;
-    const closeTime = slotTime + 60 * 60 * 1000;
+    const closeTime = slotTime + 30 * 60 * 1000;
 
     const checkTimes = () => {
       const now = Date.now();
@@ -235,12 +254,15 @@ export default function ConsultationRoomPage() {
     };
   }, [appointmentId, currentUser]);
 
-  // Connect LiveKit room once consented and within time window
+  const isRoomOpen = secondsUntilOpen === 0 && !isSlotExpired;
+  const consultationMode = apptQuery.data?.consultationMode;
+
+  // Connect LiveKit room once consented, mode is VIDEO, and within time window
   useEffect(() => {
-    if (!hasConsented || !appointmentId || !currentUser) return;
-    if (apptQuery.data && apptQuery.data.consultationMode !== 'VIDEO') {
+    if (!hasConsented || !appointmentId || !currentUser || !consultationMode) return;
+    if (consultationMode !== 'VIDEO') {
       setLivekitStatus(
-        apptQuery.data.consultationMode === 'IN_CLINIC'
+        consultationMode === 'IN_CLINIC'
           ? 'In-Clinic Mode'
           : 'Live Chat Mode',
       );
@@ -256,6 +278,8 @@ export default function ConsultationRoomPage() {
       setLivekitStatus('Consultation window ended');
       return;
     }
+
+    if (!isRoomOpen) return;
 
     let cancelled = false;
     let retryTimeout: NodeJS.Timeout | null = null;
@@ -305,7 +329,14 @@ export default function ConsultationRoomPage() {
 
         room.on(RoomEvent.TrackUnsubscribed, (track) => {
           if (track.kind === Track.Kind.Audio) {
-            cleanupAudio();
+            const detached = track.detach();
+            detached.forEach((el) => {
+              el.pause();
+              el.remove();
+            });
+            attachedAudiosRef.current = attachedAudiosRef.current.filter(
+              (a) => !detached.includes(a),
+            );
           }
         });
 
@@ -320,8 +351,8 @@ export default function ConsultationRoomPage() {
 
         try {
           const tracks = await createLocalTracks({
-            audio: isMicOn,
-            video: isCameraOn,
+            audio: isMicOnRef.current,
+            video: isCameraOnRef.current,
           });
           for (const t of tracks) {
             await room.localParticipant.publishTrack(t);
@@ -361,7 +392,7 @@ export default function ConsultationRoomPage() {
       roomRef.current?.disconnect();
       roomRef.current = null;
     };
-  }, [hasConsented, appointmentId, currentUser, secondsUntilOpen, isSlotExpired, isMicOn, isCameraOn]);
+  }, [hasConsented, appointmentId, currentUser, consultationMode, isRoomOpen, isSlotExpired]);
 
   const consentMutation = useMutation({
     mutationFn: () =>
@@ -372,6 +403,10 @@ export default function ConsultationRoomPage() {
     onSuccess: () => {
       setHasConsented(true);
       queryClient.invalidateQueries({ queryKey: ['appointment', appointmentId] });
+      toast.success('Telemedicine informed consent recorded.');
+    },
+    onError: (err: any) => {
+      toast.error(`Unable to record consent: ${err.message || 'Action failed'}`);
     },
   });
 
@@ -386,7 +421,13 @@ export default function ConsultationRoomPage() {
       if (status === 'ENDED') {
         roomRef.current?.disconnect();
         setActiveTab('prescription');
+        toast.success('Consultation concluded. You can now issue a digital prescription.');
+      } else if (status === 'LIVE') {
+        toast.success('Consultation session is now live.');
       }
+    },
+    onError: (err: any) => {
+      toast.error(`Session update failed: ${err.message || 'Transition rejected'}`);
     },
   });
 
@@ -497,7 +538,8 @@ export default function ConsultationRoomPage() {
           messages: messages.map((m) => ({ sender: m.senderRole, content: m.content })),
         }),
       }),
-    onSuccess: (data) => setCopilotNote(data.soap_note),
+    onSuccess: (data) => setCopilotNote(data.soapNote ?? data.soap_note),
+    onError: (err: any) => toast.error(`AI Copilot failed: ${err.message || 'Unavailable'}`),
   });
 
   const saveRxMutation = useMutation({
@@ -550,7 +592,7 @@ export default function ConsultationRoomPage() {
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-6">
       {!hasConsented && !isDoctor && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
           <div className="bg-white dark:bg-slate-900 rounded-3xl p-6 sm:p-8 max-w-lg w-full border border-slate-200 dark:border-slate-800 shadow-2xl space-y-6">
             <div className="flex items-center gap-3">
               <div className="w-12 h-12 rounded-2xl bg-teal-100 dark:bg-teal-950 text-teal-600 flex items-center justify-center">
@@ -601,25 +643,25 @@ export default function ConsultationRoomPage() {
           </p>
         </div>
 
-        <div className="flex items-center gap-1 bg-slate-100 dark:bg-slate-800 p-1 rounded-xl text-xs font-semibold">
+        <div className="flex flex-wrap items-center gap-1 bg-slate-100 dark:bg-slate-800 p-1 rounded-xl text-xs font-semibold overflow-x-auto max-w-full">
           <button
             type="button"
             onClick={() => setActiveTab('video')}
-            className={`px-3 py-1.5 rounded-lg ${activeTab === 'video' ? 'bg-white dark:bg-slate-900 text-teal-600 shadow-xs' : 'text-slate-500'}`}
+            className={`px-3 py-1.5 rounded-lg ${activeTab === 'video' ? 'bg-white dark:bg-slate-900 text-teal-600 shadow-sm' : 'text-slate-500'}`}
           >
             Video &amp; Chat
           </button>
           <button
             type="button"
             onClick={() => setActiveTab('vitals')}
-            className={`px-3 py-1.5 rounded-lg ${activeTab === 'vitals' ? 'bg-white dark:bg-slate-900 text-teal-600 shadow-xs' : 'text-slate-500'}`}
+            className={`px-3 py-1.5 rounded-lg ${activeTab === 'vitals' ? 'bg-white dark:bg-slate-900 text-teal-600 shadow-sm' : 'text-slate-500'}`}
           >
             Vitals &amp; Labs
           </button>
           <button
             type="button"
             onClick={() => setActiveTab('prescription')}
-            className={`px-3 py-1.5 rounded-lg ${activeTab === 'prescription' ? 'bg-white dark:bg-slate-900 text-teal-600 shadow-xs' : 'text-slate-500'}`}
+            className={`px-3 py-1.5 rounded-lg ${activeTab === 'prescription' ? 'bg-white dark:bg-slate-900 text-teal-600 shadow-sm' : 'text-slate-500'}`}
           >
             Digital Prescription
           </button>
@@ -627,7 +669,7 @@ export default function ConsultationRoomPage() {
             <button
               type="button"
               onClick={() => setActiveTab('copilot')}
-              className={`px-3 py-1.5 rounded-lg ${activeTab === 'copilot' ? 'bg-white dark:bg-slate-900 text-teal-600 shadow-xs' : 'text-slate-500'}`}
+              className={`px-3 py-1.5 rounded-lg ${activeTab === 'copilot' ? 'bg-white dark:bg-slate-900 text-teal-600 shadow-sm' : 'text-slate-500'}`}
             >
               AI Clinical Note
             </button>
@@ -636,8 +678,8 @@ export default function ConsultationRoomPage() {
       </div>
 
       {activeTab === 'video' && (
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 h-[640px]">
-          <div className="lg:col-span-2 bg-slate-900 rounded-3xl overflow-hidden relative flex flex-col justify-between p-4 shadow-xl border border-slate-800">
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 lg:h-[640px]">
+          <div className="lg:col-span-2 min-h-[380px] lg:min-h-0 bg-slate-900 rounded-3xl overflow-hidden relative flex flex-col justify-between p-4 shadow-xl border border-slate-800">
             <video
               ref={remoteVideoRef}
               autoPlay
@@ -730,7 +772,7 @@ export default function ConsultationRoomPage() {
                   type="button"
                   disabled={updateStatusMutation.isPending}
                   onClick={() => updateStatusMutation.mutate('LIVE')}
-                  className="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold transition shadow-xs disabled:opacity-50"
+                  className="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold transition shadow-sm disabled:opacity-50"
                 >
                   Start Consultation
                 </button>
@@ -740,7 +782,7 @@ export default function ConsultationRoomPage() {
                   type="button"
                   disabled={updateStatusMutation.isPending}
                   onClick={() => setShowEndModal(true)}
-                  className="px-3 py-1.5 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold transition shadow-xs disabled:opacity-50"
+                  className="px-3 py-1.5 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold transition shadow-sm disabled:opacity-50"
                 >
                   End &amp; Complete
                 </button>
@@ -781,7 +823,7 @@ export default function ConsultationRoomPage() {
           </div>
 
           {/* Real-Time Socket.IO Chat */}
-          <div className="rounded-3xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 flex flex-col shadow-sm overflow-hidden">
+          <div className="h-[460px] lg:h-full rounded-3xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 flex flex-col shadow-sm overflow-hidden">
             <div className="p-4 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between">
               <div>
                 <h3 className="font-bold text-sm text-slate-900 dark:text-white">
@@ -821,8 +863,8 @@ export default function ConsultationRoomPage() {
                     <div
                       className={`max-w-[85%] rounded-2xl px-3.5 py-2.5 ${
                         isMine
-                          ? 'bg-teal-600 text-white rounded-br-xs'
-                          : 'bg-slate-100 dark:bg-slate-800 text-slate-900 dark:text-white rounded-bl-xs'
+                          ? 'bg-teal-600 text-white rounded-br-sm'
+                          : 'bg-slate-100 dark:bg-slate-800 text-slate-900 dark:text-white rounded-bl-sm'
                       }`}
                     >
                       <p>{m.content}</p>
@@ -844,6 +886,11 @@ export default function ConsultationRoomPage() {
                   </div>
                 );
               })}
+              {isTyping && (
+                <div className="text-[11px] italic text-teal-600 dark:text-teal-400 px-1">
+                  Participant is typing...
+                </div>
+              )}
               <div ref={chatEndRef} />
             </div>
 
@@ -1112,7 +1159,7 @@ export default function ConsultationRoomPage() {
 
       {/* Red Confirmation Modal: End Consultation */}
       {showEndModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
           <div className="w-full max-w-sm rounded-3xl bg-white dark:bg-slate-900 p-6 border border-rose-200 dark:border-rose-900 shadow-2xl space-y-4">
             <div className="w-12 h-12 rounded-2xl bg-rose-100 dark:bg-rose-950/80 text-rose-600 flex items-center justify-center mx-auto">
               <PhoneOff className="w-6 h-6" />
