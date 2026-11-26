@@ -186,6 +186,25 @@ export const DriverLocationSchema = z.object({
 });
 export type DriverLocationInput = z.infer<typeof DriverLocationSchema>;
 
+export const RecordVitalsSchema = z.object({
+  systolicBp: z.number().int().min(50).max(250).optional(),
+  diastolicBp: z.number().int().min(30).max(180).optional(),
+  heartRate: z.number().int().min(30).max(250).optional(),
+  spO2: z.number().min(50).max(100).optional(),
+  temperatureF: z.number().min(90).max(110).optional(),
+  weightKg: z.number().min(1).max(350).optional(),
+  bloodGlucose: z.number().min(20).max(800).optional(),
+});
+export type RecordVitalsInput = z.infer<typeof RecordVitalsSchema>;
+
+export const CreateLabOrderSchema = z.object({
+  testName: z.string().min(2).max(120),
+  testCode: z.string().min(2).max(30),
+  urgency: z.enum(['ROUTINE', 'URGENT', 'STAT']).optional(),
+  instructions: z.string().max(500).optional(),
+});
+export type CreateLabOrderInput = z.infer<typeof CreateLabOrderSchema>;
+
 export const AiTriageQuerySchema = z.object({
   query: z.string().min(1).max(1000),
 });

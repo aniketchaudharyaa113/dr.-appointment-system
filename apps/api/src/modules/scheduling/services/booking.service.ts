@@ -8,6 +8,7 @@ import {
   Logger,
 } from '@nestjs/common';
 import { randomBytes } from 'crypto';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../platform/database/prisma.service';
 import { RedisService } from '../../platform/redis/redis.service';
 import { SlotService } from './slot.service';
@@ -164,7 +165,7 @@ export class BookingService {
   async generateDailyReferenceToken(
     doctorId: string,
     bookingDate: Date,
-    tx: any,
+    tx: Prisma.TransactionClient,
   ): Promise<string> {
     const dateStr = getIstDateString(bookingDate); // YYYY-MM-DD in Asia/Kolkata
     const dateCompact = getIstDateCompact(bookingDate); // YYYYMMDD in Asia/Kolkata

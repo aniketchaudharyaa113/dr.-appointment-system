@@ -23,6 +23,10 @@ import {
   UploadAttachmentUrlSchema,
   CreatePrescriptionSchema,
   CreatePrescriptionInput,
+  RecordVitalsSchema,
+  RecordVitalsInput,
+  CreateLabOrderSchema,
+  CreateLabOrderInput,
 } from '@medibook/shared';
 import { LiveKitService } from '../services/livekit.service';
 import { ChatService } from '../services/chat.service';
@@ -221,20 +225,8 @@ export class ConsultationController {
   async recordVitals(
     @Param('id', new ZodValidationPipe(UuidSchema)) appointmentId: string,
     @CurrentUser() user: JwtPayload,
-    @Body(
-      new ZodValidationPipe(
-        z.object({
-          systolicBp: z.number().int().min(50).max(250).optional(),
-          diastolicBp: z.number().int().min(30).max(180).optional(),
-          heartRate: z.number().int().min(30).max(250).optional(),
-          spO2: z.number().min(50).max(100).optional(),
-          temperatureF: z.number().min(90).max(110).optional(),
-          weightKg: z.number().min(1).max(350).optional(),
-          bloodGlucose: z.number().min(20).max(800).optional(),
-        }),
-      ),
-    )
-    body: any,
+    @Body(new ZodValidationPipe(RecordVitalsSchema))
+    body: RecordVitalsInput,
   ) {
     return this.clinicalService.recordVitals(appointmentId, user.sub, body);
   }
@@ -253,17 +245,8 @@ export class ConsultationController {
   async createLabOrder(
     @Param('id', new ZodValidationPipe(UuidSchema)) appointmentId: string,
     @CurrentUser() user: JwtPayload,
-    @Body(
-      new ZodValidationPipe(
-        z.object({
-          testName: z.string().min(2).max(120),
-          testCode: z.string().min(2).max(30),
-          urgency: z.enum(['ROUTINE', 'URGENT', 'STAT']).optional(),
-          instructions: z.string().max(500).optional(),
-        }),
-      ),
-    )
-    body: any,
+    @Body(new ZodValidationPipe(CreateLabOrderSchema))
+    body: CreateLabOrderInput,
   ) {
     return this.clinicalService.createLabOrder(appointmentId, user.sub, body);
   }

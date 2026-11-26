@@ -1,4 +1,5 @@
 import { Injectable, BadRequestException, Inject } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { LedgerService } from './ledger.service';
 
 export type RefundInitiator = 'PATIENT' | 'DOCTOR' | 'ADMIN' | 'LEAVE';
@@ -70,7 +71,7 @@ export class RefundPolicyService {
    * and enqueues PAYMENT_REFUND_REQUESTED in the outbox inside an existing DB transaction.
    */
   async recordRefundInTx(
-    tx: any,
+    tx: Prisma.TransactionClient,
     params: {
       paymentId: string;
       appointmentId: string;

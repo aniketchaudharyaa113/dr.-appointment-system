@@ -1,4 +1,5 @@
 import { Injectable, Logger, Inject } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../platform/database/prisma.service';
 import { env } from '../../../common/config/env.schema';
 
@@ -26,7 +27,7 @@ export class LedgerService {
     transactionId: string,
     totalAmountPaise: number,
     commissionBps = this.commissionBps,
-    tx?: any,
+    tx?: Prisma.TransactionClient,
   ): Promise<LedgerPostingResult> {
     const db = tx || this.prisma;
 
@@ -88,7 +89,7 @@ export class LedgerService {
     transactionId: string,
     refundAmountPaise: number,
     commissionBps = this.commissionBps,
-    tx?: any,
+    tx?: Prisma.TransactionClient,
   ): Promise<LedgerPostingResult> {
     const db = tx || this.prisma;
 
@@ -137,7 +138,7 @@ export class LedgerService {
   /**
    * Strict invariant check: Sum(DEBIT) === Sum(CREDIT) for the transaction.
    */
-  async verifyZeroSum(transactionId: string, tx?: any): Promise<boolean> {
+  async verifyZeroSum(transactionId: string, tx?: Prisma.TransactionClient): Promise<boolean> {
     const db = tx || this.prisma;
     const entries = await db.ledgerEntry.findMany({
       where: { transactionId },
