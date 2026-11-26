@@ -29,6 +29,7 @@ import { ChatService } from '../services/chat.service';
 import { AttachmentService } from '../services/attachment.service';
 import { PrescriptionService } from '../services/prescription.service';
 import { ClinicalService } from '../services/clinical.service';
+import { ConsultationGateway } from '../gateways/consultation.gateway';
 
 const MessagesQuerySchema = z.object({
   limit: z.coerce.number().int().positive().max(200).default(50),
@@ -46,6 +47,7 @@ export class ConsultationController {
     @Inject(AttachmentService) private readonly attachmentService: AttachmentService,
     @Inject(PrescriptionService) private readonly prescriptionService: PrescriptionService,
     @Inject(ClinicalService) private readonly clinicalService: ClinicalService,
+    @Inject(ConsultationGateway) private readonly consultationGateway: ConsultationGateway,
   ) {}
 
   @Post(':id/consent')
@@ -105,13 +107,17 @@ export class ConsultationController {
     if (!body.content && !body.attachmentUrl) {
       throw new BadRequestException('Content or attachmentUrl is required');
     }
-    return this.chatService.sendMessage({
+    const message = await this.chatService.sendMessage({
       appointmentId,
       senderId: user.sub,
       content: body.content,
       attachmentUrl: body.attachmentUrl,
       attachmentType: body.attachmentType,
     });
+    this.consultationGateway.server
+      ?.to(`consult:${appointmentId}`)
+      .emit('new_message', message);
+    return message;
   }
 
   @Post(':id/messages/read')

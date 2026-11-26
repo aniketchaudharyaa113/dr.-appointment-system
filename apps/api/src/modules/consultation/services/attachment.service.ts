@@ -105,11 +105,21 @@ export class AttachmentService {
 
     const appointment = await this.prisma.appointment.findUnique({
       where: { id: appointmentId },
-      include: { doctor: true },
+      include: { doctor: true, consultation: true },
     });
 
     if (!appointment) {
       throw new NotFoundException(`Appointment ${appointmentId} not found`);
+    }
+
+    if (
+      appointment.status !== 'CONFIRMED' &&
+      appointment.status !== 'IN_PROGRESS' &&
+      appointment.status !== 'COMPLETED'
+    ) {
+      throw new BadRequestException(
+        `Cannot upload attachments for appointment in status ${appointment.status}`,
+      );
     }
 
     const isPatient = appointment.patientId === userId;
@@ -119,6 +129,18 @@ export class AttachmentService {
       throw new ForbiddenException(
         'Access denied: You are not authorized to upload files for this consultation',
       );
+    }
+
+    if (appointment.status === 'COMPLETED') {
+      const sevenDaysMs = 7 * 24 * 60 * 60 * 1000;
+      const completedTime =
+        appointment.consultation?.endedAt?.getTime() ||
+        appointment.updatedAt.getTime();
+      if (Date.now() - completedTime > sevenDaysMs) {
+        throw new BadRequestException(
+          'Follow-up upload window has closed (limited to 7 days post-consultation)',
+        );
+      }
     }
 
     const ext = path.extname(fileName).toLowerCase();

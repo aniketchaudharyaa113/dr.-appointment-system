@@ -30,11 +30,21 @@ export class ChatService {
 
     const appointment = await this.prisma.appointment.findUnique({
       where: { id: appointmentId },
-      include: { doctor: true },
+      include: { doctor: true, consultation: true },
     });
 
     if (!appointment) {
       throw new NotFoundException(`Appointment ${appointmentId} not found`);
+    }
+
+    if (
+      appointment.status !== 'CONFIRMED' &&
+      appointment.status !== 'IN_PROGRESS' &&
+      appointment.status !== 'COMPLETED'
+    ) {
+      throw new BadRequestException(
+        `Cannot send messages for appointment in status ${appointment.status}`,
+      );
     }
 
     const isPatient = appointment.patientId === senderId;
@@ -46,10 +56,12 @@ export class ChatService {
       );
     }
 
-    // Follow-up chat window check: 7 days after appointment
+    // Follow-up chat window check: 7 days after visit completion
     if (appointment.status === 'COMPLETED') {
       const sevenDaysMs = 7 * 24 * 60 * 60 * 1000;
-      const completedTime = appointment.updatedAt.getTime();
+      const completedTime =
+        appointment.consultation?.endedAt?.getTime() ||
+        appointment.updatedAt.getTime();
       if (now.getTime() - completedTime > sevenDaysMs) {
         throw new BadRequestException(
           'Follow-up chat window has closed (limited to 7 days post-consultation)',

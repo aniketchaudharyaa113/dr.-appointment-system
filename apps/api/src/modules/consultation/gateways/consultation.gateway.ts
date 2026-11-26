@@ -11,7 +11,8 @@ import {
 import { Logger, Inject } from '@nestjs/common';
 import { Namespace, Socket } from 'socket.io';
 import * as jwt from 'jsonwebtoken';
-import { JwtPayload } from '@medibook/shared';
+import { z } from 'zod';
+import { JwtPayload, UuidSchema } from '@medibook/shared';
 import { ChatService } from '../services/chat.service';
 import { PrismaService } from '../../platform/database/prisma.service';
 import { RedisService } from '../../platform/redis/redis.service';
@@ -119,11 +120,10 @@ export class ConsultationGateway
 
     const isPatient = appointment.patientId === user.sub;
     const isDoctor = appointment.doctor.userId === user.sub;
-    const isAdmin = user.role === 'ADMIN';
 
-    if (!isPatient && !isDoctor && !isAdmin) {
+    if (!isPatient && !isDoctor) {
       this.logger.warn(
-        `Unauthorized consultation join_room attempt by ${user.sub} for ${data.appointmentId}`,
+        `Unauthorized consultation join_room attempt by ${user.sub} (role: ${user.role}) for ${data.appointmentId}`,
       );
       return { error: 'Forbidden: Not a participant in this consultation' };
     }
@@ -137,26 +137,41 @@ export class ConsultationGateway
   async handleSendMessage(
     @ConnectedSocket() client: Socket,
     @MessageBody()
-    data: {
-      appointmentId: string;
-      content: string;
-      attachmentUrl?: string;
-      attachmentType?: string;
-    },
+    data: unknown,
   ) {
     const user = (client as any).user as JwtPayload | undefined;
     if (!user?.sub) return { error: 'Unauthorized' };
 
+    const schema = z
+      .object({
+        appointmentId: UuidSchema,
+        content: z.string().max(4000).default(''),
+        attachmentUrl: z.string().max(500).optional(),
+        attachmentType: z.string().max(100).optional(),
+      })
+      .refine(
+        (val) =>
+          (val.content && val.content.trim().length > 0) || !!val.attachmentUrl,
+        { message: 'Content or attachmentUrl is required' },
+      );
+
+    const parsed = schema.safeParse(data);
+    if (!parsed.success) {
+      return { error: parsed.error.issues[0]?.message || 'Invalid message payload' };
+    }
+
+    const validData = parsed.data;
+
     try {
       const message = await this.chatService.sendMessage({
-        appointmentId: data.appointmentId,
+        appointmentId: validData.appointmentId,
         senderId: user.sub,
-        content: data.content,
-        attachmentUrl: data.attachmentUrl,
-        attachmentType: data.attachmentType,
+        content: validData.content,
+        attachmentUrl: validData.attachmentUrl,
+        attachmentType: validData.attachmentType,
       });
 
-      const roomName = `consult:${data.appointmentId}`;
+      const roomName = `consult:${validData.appointmentId}`;
       this.server.to(roomName).emit('new_message', message);
 
       return { success: true, messageId: message.id, message };

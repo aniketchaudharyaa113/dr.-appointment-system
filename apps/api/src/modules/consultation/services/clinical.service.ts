@@ -1,4 +1,10 @@
-import { Injectable, NotFoundException, ForbiddenException, Inject } from '@nestjs/common';
+import {
+  Injectable,
+  NotFoundException,
+  ForbiddenException,
+  BadRequestException,
+  Inject,
+} from '@nestjs/common';
 import { PrismaService } from '../../platform/database/prisma.service';
 import { RealtimeService } from '../../platform/realtime/realtime.service';
 
@@ -37,11 +43,21 @@ export class ClinicalService {
   async recordVitals(appointmentId: string, userId: string, dto: RecordVitalsDto) {
     const appointment = await this.prisma.appointment.findUnique({
       where: { id: appointmentId },
-      include: { doctor: true },
+      include: { doctor: true, consultation: true },
     });
 
     if (!appointment) {
       throw new NotFoundException('Appointment not found');
+    }
+
+    if (
+      appointment.status !== 'CONFIRMED' &&
+      appointment.status !== 'IN_PROGRESS' &&
+      appointment.status !== 'COMPLETED'
+    ) {
+      throw new BadRequestException(
+        `Cannot record vitals for appointment in status ${appointment.status}`,
+      );
     }
 
     const isPatient = appointment.patientId === userId;
@@ -49,6 +65,18 @@ export class ClinicalService {
 
     if (!isPatient && !isDoctor) {
       throw new ForbiddenException('Only the patient or doctor can record vitals for this appointment');
+    }
+
+    if (appointment.status === 'COMPLETED') {
+      const sevenDaysMs = 7 * 24 * 60 * 60 * 1000;
+      const completedTime =
+        appointment.consultation?.endedAt?.getTime() ||
+        appointment.updatedAt.getTime();
+      if (Date.now() - completedTime > sevenDaysMs) {
+        throw new BadRequestException(
+          'Follow-up vitals recording window has closed (limited to 7 days post-consultation)',
+        );
+      }
     }
 
     const vitals = await this.prisma.patientVitals.create({
