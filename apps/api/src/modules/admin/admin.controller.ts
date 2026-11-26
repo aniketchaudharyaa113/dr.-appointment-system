@@ -31,7 +31,31 @@ import { DoctorVerificationStatus } from '@prisma/client';
 @Roles('ADMIN')
 @ApiBearerAuth()
 export class AdminController {
-  constructor(@Inject(AdminService) private readonly adminService: AdminService) {}
+  constructor(@Inject(AdminService) private readonly adminService: AdminService) { }
+
+  @Get('stats')
+  @ApiOperation({ summary: 'Get overall platform administrative statistics' })
+  async getAdminStats() {
+    return this.adminService.getAdminStats();
+  }
+
+  @Get('ledgers')
+  @ApiOperation({ summary: 'Get double-entry ledger transactions' })
+  async getLedgerEntries() {
+    return this.adminService.getLedgerEntries();
+  }
+
+  @Get('audit-logs')
+  @ApiOperation({ summary: 'Get system audit trail logs' })
+  async getAuditLogs() {
+    return this.adminService.getAuditLogs();
+  }
+
+  @Post('payments/reconcile')
+  @ApiOperation({ summary: 'Trigger manual payment reconciliation for stuck transactions' })
+  async reconcilePayments() {
+    return this.adminService.reconcilePayments();
+  }
 
   @Get('doctors/pending')
   @ApiOperation({ summary: 'List all doctors awaiting verification' })

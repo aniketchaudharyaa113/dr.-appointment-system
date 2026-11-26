@@ -55,6 +55,15 @@ export class DoctorController {
     });
   }
 
+  @Get('me/dashboard')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('DOCTOR')
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Get doctor clinical workspace dashboard data' })
+  async getMyDashboard(@CurrentUser() user: JwtPayload) {
+    return this.doctorService.getDoctorDashboard(user.sub);
+  }
+
   @Get(':id')
   @ApiOperation({ summary: 'Get doctor public profile with reviews and availability' })
   async getDoctor(@Param('id', new ZodValidationPipe(UuidSchema)) doctorId: string) {

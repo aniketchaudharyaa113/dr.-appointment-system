@@ -3,6 +3,7 @@ import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../platform/database/prisma.service';
 import { RedisService } from '../../platform/redis/redis.service';
 import { SlotService } from './slot.service';
+import { getIstDayBoundsUtc, getIstDateString } from '../../../common/utils/ist-time';
 
 export interface DoctorSearchParams {
   symptomQuery?: string;
@@ -314,6 +315,145 @@ export class DoctorService {
       })),
       averageRating: Math.round(doctor.ratingAvg * 10) / 10,
       reviewCount: doctor.ratingCount,
+    };
+  }
+
+  async getDoctorDashboard(userId: string) {
+    const doctor = await this.prisma.doctor.findUnique({
+      where: { userId },
+      include: {
+        user: true,
+        leaves: { orderBy: { startDate: 'desc' } },
+      },
+    });
+
+    if (!doctor) {
+      throw new NotFoundException('Doctor profile not found');
+    }
+
+    const { start: startOfDay, end: endOfDay } = getIstDayBoundsUtc(getIstDateString(new Date()));
+    const now = new Date();
+
+    const [
+      doctorLedgers,
+      todayAppts,
+      upcomingCount,
+      completedCount,
+      cancelledCount,
+      recentReviews,
+    ] = await Promise.all([
+      this.prisma.ledgerEntry.findMany({
+        where: {
+          accountType: 'DOCTOR_PAYABLE',
+          entryType: 'CREDIT',
+          payment: { appointment: { doctorId: doctor.id } },
+        },
+        orderBy: { createdAt: 'desc' },
+      }),
+      this.prisma.appointment.findMany({
+        where: {
+          doctorId: doctor.id,
+          slotTime: { gte: startOfDay, lte: endOfDay },
+          status: { in: ['CONFIRMED', 'IN_PROGRESS', 'COMPLETED'] },
+        },
+        include: {
+          patient: { select: { id: true, name: true, phone: true } },
+          consultation: true,
+        },
+        orderBy: { slotTime: 'asc' },
+      }),
+      this.prisma.appointment.count({
+        where: {
+          doctorId: doctor.id,
+          slotTime: { gt: now },
+          status: 'CONFIRMED',
+        },
+      }),
+      this.prisma.appointment.count({
+        where: {
+          doctorId: doctor.id,
+          status: 'COMPLETED',
+        },
+      }),
+      this.prisma.appointment.count({
+        where: {
+          doctorId: doctor.id,
+          status: 'CANCELLED',
+        },
+      }),
+      this.prisma.review.findMany({
+        where: { doctorId: doctor.id },
+        include: {
+          appointment: {
+            select: {
+              patient: { select: { name: true } },
+            },
+          },
+        },
+        orderBy: { createdAt: 'desc' },
+        take: 10,
+      }),
+    ]);
+
+    const totalEarningsPaise = doctorLedgers.reduce((sum, e) => sum + e.amountPaise, 0);
+
+    // Weekly earnings breakdown for chart
+    const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+    const dailyEarningsMap = new Map<string, number>();
+    for (let i = 6; i >= 0; i--) {
+      const d = new Date(now.getTime() - i * 24 * 60 * 60 * 1000);
+      dailyEarningsMap.set(dayNames[d.getDay()], 0);
+    }
+    for (const entry of doctorLedgers) {
+      const diffDays = Math.floor((now.getTime() - entry.createdAt.getTime()) / (24 * 60 * 60 * 1000));
+      if (diffDays >= 0 && diffDays < 7) {
+        const dayStr = dayNames[entry.createdAt.getDay()];
+        const current = dailyEarningsMap.get(dayStr) || 0;
+        dailyEarningsMap.set(dayStr, current + Math.round(entry.amountPaise / 100));
+      }
+    }
+
+    const earningsChart = Array.from(dailyEarningsMap.entries()).map(([day, earnings]) => ({
+      day,
+      earnings,
+    }));
+
+    return {
+      doctorId: doctor.id,
+      doctorName: doctor.user.name,
+      specialty: doctor.specialty,
+      stats: {
+        totalEarningsPaise,
+        totalConsultations: completedCount,
+        todayQueueCount: todayAppts.length,
+        upcomingCount,
+        cancelledCount,
+      },
+      earningsChart,
+      todayQueue: todayAppts.map((a) => ({
+        id: a.id,
+        bookingRef: a.bookingRef,
+        patientName: a.patient.name,
+        patientPhone: a.patient.phone,
+        slotTime: a.slotTime.toISOString(),
+        consultationMode: a.consultationMode,
+        status: a.status,
+        chiefComplaint: a.notes || 'General medical follow-up',
+        sessionStatus: a.consultation?.status || 'SCHEDULED',
+      })),
+      leaves: doctor.leaves.map((l) => ({
+        id: l.id,
+        startDate: l.startDate.toISOString().slice(0, 10),
+        endDate: l.endDate.toISOString().slice(0, 10),
+        reason: l.reason,
+      })),
+      reviews: recentReviews.map((r) => ({
+        id: r.id,
+        rating: r.rating,
+        comment: r.comment,
+        patientName: r.appointment?.patient?.name || 'Verified Patient',
+        createdAt: r.createdAt.toISOString(),
+      })),
     };
   }
 }
