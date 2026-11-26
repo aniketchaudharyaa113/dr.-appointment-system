@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, Inject } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException, Inject } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../platform/database/prisma.service';
 import { RedisService } from '../../platform/redis/redis.service';
@@ -520,6 +520,41 @@ export class DoctorService {
     const doctor = await this.prisma.doctor.findUnique({ where: { userId } });
     if (!doctor) {
       throw new NotFoundException('Doctor profile not found');
+    }
+
+    const parseMins = (t: string) => {
+      const [h, m] = t.split(':').map(Number);
+      return h * 60 + m;
+    };
+    const byDay = new Map<number, Array<{ startMins: number; endMins: number }>>();
+
+    for (const s of input.slots) {
+      const startMins = parseMins(s.startTime);
+      const endMins = parseMins(s.endTime);
+      const duration = s.slotDurationMinutes || 15;
+      if (startMins >= endMins) {
+        throw new BadRequestException(
+          `startTime ${s.startTime} must be before endTime ${s.endTime}`,
+        );
+      }
+      if ((endMins - startMins) % duration !== 0) {
+        throw new BadRequestException(
+          `slotDurationMinutes ${duration} must evenly divide window ${s.startTime}-${s.endTime}`,
+        );
+      }
+      if (!byDay.has(s.dayOfWeek)) byDay.set(s.dayOfWeek, []);
+      byDay.get(s.dayOfWeek)!.push({ startMins, endMins });
+    }
+
+    for (const [, daySlots] of byDay) {
+      daySlots.sort((a, b) => a.startMins - b.startMins);
+      for (let j = 0; j < daySlots.length - 1; j++) {
+        if (daySlots[j].endMins > daySlots[j + 1].startMins) {
+          throw new BadRequestException(
+            'Overlapping availability windows on the same day are not allowed',
+          );
+        }
+      }
     }
 
     return this.prisma.$transaction(async (tx) => {

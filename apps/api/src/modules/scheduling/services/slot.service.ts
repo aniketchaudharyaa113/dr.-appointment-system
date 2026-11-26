@@ -116,8 +116,17 @@ export class SlotService {
       }
     }
 
-    slots.sort((a, b) => a.slotTime.localeCompare(b.slotTime));
-    return slots;
+    const seenSlots = new Set<string>();
+    const uniqueSlots: GeneratedSlot[] = [];
+    for (const slot of slots) {
+      if (!seenSlots.has(slot.slotTime)) {
+        seenSlots.add(slot.slotTime);
+        uniqueSlots.push(slot);
+      }
+    }
+
+    uniqueSlots.sort((a, b) => a.slotTime.localeCompare(b.slotTime));
+    return uniqueSlots;
   }
 
   /**

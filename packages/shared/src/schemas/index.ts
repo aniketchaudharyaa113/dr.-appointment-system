@@ -237,16 +237,65 @@ export const ReleaseSlotHoldSchema = z.object({
 });
 export type ReleaseSlotHoldInput = z.infer<typeof ReleaseSlotHoldSchema>;
 
-export const UpdateDoctorAvailabilitySchema = z.object({
-  slots: z.array(
-    z.object({
-      dayOfWeek: z.number().int().min(0).max(6),
-      startTime: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d(:[0-5]\d)?$/),
-      endTime: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d(:[0-5]\d)?$/),
-      slotDurationMinutes: z.number().int().positive().default(15),
-    }),
-  ),
-});
+export const UpdateDoctorAvailabilitySchema = z
+  .object({
+    slots: z.array(
+      z.object({
+        dayOfWeek: z.number().int().min(0).max(6),
+        startTime: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d(:[0-5]\d)?$/),
+        endTime: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d(:[0-5]\d)?$/),
+        slotDurationMinutes: z.number().int().positive().default(15),
+      }),
+    ),
+  })
+  .superRefine((data, ctx) => {
+    const parseMins = (t: string) => {
+      const [h, m] = t.split(':').map(Number);
+      return h * 60 + m;
+    };
+
+    const byDay = new Map<
+      number,
+      Array<{ startMins: number; endMins: number; index: number }>
+    >();
+
+    for (let i = 0; i < data.slots.length; i++) {
+      const s = data.slots[i];
+      const startMins = parseMins(s.startTime);
+      const endMins = parseMins(s.endTime);
+      const duration = s.slotDurationMinutes || 15;
+
+      if (startMins >= endMins) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['slots', i, 'endTime'],
+          message: 'startTime must be strictly before endTime',
+        });
+      } else if ((endMins - startMins) % duration !== 0) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['slots', i, 'slotDurationMinutes'],
+          message: 'slotDurationMinutes must evenly divide the time window',
+        });
+      }
+
+      if (!byDay.has(s.dayOfWeek)) byDay.set(s.dayOfWeek, []);
+      byDay.get(s.dayOfWeek)!.push({ startMins, endMins, index: i });
+    }
+
+    for (const [, daySlots] of byDay) {
+      daySlots.sort((a, b) => a.startMins - b.startMins);
+      for (let j = 0; j < daySlots.length - 1; j++) {
+        if (daySlots[j].endMins > daySlots[j + 1].startMins) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ['slots', daySlots[j + 1].index],
+            message: 'Overlapping availability windows on the same day are not allowed',
+          });
+        }
+      }
+    }
+  });
 export type UpdateDoctorAvailabilityInput = z.infer<typeof UpdateDoctorAvailabilitySchema>;
 
 export const UpdateDoctorProfileSchema = z.object({

@@ -3,6 +3,7 @@ import {
   RegisterUserSchema,
   HoldSlotSchema,
   AmbulanceRequestSchema,
+  UpdateDoctorAvailabilitySchema,
   CLINIC_TIMEZONE,
   SLOT_HOLD_DURATION_SECONDS,
 } from '../src';
@@ -65,5 +66,45 @@ describe('Shared Schemas & Constants', () => {
     };
     const res = AmbulanceRequestSchema.safeParse(ambulancePayload);
     expect(res.success).toBe(true);
+  });
+
+  describe('UpdateDoctorAvailabilitySchema (P2-5)', () => {
+    it('accepts valid non-overlapping slots with dividing duration', () => {
+      const res = UpdateDoctorAvailabilitySchema.safeParse({
+        slots: [
+          { dayOfWeek: 1, startTime: '09:00', endTime: '12:00', slotDurationMinutes: 15 },
+          { dayOfWeek: 1, startTime: '14:00', endTime: '17:00', slotDurationMinutes: 30 },
+        ],
+      });
+      expect(res.success).toBe(true);
+    });
+
+    it('rejects when startTime is after endTime', () => {
+      const res = UpdateDoctorAvailabilitySchema.safeParse({
+        slots: [
+          { dayOfWeek: 1, startTime: '12:00', endTime: '09:00', slotDurationMinutes: 15 },
+        ],
+      });
+      expect(res.success).toBe(false);
+    });
+
+    it('rejects when slotDurationMinutes does not divide the window', () => {
+      const res = UpdateDoctorAvailabilitySchema.safeParse({
+        slots: [
+          { dayOfWeek: 1, startTime: '09:00', endTime: '09:50', slotDurationMinutes: 15 },
+        ],
+      });
+      expect(res.success).toBe(false);
+    });
+
+    it('rejects overlapping slots on the same day', () => {
+      const res = UpdateDoctorAvailabilitySchema.safeParse({
+        slots: [
+          { dayOfWeek: 1, startTime: '09:00', endTime: '11:00', slotDurationMinutes: 15 },
+          { dayOfWeek: 1, startTime: '10:30', endTime: '12:00', slotDurationMinutes: 15 },
+        ],
+      });
+      expect(res.success).toBe(false);
+    });
   });
 });
