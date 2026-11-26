@@ -281,7 +281,7 @@ export default function CheckoutPage() {
   const amountPaise = paymentOrder?.amountPaise ?? appt.consultationFeePaise;
 
   return (
-    <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8">
+    <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-8 pb-24 md:pb-8 space-y-8">
       <Link
         href="/doctors"
         className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-500 hover:text-teal-600 transition-colors"
@@ -441,6 +441,33 @@ export default function CheckoutPage() {
           </div>
         </div>
       </div>
+
+      {/* Sticky Mobile Checkout CTA (F-12) */}
+      {appt.status !== 'CONFIRMED' && (
+        <div className="md:hidden fixed bottom-0 left-0 right-0 p-4 bg-white/95 dark:bg-slate-900/95 border-t border-slate-200 dark:border-slate-800 shadow-xl backdrop-blur-md z-40 flex items-center justify-between gap-4">
+          <div>
+            <span className="text-[11px] font-medium text-slate-500 dark:text-slate-400 block">{t.checkout.totalPayable}</span>
+            <span className="text-lg font-extrabold text-teal-600 dark:text-teal-400">{formatPaise(amountPaise)}</span>
+          </div>
+          {canShowSimulator ? (
+            <button
+              onClick={() => simulateWebhookMutation.mutate('payment.captured')}
+              disabled={!paymentOrder || simulateWebhookMutation.isPending || secondsLeft === 0}
+              className="py-2.5 px-4 rounded-xl bg-teal-600 hover:bg-teal-700 disabled:opacity-40 text-white font-bold text-xs shadow-md transition-all flex items-center gap-1.5"
+            >
+              <Lock className="w-3.5 h-3.5" /> {simulateWebhookMutation.isPending ? 'Simulating...' : 'Simulate Pay'}
+            </button>
+          ) : (
+            <button
+              onClick={handlePayWithRazorpay}
+              disabled={!paymentOrder || isOpeningRazorpay || secondsLeft === 0}
+              className="py-2.5 px-4 rounded-xl bg-teal-600 hover:bg-teal-700 disabled:opacity-40 text-white font-bold text-xs shadow-md transition-all flex items-center gap-1.5"
+            >
+              <Lock className="w-3.5 h-3.5" /> {isOpeningRazorpay ? 'Opening...' : `Pay ${formatPaise(amountPaise)}`}
+            </button>
+          )}
+        </div>
+      )}
     </div>
   );
 }

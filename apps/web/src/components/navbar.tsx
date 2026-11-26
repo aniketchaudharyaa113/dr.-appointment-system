@@ -20,6 +20,8 @@ import {
   LogOut,
   Bell,
   CheckCheck,
+  Menu,
+  X,
 } from 'lucide-react';
 
 export function Navbar() {
@@ -30,11 +32,13 @@ export function Navbar() {
   const { resolvedTheme, setTheme } = useTheme();
   const [mounted, setMounted] = useState(false);
   const [isNotifOpen, setIsNotifOpen] = useState(false);
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const notifRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     setMounted(true);
-  }, []);
+    setIsMobileMenuOpen(false);
+  }, [pathname]);
 
   const isDark = mounted && resolvedTheme === 'dark';
 
@@ -92,13 +96,13 @@ export function Navbar() {
   };
 
   const navLinks = [
-    { href: '/doctors', label: t.nav.findDoctors, icon: Stethoscope },
-    { href: '/emergency', label: t.nav.emergency, icon: ShieldAlert, highlight: true },
-    { href: '/appointments', label: t.nav.myAppointments, icon: Calendar },
-    { href: '/passport', label: 'Health Passport', icon: User },
-    { href: '/doctor/dashboard', label: t.nav.doctorPortal, icon: Activity },
-    { href: '/admin', label: t.nav.adminPortal, icon: User },
-  ];
+    { href: '/doctors', label: t.nav.findDoctors, icon: Stethoscope, roles: ['PATIENT', 'DOCTOR', 'ADMIN', 'DRIVER', undefined] },
+    { href: '/emergency', label: t.nav.emergency, icon: ShieldAlert, highlight: true, roles: ['PATIENT', 'DOCTOR', 'ADMIN', 'DRIVER', undefined] },
+    { href: '/appointments', label: t.nav.myAppointments, icon: Calendar, roles: ['PATIENT'] },
+    { href: '/passport', label: 'Health Passport', icon: User, roles: ['PATIENT'] },
+    { href: '/doctor/dashboard', label: t.nav.doctorPortal, icon: Activity, roles: ['DOCTOR'] },
+    { href: '/admin', label: t.nav.adminPortal, icon: User, roles: ['ADMIN'] },
+  ].filter((link) => link.roles.includes(user?.role));
 
   return (
     <header className="sticky top-0 z-40 w-full border-b border-slate-200 dark:border-slate-800 bg-white/95 dark:bg-slate-950/95 backdrop-blur-md">
@@ -177,6 +181,16 @@ export function Navbar() {
             aria-label="Toggle Dark Mode"
           >
             {isDark ? <Sun className="w-4 h-4 text-amber-400" /> : <Moon className="w-4 h-4 text-slate-600" />}
+          </button>
+
+          {/* Mobile Menu Toggle Button */}
+          <button
+            type="button"
+            onClick={() => setIsMobileMenuOpen((prev) => !prev)}
+            className="md:hidden p-2 rounded-lg text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-900 transition-colors"
+            aria-label="Toggle Navigation Menu"
+          >
+            {isMobileMenuOpen ? <X className="w-5 h-5 text-slate-700 dark:text-slate-200" /> : <Menu className="w-5 h-5 text-slate-700 dark:text-slate-200" />}
           </button>
 
           {/* Notifications Bell (P1-10) */}
@@ -285,6 +299,33 @@ export function Navbar() {
           )}
         </div>
       </div>
+
+      {/* Mobile Nav Drawer */}
+      {isMobileMenuOpen && (
+        <nav className="md:hidden border-t border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 px-4 pt-2 pb-4 space-y-1 shadow-lg animate-in slide-in-from-top duration-200" aria-label="Mobile Navigation">
+          {navLinks.map((link) => {
+            const Icon = link.icon;
+            const isActive = pathname === link.href;
+            return (
+              <Link
+                key={link.href}
+                href={link.href}
+                onClick={() => setIsMobileMenuOpen(false)}
+                className={`flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-sm font-medium transition-colors ${
+                  isActive
+                    ? 'bg-teal-50 dark:bg-teal-950/50 text-teal-700 dark:text-teal-300 font-semibold'
+                    : link.highlight
+                    ? 'text-rose-600 dark:text-rose-400 font-semibold hover:bg-rose-50 dark:hover:bg-rose-950/40'
+                    : 'text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-900'
+                }`}
+              >
+                <Icon className="w-4 h-4" />
+                <span>{link.label}</span>
+              </Link>
+            );
+          })}
+        </nav>
+      )}
     </header>
   );
 }
