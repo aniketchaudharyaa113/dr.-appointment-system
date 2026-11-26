@@ -1,4 +1,6 @@
-export const CLINIC_TIMEZONE = 'Asia/Kolkata';
+import { CLINIC_TIMEZONE as SHARED_CLINIC_TIMEZONE } from '@medibook/shared';
+
+export const CLINIC_TIMEZONE = process.env.CLINIC_TIMEZONE || SHARED_CLINIC_TIMEZONE;
 
 const istDateFormatter = new Intl.DateTimeFormat('en-CA', {
   timeZone: CLINIC_TIMEZONE,
