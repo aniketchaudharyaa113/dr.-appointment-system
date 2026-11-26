@@ -782,6 +782,13 @@ export class PaymentService {
       throw new ForbiddenException('Not authorized to view this payment');
     }
 
+    if (!isAdmin) {
+      return {
+        ...payment,
+        ledgers: undefined,
+      };
+    }
+
     return payment;
   }
 }

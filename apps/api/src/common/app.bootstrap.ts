@@ -30,9 +30,9 @@ export async function createConfiguredApp(): Promise<NestFastifyApplication> {
     { rawBody: true },
   );
 
-  // Security Headers
+  // Security Headers (CSP enabled in all environments)
   await app.register(fastifyHelmet as any, {
-    contentSecurityPolicy: env.NODE_ENV === 'production',
+    contentSecurityPolicy: true,
   });
 
   // Strict CORS
@@ -88,25 +88,27 @@ export async function createConfiguredApp(): Promise<NestFastifyApplication> {
       done();
     });
 
-  // Swagger OpenAPI Documentation
-  const swaggerConfig = new DocumentBuilder()
-    .setTitle('MediBook Telehealth API')
-    .setDescription(
-      'Production-quality modular monolith API for MediBook Telehealth Platform',
-    )
-    .setVersion('2.0.0')
-    .addBearerAuth()
-    .addTag('Health', 'System liveness and readiness monitoring')
-    .addTag('Identity', 'Authentication, registration, and RBAC')
-    .addTag('Scheduling', 'Doctors, slots, holds, availability, and waitlists')
-    .addTag('Payments', 'Razorpay integration and double-entry ledger')
-    .addTag('Consultation', 'Video sessions, LiveKit tokens, and chat')
-    .addTag('Ambulance', 'Emergency dispatch and GPS driver tracking')
-    .addTag('AI', 'Triage and clinical assistant gateway')
-    .build();
+  // Swagger OpenAPI Documentation (disabled in production)
+  if (env.NODE_ENV !== 'production') {
+    const swaggerConfig = new DocumentBuilder()
+      .setTitle('MediBook Telehealth API')
+      .setDescription(
+        'Production-quality modular monolith API for MediBook Telehealth Platform',
+      )
+      .setVersion('2.0.0')
+      .addBearerAuth()
+      .addTag('Health', 'System liveness and readiness monitoring')
+      .addTag('Identity', 'Authentication, registration, and RBAC')
+      .addTag('Scheduling', 'Doctors, slots, holds, availability, and waitlists')
+      .addTag('Payments', 'Razorpay integration and double-entry ledger')
+      .addTag('Consultation', 'Video sessions, LiveKit tokens, and chat')
+      .addTag('Ambulance', 'Emergency dispatch and GPS driver tracking')
+      .addTag('AI', 'Triage and clinical assistant gateway')
+      .build();
 
-  const document = SwaggerModule.createDocument(app, swaggerConfig);
-  SwaggerModule.setup('api/docs', app, document);
+    const document = SwaggerModule.createDocument(app, swaggerConfig);
+    SwaggerModule.setup('api/docs', app, document);
+  }
 
   app.enableShutdownHooks();
   return app;

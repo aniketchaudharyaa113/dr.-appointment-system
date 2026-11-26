@@ -39,44 +39,54 @@ export class ConsultationGateway
 
   afterInit(server: Namespace) {
     this.realtime.registerConsultationServer(server);
+    server.use(async (client: Socket, next) => {
+      try {
+        const token =
+          client.handshake.auth?.token ||
+          (client.handshake.headers['authorization'] as string)?.replace(
+            /^Bearer\s+/i,
+            '',
+          ) ||
+          (client.handshake.query?.token as string);
+
+        if (!token) {
+          return next(new Error('Unauthorized'));
+        }
+
+        const decoded = jwt.verify(token, env.JWT_SECRET, {
+          algorithms: ['HS256'],
+        }) as JwtPayload;
+        if (!decoded?.sub) {
+          return next(new Error('Unauthorized'));
+        }
+
+        const active = await isUserActiveCached(
+          this.prisma,
+          this.redis,
+          decoded.sub,
+        );
+        if (!active) {
+          return next(new Error('Unauthorized'));
+        }
+
+        (client as any).user = decoded;
+        next();
+      } catch {
+        next(new Error('Unauthorized'));
+      }
+    });
   }
 
   async handleConnection(client: Socket) {
-    try {
-      const token =
-        client.handshake.auth?.token ||
-        (client.handshake.headers['authorization'] as string)?.replace(
-          /^Bearer\s+/i,
-          '',
-        ) ||
-        (client.handshake.query?.token as string);
-
-      if (!token) {
-        client.disconnect(true);
-        return;
-      }
-
-      const decoded = jwt.verify(token, env.JWT_SECRET, {
-        algorithms: ['HS256'],
-      }) as JwtPayload;
-      if (!decoded?.sub) {
-        client.disconnect(true);
-        return;
-      }
-      const active = await isUserActiveCached(this.prisma, this.redis, decoded.sub);
-      if (!active) {
-        client.disconnect(true);
-        return;
-      }
-
-      (client as any).user = decoded;
-      await client.join(`user:${decoded.sub}`);
-      this.logger.log(
-        `Client connected to consultation namespace: ${decoded.sub}`,
-      );
-    } catch {
+    const user = (client as any).user as JwtPayload | undefined;
+    if (!user?.sub) {
       client.disconnect(true);
+      return;
     }
+    await client.join(`user:${user.sub}`);
+    this.logger.log(
+      `Client connected to consultation namespace: ${user.sub}`,
+    );
   }
 
   handleDisconnect(client: Socket) {

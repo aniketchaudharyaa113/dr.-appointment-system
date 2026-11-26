@@ -4,6 +4,7 @@ import { env } from '../src/common/config/env.schema';
 import {
   bootTestApp,
   resetDatabaseAndRedis,
+  seedPatient,
   TestContext,
 } from './helpers/test-app';
 
@@ -64,8 +65,9 @@ describe('Clinical Service: Telemedicine Vitals & Diagnostic Lab Orders', () => 
       { sub: doctorUser.id, email: doctorUser.email, role: 'DOCTOR' },
       env.JWT_SECRET,
     );
+    const strangerUser = await seedPatient(ctx.prisma, 'stranger@test.com');
     const strangerToken = jwt.sign(
-      { sub: '00000000-0000-0000-0000-000000000099', email: 'stranger@test.com', role: 'PATIENT' },
+      { sub: strangerUser.id, email: strangerUser.email, role: 'PATIENT' },
       env.JWT_SECRET,
     );
 

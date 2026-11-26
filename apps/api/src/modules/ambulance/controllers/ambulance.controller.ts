@@ -51,6 +51,8 @@ export class AmbulanceController {
   }
 
   @Get('drivers/online')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
   @ApiOperation({
     summary:
       'List active ambulance units with live Redis GEO coordinates and heartbeats',

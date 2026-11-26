@@ -8,6 +8,7 @@ import {
 import { FastifyReply, FastifyRequest } from 'fastify';
 import { ApiErrorResponse } from '@medibook/shared';
 import { logger } from '../logger/pino-logger.service';
+import { env } from '../config/env.schema';
 
 @Catch()
 export class AllExceptionsFilter implements ExceptionFilter {
@@ -38,12 +39,14 @@ export class AllExceptionsFilter implements ExceptionFilter {
         details = resObj.details || resObj;
       }
     } else if (exception instanceof Error) {
-      message = exception.message;
-      error = exception.name;
       logger.error(
         { err: exception, requestId, url: request.url },
         'Unhandled server error',
       );
+      if (env.NODE_ENV !== 'production') {
+        message = exception.message;
+        error = exception.name;
+      }
     }
 
     const errorPayload: ApiErrorResponse = {

@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
+import { randomUUID } from 'crypto';
 import {
   bootTestApp,
   resetDatabaseAndRedis,
@@ -227,5 +228,84 @@ describe('P0 Security: Registration Privilege Escalation & RBAC', () => {
       headers: { authorization: `Bearer ${accessToken}` },
     });
     expect(meRes.statusCode).toBe(401);
+  });
+
+  it('P0-14: prevents public data leaks (ambulance drivers auth, doctor public DTO + 404 unverified, non-admin ledger strip)', async () => {
+    // 1. Unauthenticated GET /api/ambulance/drivers/online -> 401
+    const unauthDrivers = await ctx.app.inject({
+      method: 'GET',
+      url: '/api/ambulance/drivers/online',
+    });
+    expect(unauthDrivers.statusCode).toBe(401);
+
+    // 2. Doctor public DTO omits email/licenseNumber & returns 404 for unverified doctor
+    const verified = await seedVerifiedDoctor(ctx.prisma, {
+      email: 'verified-doc@medibook.test',
+      name: 'Dr. Verified',
+    });
+    const pubDocRes = await ctx.app.inject({
+      method: 'GET',
+      url: `/api/doctors/${verified.doctor.id}`,
+    });
+    expect(pubDocRes.statusCode).toBe(200);
+    const pubDoc = pubDocRes.json();
+    expect(pubDoc.user.email).toBeUndefined();
+    expect(pubDoc.licenseNumber).toBeUndefined();
+    expect(pubDoc.user.name).toBe('Dr. Verified');
+
+    await ctx.prisma.doctor.update({
+      where: { id: verified.doctor.id },
+      data: { isVerified: false },
+    });
+    const unverifiedDocRes = await ctx.app.inject({
+      method: 'GET',
+      url: `/api/doctors/${verified.doctor.id}`,
+    });
+    expect(unverifiedDocRes.statusCode).toBe(404);
+
+    // 3. GET /api/payments/:id strips ledgers for patient, includes for admin
+    const patient = await seedPatient(ctx.prisma, 'payviewer@medibook.test');
+    const admin = await ctx.prisma.user.create({
+      data: {
+        email: 'admin-ledger@medibook.test',
+        passwordHash: 'hash',
+        name: 'Admin Ledger',
+        role: 'ADMIN',
+      },
+    });
+    const appt = await ctx.prisma.appointment.create({
+      data: {
+        patientId: patient.id,
+        doctorId: verified.doctor.id,
+        slotTime: new Date(Date.now() + 24 * 3600_000),
+        status: 'CONFIRMED',
+      },
+    });
+    const payment = await ctx.prisma.payment.create({
+      data: {
+        appointmentId: appt.id,
+        provider: 'FAKE',
+        providerOrderId: `ord_${randomUUID().slice(0, 8)}`,
+        amountPaise: 50000,
+        status: 'CAPTURED',
+        idempotencyKey: randomUUID(),
+      },
+    });
+
+    const patientPayRes = await ctx.app.inject({
+      method: 'GET',
+      url: `/api/payments/${payment.id}`,
+      headers: { authorization: `Bearer ${signJwtForUser(patient)}` },
+    });
+    expect(patientPayRes.statusCode).toBe(200);
+    expect(patientPayRes.json().ledgers).toBeUndefined();
+
+    const adminPayRes = await ctx.app.inject({
+      method: 'GET',
+      url: `/api/payments/${payment.id}`,
+      headers: { authorization: `Bearer ${signJwtForUser(admin)}` },
+    });
+    expect(adminPayRes.statusCode).toBe(200);
+    expect(Array.isArray(adminPayRes.json().ledgers)).toBe(true);
   });
 });

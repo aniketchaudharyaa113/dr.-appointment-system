@@ -194,7 +194,7 @@ export class DoctorService {
     const doctor = await this.prisma.doctor.findUnique({
       where: { id: doctorId },
       include: {
-        user: { select: { id: true, name: true, email: true } },
+        user: { select: { id: true, name: true, isActive: true } },
         availability: true,
         reviews: {
           include: { patient: { select: { name: true } } },
@@ -204,7 +204,7 @@ export class DoctorService {
       },
     });
 
-    if (!doctor) {
+    if (!doctor || !doctor.isVerified || !doctor.user.isActive) {
       throw new NotFoundException('Doctor not found');
     }
 
@@ -215,7 +215,24 @@ export class DoctorService {
         : 0;
 
     return {
-      ...doctor,
+      id: doctor.id,
+      userId: doctor.userId,
+      specialty: doctor.specialty,
+      qualifications: doctor.qualifications,
+      experienceYears: doctor.experienceYears,
+      clinicName: doctor.clinicName,
+      clinicAddress: doctor.clinicAddress,
+      clinicLat: doctor.clinicLat,
+      clinicLng: doctor.clinicLng,
+      consultationFeePaise: doctor.consultationFeePaise,
+      photoUrl: doctor.photoUrl,
+      isVerified: doctor.isVerified,
+      user: {
+        id: doctor.user.id,
+        name: doctor.user.name,
+      },
+      availability: doctor.availability,
+      reviews: doctor.reviews,
       averageRating: Math.round(avgRating * 10) / 10,
       reviewCount: ratingCount,
     };
