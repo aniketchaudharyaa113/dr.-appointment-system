@@ -27,7 +27,7 @@ All fixes are committed atomically on `main` (baseline tag: `pre-agent-baseline`
 - [x] **P1-6** (`86576b6`): `PATCH /lab-orders/:id` for ordering doctor with Zod schema (`UpdateLabResultsSchema`), completedAt and resultNotes migration, surfaced results and doctor notes in Health Passport
 - [x] **P1-7** (`fc7fedb`): Filter out past slots and slots within 15-min lead time or >30-day advance in generation (`SlotService.getDoctorSlotsForDate`), hold, and booking alignment checks
 - [x] **P1-8** (`fc7fedb`): Slot-hold hoarding prevention: max 1 active hold lease per patient in Redis (`active_hold:<patientId>`) with auto-release of old holds, `DELETE /appointments/hold` endpoint with frontend release button, and PATIENT-role restriction on hold & book
-- [ ] **P1-9**: Doctor search SQL pagination, Haversine distance & rating filtering, AND condition for symptom+specialty, batch Redis slot checks
+- [x] **P1-9** (`360ac35`): Doctor search SQL pagination, Haversine geo distance formula (`6371 * acos(...)`), SQL rating filter, AND intersection for symptom+specialty, and batched Redis `MGET` next slot lookups
 - [ ] **P1-10**: Doctor notifications on booking/cancel/refund, HTML email escaping, notification dedup, navbar notifications bell/inbox UI
 - [ ] **P1-11**: Wire Admin and Doctor dashboards to real endpoints (pending doctors, verification, reconcile, real ledger, real audit, real earnings)
 - [ ] **P1-12**: Doctor registration & onboarding UI flow with license upload, pending verification status, schedule availability editor
