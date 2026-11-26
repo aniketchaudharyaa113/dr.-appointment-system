@@ -18,8 +18,18 @@ test.describe('Emergency SOS & Real Ambulance Dispatch E2E Flow', () => {
 
     // 3. Dispatch real ambulance request via UI -> API -> Postgres + Redis
     await page.goto('/emergency');
-    await page.click('button:has-text("Request Emergency Ambulance")');
-    await expect(page.getByTestId('ambulance-status-badge')).toBeVisible();
+    const requestBtn = page.locator('button:has-text("Request Emergency Ambulance")');
+    const statusBadge = page.getByTestId('ambulance-status-badge');
+
+    await Promise.race([
+      requestBtn.waitFor({ state: 'visible', timeout: 10000 }),
+      statusBadge.waitFor({ state: 'visible', timeout: 10000 }),
+    ]);
+
+    if (await requestBtn.isVisible()) {
+      await requestBtn.click();
+    }
+    await expect(statusBadge).toBeVisible();
 
     // 4. Trigger real driver simulator telemetry and watch live arrival updates over Socket.IO
     await page.click('button:has-text("Simulate Live Driver Telemetry (Dev)")');

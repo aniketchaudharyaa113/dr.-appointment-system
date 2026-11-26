@@ -139,10 +139,11 @@ function DoctorsListContent() {
 
           {/* Sort */}
           <div>
-            <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-2">
+            <label htmlFor="doctors-sort-by" className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-2">
               Sort By
             </label>
             <select
+              id="doctors-sort-by"
               value={sortBy}
               onChange={(e) => setSortBy(e.target.value as any)}
               className="w-full p-2 rounded-xl bg-slate-100 dark:bg-slate-800 text-xs font-semibold text-slate-700 dark:text-slate-200 border-none"
@@ -156,10 +157,11 @@ function DoctorsListContent() {
           {/* Max Fee Slider */}
           <div>
             <div className="flex justify-between items-center text-xs font-semibold text-slate-700 dark:text-slate-300 mb-2">
-              <span>{t.doctors.filterFee}</span>
+              <label htmlFor="doctors-max-fee">{t.doctors.filterFee}</label>
               <span className="text-teal-600 dark:text-teal-400 font-bold">₹{maxFeeInr}</span>
             </div>
             <input
+              id="doctors-max-fee"
               type="range"
               min="300"
               max="2000"
@@ -178,9 +180,10 @@ function DoctorsListContent() {
         {/* Doctors Grid */}
         <div className="lg:col-span-3 space-y-4">
           <div className="relative flex items-center p-1.5 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800">
-            <Search className="w-4 h-4 text-slate-400 ml-3" />
+            <Search className="w-4 h-4 text-slate-400 ml-3" aria-hidden="true" />
             <input
               type="text"
+              aria-label="Search doctors or symptoms"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               placeholder="Search symptoms (e.g. chest pain, skin rash, fever)..."

@@ -160,11 +160,11 @@ export function AiDrawer() {
       {/* Floating Launcher Button */}
       {!isOpen && (
         <button
+          type="button"
           onClick={() => setIsOpen(true)}
           className="fixed bottom-6 right-6 z-40 flex items-center gap-2.5 px-4 py-3 rounded-full bg-teal-600 hover:bg-teal-700 text-white font-semibold shadow-lg shadow-teal-600/30 hover:shadow-teal-600/40 hover:-translate-y-0.5 transition-all focus:outline-none focus:ring-4 focus:ring-teal-500/20"
-          aria-label="Open AI Assistant"
         >
-          <Sparkles className="w-5 h-5 text-teal-200 animate-spin" style={{ animationDuration: '6s' }} />
+          <Sparkles aria-hidden="true" className="w-5 h-5 text-teal-200 animate-spin" style={{ animationDuration: '6s' }} />
           <span className="text-sm">Ask MediBook AI</span>
         </button>
       )}

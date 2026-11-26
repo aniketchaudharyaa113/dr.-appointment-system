@@ -322,7 +322,11 @@ export default function EmergencyPage() {
           </div>
 
           <div className="lg:col-span-2 bg-white dark:bg-slate-900 rounded-2xl p-6 border border-slate-200 dark:border-slate-800 shadow-sm flex flex-col justify-between space-y-4">
-            {!activeTrip || isTerminal ? (
+            {hasSession && activeTripQuery.isLoading ? (
+              <div className="py-12 text-center text-xs text-slate-500 animate-pulse">
+                Checking active ambulance dispatch...
+              </div>
+            ) : !activeTrip || isTerminal ? (
               <div className="space-y-4">
                 <div className="flex items-center gap-3">
                   <div className="w-12 h-12 bg-red-100 dark:bg-red-900/30 rounded-full flex items-center justify-center">
@@ -496,9 +500,10 @@ export default function EmergencyPage() {
               </div>
               <a
                 href={`tel:${h.number}`}
+                aria-label={`Call ${h.name} at ${h.number}`}
                 className="p-3 bg-red-50 dark:bg-red-900/20 text-red-600 rounded-xl hover:bg-red-100 transition-colors"
               >
-                <PhoneCall className="w-5 h-5" />
+                <PhoneCall aria-hidden="true" className="w-5 h-5" />
               </a>
             </div>
           ))}
