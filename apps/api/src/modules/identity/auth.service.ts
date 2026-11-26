@@ -118,6 +118,7 @@ export class AuthService {
               userId: newUser.id,
               specialty: input.specialty || 'General Medicine',
               qualifications: input.qualifications,
+              experienceYears: input.experienceYears ?? 0,
               clinicName: input.clinicName,
               clinicAddress: input.clinicAddress,
               clinicLat: input.clinicLat,

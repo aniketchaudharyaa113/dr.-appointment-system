@@ -6,6 +6,7 @@ import {
   RefundResult,
   ParsedWebhookEvent,
 } from './payment-provider.interface';
+import { env } from '../../../common/config/env.schema';
 
 @Injectable()
 export class StripeProvider implements PaymentProvider {
@@ -16,7 +17,6 @@ export class StripeProvider implements PaymentProvider {
     amountPaise: number;
     currency?: string;
   }): Promise<PaymentOrderResult> {
-    // Stripe creates a PaymentIntent
     const providerOrderId = `pi_${crypto.randomUUID().replace(/-/g, '').slice(0, 16)}`;
     return {
       providerOrderId,
@@ -27,8 +27,33 @@ export class StripeProvider implements PaymentProvider {
 
   verifyWebhookSignature(rawBody: string | Buffer, signature: string): boolean {
     if (!signature) return false;
-    // In Stripe, signature header is 't=timestamp,v1=signature'
-    return signature.includes('v1=');
+    const secret = process.env.STRIPE_WEBHOOK_SECRET || env.PAYMENT_WEBHOOK_SECRET;
+    if (!secret) return false;
+
+    const parts = signature.split(',').reduce<Record<string, string>>((acc, item) => {
+      const [k, v] = item.split('=');
+      if (k && v) acc[k.trim()] = v.trim();
+      return acc;
+    }, {});
+
+    const timestamp = parts['t'];
+    const v1Signature = parts['v1'];
+    if (!timestamp || !v1Signature) return false;
+
+    const bodyStr = typeof rawBody === 'string' ? rawBody : rawBody.toString('utf8');
+    const expectedSig = crypto
+      .createHmac('sha256', secret)
+      .update(`${timestamp}.${bodyStr}`)
+      .digest('hex');
+
+    try {
+      const expectedBuf = Buffer.from(expectedSig, 'hex');
+      const actualBuf = Buffer.from(v1Signature, 'hex');
+      if (expectedBuf.length !== actualBuf.length) return false;
+      return crypto.timingSafeEqual(expectedBuf, actualBuf);
+    } catch {
+      return false;
+    }
   }
 
   parseWebhookEvent(rawBody: string | Buffer, headerEventId?: string): ParsedWebhookEvent {

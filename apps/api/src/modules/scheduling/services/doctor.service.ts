@@ -56,18 +56,22 @@ export class DoctorService {
     const skip = (page - 1) * limit;
 
     let symptomSpecialties: string[] | null = null;
+    const rawSearchQuery = params.symptomQuery?.trim();
 
-    // 1. If symptom query provided, lookup top-3 matching specialties via pg_trgm similarity
-    if (params.symptomQuery) {
+    // 1. If symptom/search query provided, lookup matching specialties via pg_trgm similarity OR substring match
+    if (rawSearchQuery) {
+      const likePattern = `%${rawSearchQuery}%`;
       try {
         const trgmMatches = await this.prisma.$queryRaw<
           Array<{ specialty: string; similarity: number }>
         >`
-          SELECT specialty, similarity(symptom, ${params.symptomQuery}) AS similarity
+          SELECT DISTINCT ON (specialty) specialty, similarity(symptom, ${rawSearchQuery}) AS similarity
           FROM symptom_specialty_map
-          WHERE symptom % ${params.symptomQuery}
-          ORDER BY similarity DESC
-          LIMIT 3;
+          WHERE symptom % ${rawSearchQuery}
+             OR symptom ILIKE ${likePattern}
+             OR specialty ILIKE ${likePattern}
+          ORDER BY specialty, similarity DESC
+          LIMIT 5;
         `;
 
         if (trgmMatches && trgmMatches.length > 0) {
@@ -79,37 +83,73 @@ export class DoctorService {
         // Fallback to substring query if pg_trgm extension isn't in test memory
         const directMatches = await this.prisma.symptomSpecialty.findMany({
           where: {
-            symptom: { contains: params.symptomQuery, mode: 'insensitive' },
+            OR: [
+              { symptom: { contains: rawSearchQuery, mode: 'insensitive' } },
+              { specialty: { contains: rawSearchQuery, mode: 'insensitive' } },
+            ],
           },
-          take: 3,
+          take: 5,
         });
         symptomSpecialties = directMatches.map((m) => m.specialty);
       }
     }
 
-    // P1-9 (b): Enforce AND condition when both symptom and specialty are provided
-    let targetSpecialties: string[] = [];
-    if (symptomSpecialties !== null && params.specialty) {
-      const matches = symptomSpecialties.filter(
-        (s) => s.toLowerCase() === params.specialty!.toLowerCase(),
-      );
-      targetSpecialties = matches.length > 0 ? matches : ['__NO_MATCH__'];
-    } else if (symptomSpecialties !== null) {
-      targetSpecialties = symptomSpecialties.length > 0 ? symptomSpecialties : ['__NO_MATCH__'];
-    } else if (params.specialty) {
-      targetSpecialties = [params.specialty];
-    }
+    const expandSpecialtySynonyms = (spec: string): string[] => {
+      const lower = spec.toLowerCase();
+      if (lower === 'general physician' || lower === 'general medicine') {
+        return ['General Medicine', 'General Physician'];
+      }
+      return [spec];
+    };
 
-    // P1-9 (a): Push filters, distance (Haversine formula in SQL), and pagination to database
+    // P1-9 (b): Enforce AND condition when both symptom and specialty are provided,
+    // while allowing direct match against doctor name / specialty / clinic when searching free text
     const whereConditions: Prisma.Sql[] = [
       Prisma.sql`d.is_verified = true`,
       Prisma.sql`u.is_active = true`,
     ];
 
-    if (targetSpecialties.length > 0) {
-      whereConditions.push(
-        Prisma.sql`d.specialty IN (${Prisma.join(targetSpecialties)})`,
+    if (params.specialty) {
+      const requestedSpecs = expandSpecialtySynonyms(params.specialty);
+      if (symptomSpecialties !== null) {
+        // Both symptom and specialty filters supplied: enforce intersection if symptom mapped to specialties,
+        // or match free-text against doctor profile within the requested specialty
+        const expandedSymptomSpecs = symptomSpecialties.flatMap(expandSpecialtySynonyms);
+        const matches = expandedSymptomSpecs.filter((s) =>
+          requestedSpecs.some((r) => r.toLowerCase() === s.toLowerCase()),
+        );
+        if (symptomSpecialties.length > 0 && matches.length === 0) {
+          whereConditions.push(Prisma.sql`1 = 0`);
+        } else {
+          whereConditions.push(
+            Prisma.sql`d.specialty IN (${Prisma.join(requestedSpecs)})`,
+          );
+          if (symptomSpecialties.length === 0 && rawSearchQuery) {
+            const likeQ = `%${rawSearchQuery}%`;
+            whereConditions.push(
+              Prisma.sql`(u.name ILIKE ${likeQ} OR d.specialty ILIKE ${likeQ} OR COALESCE(d.qualifications, '') ILIKE ${likeQ} OR COALESCE(d.clinic_name, '') ILIKE ${likeQ})`,
+            );
+          }
+        }
+      } else {
+        whereConditions.push(
+          Prisma.sql`d.specialty IN (${Prisma.join(requestedSpecs)})`,
+        );
+      }
+    } else if (symptomSpecialties !== null && rawSearchQuery) {
+      const expandedSpecs = Array.from(
+        new Set(symptomSpecialties.flatMap(expandSpecialtySynonyms)),
       );
+      const likeQ = `%${rawSearchQuery}%`;
+      if (expandedSpecs.length > 0) {
+        whereConditions.push(
+          Prisma.sql`(d.specialty IN (${Prisma.join(expandedSpecs)}) OR u.name ILIKE ${likeQ} OR d.specialty ILIKE ${likeQ})`,
+        );
+      } else {
+        whereConditions.push(
+          Prisma.sql`(u.name ILIKE ${likeQ} OR d.specialty ILIKE ${likeQ} OR COALESCE(d.qualifications, '') ILIKE ${likeQ} OR COALESCE(d.clinic_name, '') ILIKE ${likeQ})`,
+        );
+      }
     }
 
     if (params.maxFeePaise !== undefined) {

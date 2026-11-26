@@ -128,11 +128,14 @@ export class LiveKitService {
       );
     }
 
+    const rawDocName = appointment.doctor.user?.name?.trim();
     const participantName = isDoctor
-      ? (appointment.doctor.user?.name
-          ? `Dr. ${appointment.doctor.user.name}`
-          : 'Doctor')
-      : (appointment.patient?.name || 'Patient');
+      ? rawDocName
+        ? /^dr\.?\s/i.test(rawDocName)
+          ? rawDocName
+          : `Dr. ${rawDocName}`
+        : 'Doctor'
+      : appointment.patient?.name || 'Patient';
 
     const deviceSuffix = deviceId || randomBytes(4).toString('hex');
     const identity = `${userId}#${deviceSuffix}`;

@@ -68,7 +68,7 @@ export class AdminController {
   async verifyDoctor(
     @Param('id', new ZodValidationPipe(UuidSchema)) doctorId: string,
     @Body(new ZodValidationPipe(VerifyDoctorSchema))
-    body: { status: DoctorVerificationStatus },
+    body: { status: DoctorVerificationStatus; rejectionReason?: string },
     @CurrentUser() admin: JwtPayload,
     @Req() req: FastifyRequest,
   ) {
@@ -81,6 +81,7 @@ export class AdminController {
       admin.sub,
       ip,
       userAgent,
+      body.rejectionReason,
     );
   }
 

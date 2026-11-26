@@ -126,14 +126,22 @@ class RealBookingAgent:
                     "tool_call": None,
                 }
             payload = doc_resp.json()
-            doctors: List[Dict] = payload.get("items", payload) if isinstance(payload, dict) else payload
+            doctors: List[Dict] = (
+                payload.get("data", payload.get("items", payload))
+                if isinstance(payload, dict)
+                else payload
+            )
 
             if not doctors and specialty_param:
                 # Retry unfiltered directory so user gets verified options
                 all_resp = httpx.get(f"{self.api_base_url}/doctors", headers=headers, timeout=4.0)
                 if all_resp.is_success:
                     ap = all_resp.json()
-                    doctors = ap.get("items", ap) if isinstance(ap, dict) else ap
+                    doctors = (
+                        ap.get("data", ap.get("items", ap))
+                        if isinstance(ap, dict)
+                        else ap
+                    )
 
             if not doctors:
                 return {
@@ -162,7 +170,10 @@ class RealBookingAgent:
             if slots_resp.is_success:
                 sp = slots_resp.json()
                 raw_slots = sp.get("slots", sp) if isinstance(sp, dict) else sp
-                slots = [s for s in raw_slots if isinstance(s, dict) and s.get("status") == "AVAILABLE"]
+                slots = [
+                    s for s in raw_slots
+                    if isinstance(s, dict) and (s.get("isAvailable") is True or s.get("status") == "AVAILABLE")
+                ]
 
             doc_name_display = selected_doc.get("user", {}).get("name") or selected_doc.get("name") or "Doctor"
             fee_inr = round(int(selected_doc.get("consultationFeePaise", 80000)) / 100)
@@ -172,10 +183,20 @@ class RealBookingAgent:
             if time_match and intent == "book_or_hold" and slots:
                 req_hhmm = time_match.group(1).zfill(5)
                 matching_slot = next(
-                    (s for s in slots if str(s.get("slotTime", "")).startswith(req_hhmm)),
+                    (
+                        s for s in slots
+                        if str(s.get("displayTime", s.get("slotTime", ""))).startswith(req_hhmm)
+                    ),
                     slots[0],
                 )
-                slot_iso = matching_slot.get("slotIso") or f"{target_date}T{matching_slot.get('slotTime')}+05:30"
+                slot_iso = (
+                    matching_slot.get("slotIso")
+                    or (
+                        matching_slot.get("slotTime")
+                        if "T" in str(matching_slot.get("slotTime", ""))
+                        else f"{target_date}T{matching_slot.get('displayTime') or matching_slot.get('slotTime')}+05:30"
+                    )
+                )
                 hold_resp = httpx.post(
                     f"{self.api_base_url}/appointments/hold",
                     headers=headers,

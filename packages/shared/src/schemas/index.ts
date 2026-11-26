@@ -27,6 +27,7 @@ export const RegisterUserSchema = z.object({
   role: PublicRegisterRoleSchema.default('PATIENT'),
   specialty: z.string().optional(),
   qualifications: z.string().optional(),
+  experienceYears: z.coerce.number().int().min(0).max(80).optional(),
   clinicName: z.string().optional(),
   clinicAddress: z.string().optional(),
   clinicLat: z.number().optional(),
@@ -127,6 +128,7 @@ export const DevSimulateWebhookSchema = z.object({
 
 export const VerifyDoctorSchema = z.object({
   status: z.enum(['PENDING', 'APPROVED', 'REJECTED']),
+  rejectionReason: z.string().max(500).optional(),
 });
 
 export const ConsultationStatusSchema = z.object({

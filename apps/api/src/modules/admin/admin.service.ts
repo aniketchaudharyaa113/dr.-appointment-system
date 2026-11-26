@@ -123,6 +123,7 @@ export class AdminService {
     adminId: string,
     ipAddress?: string,
     userAgent?: string,
+    rejectionReason?: string,
   ) {
     const doctor = await this.prisma.doctor.findUnique({
       where: { id: doctorId },
@@ -153,6 +154,7 @@ export class AdminService {
         licenseNumber: doctor.licenseNumber,
         newStatus: status,
         isVerified,
+        ...(rejectionReason ? { rejectionReason } : {}),
       },
       ipAddress,
       userAgent,
