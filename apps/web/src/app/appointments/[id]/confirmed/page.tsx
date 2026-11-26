@@ -76,7 +76,7 @@ export default function BookingConfirmedPage() {
             You&apos;re All Set for Consultation!
           </h1>
           <p className="text-xs sm:text-sm text-slate-500 dark:text-slate-400 max-w-md mx-auto">
-            Your slot has been permanently confirmed in PostgreSQL with balanced double-entry ledger entries.
+            Your slot has been successfully confirmed. A receipt and consultation instructions have been issued.
           </p>
         </div>
 

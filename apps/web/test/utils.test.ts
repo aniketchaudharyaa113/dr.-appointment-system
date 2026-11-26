@@ -1,9 +1,18 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert';
-import { formatPaise, cn } from '../src/lib/utils.ts';
+import { formatPaise, cn, sanitizeRedirect } from '../src/lib/utils.ts';
 import { translations } from '../src/lib/translations.ts';
 
 describe('Web Utility Functions & Tokens', () => {
+  it('should sanitize redirect paths and reject open redirects', () => {
+    assert.strictEqual(sanitizeRedirect('/doctors', '/'), '/doctors');
+    assert.strictEqual(sanitizeRedirect('/appointments/123', '/'), '/appointments/123');
+    assert.strictEqual(sanitizeRedirect('https://evil.com', '/'), '/');
+    assert.strictEqual(sanitizeRedirect('//evil.com', '/'), '/');
+    assert.strictEqual(sanitizeRedirect('javascript:alert(1)', '/fallback'), '/fallback');
+    assert.strictEqual(sanitizeRedirect(null, '/default'), '/default');
+  });
+
   it('should format integer paise into Indian Rupee currency string', () => {
     const formatted = formatPaise(80000);
     assert.ok(formatted.includes('800'), `Expected 800 in ${formatted}`);

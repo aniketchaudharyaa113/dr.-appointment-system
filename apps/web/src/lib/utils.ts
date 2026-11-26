@@ -14,6 +14,14 @@ export function formatPaise(paise: number): string {
   }).format(rupees);
 }
 
+export function sanitizeRedirect(url: string | null | undefined, fallback = '/'): string {
+  if (!url) return fallback;
+  if (url.startsWith('/') && !url.startsWith('//') && !url.includes('\\')) {
+    return url;
+  }
+  return fallback;
+}
+
 export function formatDateTime(isoString: string): string {
   const d = new Date(isoString);
   return d.toLocaleDateString('en-IN', {

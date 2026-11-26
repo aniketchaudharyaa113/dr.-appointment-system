@@ -3,18 +3,22 @@
 import React, { useState, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { fetchApi, setCurrentUser, type UserSession } from '@/lib/api';
+import { useAuth } from '@/lib/auth-context';
+import { sanitizeRedirect } from '@/lib/utils';
 import { Activity, ShieldCheck, User, Stethoscope, Ambulance, Lock, ArrowRight, AlertCircle } from 'lucide-react';
 
 function LoginContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const redirectParam = searchParams.get('redirect');
+  const { login } = useAuth();
+  const showDemoLogins = process.env.NEXT_PUBLIC_SHOW_DEMO_LOGINS === 'true';
 
   const [mode, setMode] = useState<'login' | 'register'>('login');
   const [registerRole, setRegisterRole] = useState<'PATIENT' | 'DOCTOR'>('PATIENT');
   const [name, setName] = useState('');
-  const [email, setEmail] = useState('patient@medibook.test');
-  const [password, setPassword] = useState('Password123!');
+  const [email, setEmail] = useState(showDemoLogins ? 'patient@medibook.test' : '');
+  const [password, setPassword] = useState(showDemoLogins ? 'Password123!' : '');
   const [specialty, setSpecialty] = useState('General Medicine');
   const [licenseNumber, setLicenseNumber] = useState('');
   const [experienceYears, setExperienceYears] = useState(5);
@@ -63,23 +67,8 @@ function LoginContent() {
     setLoading(true);
     setErrorMsg(null);
     try {
-      const res = await fetchApi<{
-        user: { id: string; email: string; name: string; role: UserSession['role'] };
-        accessToken: string;
-      }>('/auth/login', {
-        method: 'POST',
-        body: JSON.stringify({ email: loginEmail, password: loginPassword }),
-      });
-
-      setCurrentUser({
-        id: res.user.id,
-        name: res.user.name,
-        email: res.user.email,
-        role: res.user.role,
-        token: res.accessToken,
-      });
-
-      router.push(redirectParam || fallbackUrl);
+      await login(loginEmail, loginPassword);
+      router.push(sanitizeRedirect(redirectParam, fallbackUrl));
     } catch (err: any) {
       setErrorMsg(err.message || 'Authentication failed');
     } finally {
@@ -129,7 +118,7 @@ function LoginContent() {
       });
 
       const fallback = res.user.role === 'DOCTOR' ? '/doctor/dashboard' : '/doctors';
-      router.push(redirectParam || fallback);
+      router.push(sanitizeRedirect(redirectParam, fallback));
     } catch (err: any) {
       setErrorMsg(err.message || 'Registration failed');
     } finally {
@@ -147,36 +136,38 @@ function LoginContent() {
           {mode === 'login' ? 'Sign In to MediBook' : 'Create Patient Account'}
         </h1>
         <p className="text-xs text-slate-500">
-          Real JWT + rotating refresh token authentication against PostgreSQL
+          Verified Telehealth Platform • Secure Clinical Access
         </p>
       </div>
 
       {/* 1-Click Demo Accounts */}
-      <div className="p-4 rounded-2xl bg-teal-50/60 dark:bg-teal-950/40 border border-teal-200 dark:border-teal-900/60 space-y-2.5">
-        <div className="text-xs font-bold text-teal-800 dark:text-teal-200">
-          1-Click Seeded Account Sign-In:
+      {showDemoLogins && (
+        <div className="p-4 rounded-2xl bg-teal-50/60 dark:bg-teal-950/40 border border-teal-200 dark:border-teal-900/60 space-y-2.5">
+          <div className="text-xs font-bold text-teal-800 dark:text-teal-200">
+            1-Click Seeded Account Sign-In:
+          </div>
+          <div className="grid grid-cols-1 gap-1.5">
+            {demoAccounts.map((acc) => {
+              const Icon = acc.icon;
+              return (
+                <button
+                  key={acc.role}
+                  type="button"
+                  disabled={loading}
+                  onClick={() => performLogin(acc.email, 'Password123!', acc.targetUrl)}
+                  className="w-full flex items-center justify-between p-2.5 rounded-xl bg-white dark:bg-slate-900 border border-teal-100 dark:border-teal-900 hover:border-teal-400 disabled:opacity-50 text-xs font-semibold text-slate-800 dark:text-slate-200 transition-colors shadow-xs"
+                >
+                  <div className="flex items-center gap-2">
+                    <Icon className="w-4 h-4 text-teal-600" />
+                    <span>{acc.label}</span>
+                  </div>
+                  <ArrowRight className="w-3.5 h-3.5 text-slate-400" />
+                </button>
+              );
+            })}
+          </div>
         </div>
-        <div className="grid grid-cols-1 gap-1.5">
-          {demoAccounts.map((acc) => {
-            const Icon = acc.icon;
-            return (
-              <button
-                key={acc.role}
-                type="button"
-                disabled={loading}
-                onClick={() => performLogin(acc.email, 'Password123!', acc.targetUrl)}
-                className="w-full flex items-center justify-between p-2.5 rounded-xl bg-white dark:bg-slate-900 border border-teal-100 dark:border-teal-900 hover:border-teal-400 disabled:opacity-50 text-xs font-semibold text-slate-800 dark:text-slate-200 transition-colors shadow-xs"
-              >
-                <div className="flex items-center gap-2">
-                  <Icon className="w-4 h-4 text-teal-600" />
-                  <span>{acc.label}</span>
-                </div>
-                <ArrowRight className="w-3.5 h-3.5 text-slate-400" />
-              </button>
-            );
-          })}
-        </div>
-      </div>
+      )}
 
       {errorMsg && (
         <div

@@ -670,7 +670,7 @@ export default function ConsultationRoomPage() {
                 <h3 className="font-bold text-sm text-slate-900 dark:text-white">
                   Encrypted Consultation Chat
                 </h3>
-                <p className="text-[11px] text-slate-400">Persisted in PostgreSQL + 7d follow-up</p>
+                <p className="text-[11px] text-slate-400">Securely Saved to Health Record • 7d follow-up</p>
               </div>
               <input
                 ref={fileInputRef}
