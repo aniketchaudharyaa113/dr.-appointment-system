@@ -99,7 +99,7 @@ export function Navbar() {
     { href: '/doctors', label: t.nav.findDoctors, icon: Stethoscope, roles: ['PATIENT', 'DOCTOR', 'ADMIN', 'DRIVER', undefined] },
     { href: '/emergency', label: t.nav.emergency, icon: ShieldAlert, highlight: true, roles: ['PATIENT', 'DOCTOR', 'ADMIN', 'DRIVER', undefined] },
     { href: '/appointments', label: t.nav.myAppointments, icon: Calendar, roles: ['PATIENT'] },
-    { href: '/passport', label: 'Health Passport', icon: User, roles: ['PATIENT'] },
+    { href: '/passport', label: t.nav.passport, icon: User, roles: ['PATIENT'] },
     { href: '/doctor/dashboard', label: t.nav.doctorPortal, icon: Activity, roles: ['DOCTOR'] },
     { href: '/admin', label: t.nav.adminPortal, icon: User, roles: ['ADMIN'] },
   ].filter((link) => link.roles.includes(user?.role));
