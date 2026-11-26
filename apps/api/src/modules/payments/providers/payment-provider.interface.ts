@@ -16,6 +16,7 @@ export interface ParsedWebhookEvent {
   providerOrderId: string;
   providerPaymentId?: string;
   amountPaise: number;
+  currency?: string;
   status: 'CAPTURED' | 'FAILED';
   rawPayload: Record<string, any>;
 }
@@ -31,7 +32,7 @@ export interface PaymentProvider {
 
   verifyWebhookSignature(rawBody: string | Buffer, signature: string): boolean;
 
-  parseWebhookEvent(rawBody: string | Buffer): ParsedWebhookEvent;
+  parseWebhookEvent(rawBody: string | Buffer, headerEventId?: string): ParsedWebhookEvent;
 
   issueRefund(params: {
     paymentId: string;

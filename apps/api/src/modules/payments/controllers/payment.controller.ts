@@ -36,6 +36,12 @@ export class PaymentController {
     @Inject(PaymentService) private readonly paymentService: PaymentService,
   ) {}
 
+  @Get('config')
+  @ApiOperation({ summary: 'Public payment configuration (provider & simulator flag)' })
+  getConfig() {
+    return this.paymentService.getPublicConfig();
+  }
+
   @Post('checkout')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
@@ -58,6 +64,7 @@ export class PaymentController {
   async handleWebhook(
     @Req() req: FastifyRequest,
     @Headers('x-razorpay-signature') razorpaySig?: string,
+    @Headers('x-razorpay-event-id') razorpayEventId?: string,
     @Headers('stripe-signature') stripeSig?: string,
     @Headers('x-signature') genericSig?: string,
   ) {
@@ -68,7 +75,7 @@ export class PaymentController {
       throw new BadRequestException('Raw webhook payload body is required');
     }
 
-    return this.paymentService.processWebhook(rawBody, signature);
+    return this.paymentService.processWebhook(rawBody, signature, razorpayEventId);
   }
 
   @Post('dev/simulate-webhook')

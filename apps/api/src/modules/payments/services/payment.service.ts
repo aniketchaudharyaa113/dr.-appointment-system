@@ -8,6 +8,7 @@ import {
   ForbiddenException,
 } from '@nestjs/common';
 import * as crypto from 'crypto';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../platform/database/prisma.service';
 import { RedisService } from '../../platform/redis/redis.service';
 import {
@@ -117,16 +118,39 @@ export class PaymentService {
       amountPaise,
     });
 
-    const payment = await this.prisma.payment.create({
-      data: {
-        appointmentId,
-        provider: this.provider.name,
-        providerOrderId: order.providerOrderId,
-        amountPaise,
-        currency: order.currency,
-        status: 'INITIATED',
-        idempotencyKey,
-      },
+    const existingPaymentId =
+      appointment.payment?.status === 'FAILED' ? appointment.payment.id : null;
+
+    const payment = await this.prisma.$transaction(async (tx) => {
+      if (existingPaymentId) {
+        await tx.$queryRaw`
+          SELECT id FROM payments WHERE id = ${existingPaymentId}::uuid FOR UPDATE
+        `;
+        return tx.payment.update({
+          where: { id: existingPaymentId },
+          data: {
+            provider: this.provider.name,
+            providerOrderId: order.providerOrderId,
+            providerPaymentId: null,
+            amountPaise,
+            currency: order.currency,
+            status: 'INITIATED',
+            idempotencyKey,
+          },
+        });
+      }
+
+      return tx.payment.create({
+        data: {
+          appointmentId,
+          provider: this.provider.name,
+          providerOrderId: order.providerOrderId,
+          amountPaise,
+          currency: order.currency,
+          status: 'INITIATED',
+          idempotencyKey,
+        },
+      });
     });
 
     const res = {
@@ -142,13 +166,26 @@ export class PaymentService {
     return res;
   }
 
+  getPublicConfig() {
+    return {
+      provider: this.provider.name,
+      simulatorEnabled:
+        env.NODE_ENV !== 'production' && env.PAYMENT_PROVIDER === 'FAKE',
+    };
+  }
+
   /**
    * Processes incoming webhook from payment provider.
-   * Verifies HMAC signature on exact raw bytes, stores in inbox with UNIQUE(provider_event_id),
+   * Verifies HMAC signature on exact raw bytes, stores in inbox with UNIQUE(provider_event_id)
+   * inside the same transaction (so crashes before commit or stuck PENDING events can be retried),
    * performs SELECT ... FOR UPDATE row locks on payment & appointment,
-   * posts double-entry ledger + outbox events in one atomic transaction.
+   * verifies amount & currency, and posts double-entry ledger + outbox events in one atomic transaction.
    */
-  async processWebhook(rawBody: string | Buffer, signature: string) {
+  async processWebhook(
+    rawBody: string | Buffer,
+    signature: string,
+    headerEventId?: string,
+  ) {
     if (!rawBody || (Buffer.isBuffer(rawBody) && rawBody.length === 0)) {
       throw new BadRequestException('Raw webhook body is required');
     }
@@ -161,40 +198,41 @@ export class PaymentService {
     }
 
     // 2. Parse event payload
-    const parsed = this.provider.parseWebhookEvent(rawBody);
+    const parsed = this.provider.parseWebhookEvent(rawBody, headerEventId);
 
-    // 3. Insert into payment_events inbox table with UNIQUE(provider_event_id)
-    try {
-      await this.prisma.paymentEvent.create({
-        data: {
-          providerEventId: parsed.eventId,
-          eventType: parsed.eventType,
-          payload: parsed.rawPayload,
-          status: 'PENDING',
-        },
-      });
-    } catch (err: any) {
-      if (err.code === 'P2002' || err.message?.includes('duplicate key')) {
+    // 3. Inbox insert + payment/appointment processing in ONE atomic transaction
+    const result = await this.prisma.$transaction(async (tx) => {
+      await tx.$executeRaw`
+        INSERT INTO payment_events (provider_event_id, event_type, payload, status)
+        VALUES (${parsed.eventId}, ${parsed.eventType}, ${JSON.stringify(parsed.rawPayload)}::jsonb, 'PENDING')
+        ON CONFLICT (provider_event_id) DO NOTHING
+      `;
+
+      const eventRows = await tx.$queryRaw<Array<{ status: string }>>`
+        SELECT status
+        FROM payment_events
+        WHERE provider_event_id = ${parsed.eventId}
+        FOR UPDATE
+      `;
+      const eventRow = eventRows[0];
+      if (eventRow && eventRow.status !== 'PENDING') {
         this.logger.log(
-          `Duplicate webhook event ${parsed.eventId} received, treating as no-op`,
+          `Duplicate webhook event ${parsed.eventId} (status=${eventRow.status}), treating as no-op`,
         );
         return { status: 'DUPLICATE_NOOP', eventId: parsed.eventId };
       }
-      throw err;
-    }
 
-    // 4. Process event in ONE DB transaction with FOR UPDATE row locks
-    const result = await this.prisma.$transaction(async (tx) => {
       const paymentRows = await tx.$queryRaw<
         Array<{
           id: string;
           appointment_id: string;
           amount_paise: number;
+          currency: string;
           status: string;
           provider_payment_id: string | null;
         }>
       >`
-        SELECT id, appointment_id, amount_paise, status, provider_payment_id
+        SELECT id, appointment_id, amount_paise, currency, status, provider_payment_id
         FROM payments
         WHERE provider_order_id = ${parsed.providerOrderId}
         FOR UPDATE
@@ -211,23 +249,6 @@ export class PaymentService {
         });
         return { status: 'ORDER_NOT_FOUND' };
       }
-
-      const apptRows = await tx.$queryRaw<
-        Array<{
-          id: string;
-          patient_id: string;
-          doctor_id: string;
-          slot_time: Date;
-          booking_ref: string | null;
-          status: string;
-        }>
-      >`
-        SELECT id, patient_id, doctor_id, slot_time, booking_ref, status
-        FROM appointments
-        WHERE id = ${payment.appointment_id}::uuid
-        FOR UPDATE
-      `;
-      const appointment = apptRows[0];
 
       // Idempotency inside lock
       if (payment.status === 'CAPTURED' || payment.status === 'REFUNDED') {
@@ -250,156 +271,46 @@ export class PaymentService {
         return { status: 'PAYMENT_FAILED', paymentId: payment.id };
       }
 
-      // 5. Late payment after slot loss / expiry check
-      const isSlotLost =
-        !appointment ||
-        appointment.status === 'CANCELLED' ||
-        appointment.status === 'REFUNDED';
+      // Amount & currency verification before confirming
+      const expectedCurrency = payment.currency.toUpperCase();
+      const receivedCurrency = (parsed.currency || expectedCurrency).toUpperCase();
+      const amountMismatch =
+        parsed.amountPaise !== undefined &&
+        parsed.amountPaise !== payment.amount_paise;
+      const currencyMismatch = receivedCurrency !== expectedCurrency;
 
-      if (isSlotLost) {
-        this.logger.warn(
-          `Late payment detected for lost/expired appointment ${payment.appointment_id}. Recording auto-refund.`,
+      if (amountMismatch || currencyMismatch) {
+        this.logger.error(
+          `Payment ${payment.id} amount/currency mismatch: expected ${payment.amount_paise} ${expectedCurrency}, got ${parsed.amountPaise} ${receivedCurrency}`,
         );
-
-        await tx.payment.update({
-          where: { id: payment.id },
-          data: {
-            status: 'REFUNDED',
-            providerPaymentId: parsed.providerPaymentId,
-          },
-        });
-
-        const refund = await tx.refund.create({
-          data: {
-            paymentId: payment.id,
-            amountPaise: payment.amount_paise,
-            reason: 'AUTO_REFUND_LATE_PAYMENT',
-            status: 'PENDING',
-          },
-        });
-
-        // Balance capture + immediate refund reversal in double-entry ledger
-        await this.ledgerService.recordPaymentCapture(
-          payment.id,
-          payment.amount_paise,
-          1000,
-          tx,
-        );
-        await this.ledgerService.recordRefund(
-          payment.id,
-          payment.amount_paise,
-          1000,
-          tx,
-        );
-
         await tx.paymentEvent.update({
           where: { providerEventId: parsed.eventId },
-          data: { status: 'AUTO_REFUNDED', processedAt: new Date() },
+          data: { status: 'AMOUNT_MISMATCH', processedAt: new Date() },
         });
-
-        await tx.outboxEvent.create({
-          data: {
-            aggregateType: 'PAYMENT',
-            aggregateId: payment.id,
-            eventType: 'PAYMENT_REFUND_REQUESTED',
-            payload: {
-              refundId: refund.id,
-              paymentId: payment.id,
-              providerPaymentId: parsed.providerPaymentId,
-              amountPaise: payment.amount_paise,
-              reason: 'AUTO_REFUND_LATE_PAYMENT',
-            },
-          },
-        });
-
-        await tx.outboxEvent.create({
-          data: {
-            aggregateType: 'PAYMENT',
-            aggregateId: payment.id,
-            eventType: 'PAYMENT_AUTO_REFUNDED',
-            payload: {
-              paymentId: payment.id,
-              refundId: refund.id,
-              appointmentId: payment.appointment_id,
-              amountPaise: payment.amount_paise,
-              reason: 'LATE_PAYMENT_SLOT_LOST',
-            },
-          },
-        });
-
         return {
-          status: 'AUTO_REFUNDED',
-          reason: 'SLOT_EXPIRED_OR_LOST',
+          status: 'MANUAL_REVIEW_REQUIRED',
+          reason: 'AMOUNT_OR_CURRENCY_MISMATCH',
           paymentId: payment.id,
-          refundId: refund.id,
         };
       }
 
-      // 6. Normal capture flow: Update payment & confirm appointment atomically
-      await tx.payment.update({
-        where: { id: payment.id },
-        data: {
-          status: 'CAPTURED',
-          providerPaymentId: parsed.providerPaymentId,
-        },
-      });
-
-      await tx.appointment.update({
-        where: { id: appointment.id },
-        data: {
-          status: 'CONFIRMED',
-        },
-      });
-
-      // 7. Post double-entry ledger entries
-      await this.ledgerService.recordPaymentCapture(
-        payment.id,
-        payment.amount_paise,
-        1000,
-        tx,
-      );
-
-      // 8. Write transactional outbox events
-      await tx.outboxEvent.create({
-        data: {
-          aggregateType: 'APPOINTMENT',
-          aggregateId: appointment.id,
-          eventType: 'APPOINTMENT_CONFIRMED',
-          payload: {
-            appointmentId: appointment.id,
-            patientId: appointment.patient_id,
-            doctorId: appointment.doctor_id,
-            slotTime: new Date(appointment.slot_time).toISOString(),
-            bookingRef: appointment.booking_ref,
-          },
-        },
-      });
-
-      await tx.outboxEvent.create({
-        data: {
-          aggregateType: 'PAYMENT',
-          aggregateId: payment.id,
-          eventType: 'PAYMENT_CAPTURED',
-          payload: {
-            paymentId: payment.id,
-            appointmentId: appointment.id,
-            amountPaise: payment.amount_paise,
-            providerPaymentId: parsed.providerPaymentId,
-          },
-        },
+      const captureResult = await this.applyCaptureInTx(tx, {
+        payment,
+        providerPaymentId: parsed.providerPaymentId || '',
       });
 
       await tx.paymentEvent.update({
         where: { providerEventId: parsed.eventId },
-        data: { status: 'PROCESSED', processedAt: new Date() },
+        data: {
+          status:
+            captureResult.status === 'AUTO_REFUNDED'
+              ? 'AUTO_REFUNDED'
+              : 'PROCESSED',
+          processedAt: new Date(),
+        },
       });
 
-      return {
-        status: 'CAPTURED',
-        paymentId: payment.id,
-        appointmentId: appointment.id,
-        patientId: appointment.patient_id,
-      };
+      return captureResult;
     });
 
     if (result.status === 'CAPTURED' && (result as any).patientId) {
@@ -411,6 +322,173 @@ export class PaymentService {
     }
 
     return result;
+  }
+
+  private async applyCaptureInTx(
+    tx: Prisma.TransactionClient,
+    params: {
+      payment: {
+        id: string;
+        appointment_id: string;
+        amount_paise: number;
+      };
+      providerPaymentId: string;
+    },
+  ) {
+    const { payment, providerPaymentId } = params;
+
+    const apptRows = await tx.$queryRaw<
+      Array<{
+        id: string;
+        patient_id: string;
+        doctor_id: string;
+        slot_time: Date;
+        booking_ref: string | null;
+        status: string;
+      }>
+    >`
+      SELECT id, patient_id, doctor_id, slot_time, booking_ref, status
+      FROM appointments
+      WHERE id = ${payment.appointment_id}::uuid
+      FOR UPDATE
+    `;
+    const appointment = apptRows[0];
+
+    const isSlotLost =
+      !appointment ||
+      appointment.status === 'CANCELLED' ||
+      appointment.status === 'REFUNDED';
+
+    if (isSlotLost) {
+      this.logger.warn(
+        `Late payment detected for lost/expired appointment ${payment.appointment_id}. Recording auto-refund.`,
+      );
+
+      await tx.payment.update({
+        where: { id: payment.id },
+        data: {
+          status: 'REFUNDED',
+          providerPaymentId,
+        },
+      });
+
+      const refund = await tx.refund.create({
+        data: {
+          paymentId: payment.id,
+          amountPaise: payment.amount_paise,
+          reason: 'AUTO_REFUND_LATE_PAYMENT',
+          status: 'PENDING',
+        },
+      });
+
+      await this.ledgerService.recordPaymentCapture(
+        payment.id,
+        payment.amount_paise,
+        1000,
+        tx,
+      );
+      await this.ledgerService.recordRefund(
+        payment.id,
+        payment.amount_paise,
+        1000,
+        tx,
+      );
+
+      await tx.outboxEvent.create({
+        data: {
+          aggregateType: 'PAYMENT',
+          aggregateId: payment.id,
+          eventType: 'PAYMENT_REFUND_REQUESTED',
+          payload: {
+            refundId: refund.id,
+            paymentId: payment.id,
+            providerPaymentId,
+            amountPaise: payment.amount_paise,
+            reason: 'AUTO_REFUND_LATE_PAYMENT',
+          },
+        },
+      });
+
+      await tx.outboxEvent.create({
+        data: {
+          aggregateType: 'PAYMENT',
+          aggregateId: payment.id,
+          eventType: 'PAYMENT_AUTO_REFUNDED',
+          payload: {
+            paymentId: payment.id,
+            refundId: refund.id,
+            appointmentId: payment.appointment_id,
+            amountPaise: payment.amount_paise,
+            reason: 'LATE_PAYMENT_SLOT_LOST',
+          },
+        },
+      });
+
+      return {
+        status: 'AUTO_REFUNDED',
+        reason: 'SLOT_EXPIRED_OR_LOST',
+        paymentId: payment.id,
+        refundId: refund.id,
+      };
+    }
+
+    await tx.payment.update({
+      where: { id: payment.id },
+      data: {
+        status: 'CAPTURED',
+        providerPaymentId,
+      },
+    });
+
+    await tx.appointment.update({
+      where: { id: appointment.id },
+      data: {
+        status: 'CONFIRMED',
+      },
+    });
+
+    await this.ledgerService.recordPaymentCapture(
+      payment.id,
+      payment.amount_paise,
+      1000,
+      tx,
+    );
+
+    await tx.outboxEvent.create({
+      data: {
+        aggregateType: 'APPOINTMENT',
+        aggregateId: appointment.id,
+        eventType: 'APPOINTMENT_CONFIRMED',
+        payload: {
+          appointmentId: appointment.id,
+          patientId: appointment.patient_id,
+          doctorId: appointment.doctor_id,
+          slotTime: new Date(appointment.slot_time).toISOString(),
+          bookingRef: appointment.booking_ref,
+        },
+      },
+    });
+
+    await tx.outboxEvent.create({
+      data: {
+        aggregateType: 'PAYMENT',
+        aggregateId: payment.id,
+        eventType: 'PAYMENT_CAPTURED',
+        payload: {
+          paymentId: payment.id,
+          appointmentId: appointment.id,
+          amountPaise: payment.amount_paise,
+          providerPaymentId,
+        },
+      },
+    });
+
+    return {
+      status: 'CAPTURED',
+      paymentId: payment.id,
+      appointmentId: appointment.id,
+      patientId: appointment.patient_id,
+    };
   }
 
   /**
@@ -609,6 +687,8 @@ export class PaymentService {
       try {
         const remote = await this.provider.fetchPaymentStatus(p.providerOrderId);
         if (remote.status === 'CAPTURED') {
+          let captureResult: Awaited<ReturnType<PaymentService['applyCaptureInTx']>> | null =
+            null;
           await this.prisma.$transaction(async (tx) => {
             const locked = await tx.$queryRaw<
               Array<{ id: string; status: string; appointment_id: string; amount_paise: number }>
@@ -622,31 +702,46 @@ export class PaymentService {
             if (!cur || cur.status === 'CAPTURED' || cur.status === 'REFUNDED') {
               return;
             }
+            captureResult = await this.applyCaptureInTx(tx, {
+              payment: cur,
+              providerPaymentId: remote.providerPaymentId || `reconcile_${p.id}`,
+            });
+          });
+          if (captureResult) {
+            if (
+              (captureResult as any).status === 'CAPTURED' &&
+              (captureResult as any).patientId
+            ) {
+              this.realtime.emitToUser(
+                (captureResult as any).patientId,
+                'booking_updated',
+                {
+                  appointmentId: (captureResult as any).appointmentId,
+                  paymentId: (captureResult as any).paymentId,
+                  status: 'CONFIRMED',
+                },
+              );
+            }
+            reconciledCount++;
+          }
+        } else if (remote.status === 'FAILED') {
+          const updated = await this.prisma.$transaction(async (tx) => {
+            const locked = await tx.$queryRaw<Array<{ id: string; status: string }>>`
+              SELECT id, status FROM payments WHERE id = ${p.id}::uuid FOR UPDATE
+            `;
+            const cur = locked[0];
+            if (!cur || cur.status === 'CAPTURED' || cur.status === 'REFUNDED' || cur.status === 'FAILED') {
+              return false;
+            }
             await tx.payment.update({
               where: { id: p.id },
-              data: {
-                status: 'CAPTURED',
-                providerPaymentId: remote.providerPaymentId,
-              },
+              data: { status: 'FAILED' },
             });
-            await tx.appointment.update({
-              where: { id: p.appointmentId },
-              data: { status: 'CONFIRMED' },
-            });
-            await this.ledgerService.recordPaymentCapture(
-              p.id,
-              p.amountPaise,
-              1000,
-              tx,
-            );
+            return true;
           });
-          reconciledCount++;
-        } else if (remote.status === 'FAILED') {
-          await this.prisma.payment.update({
-            where: { id: p.id },
-            data: { status: 'FAILED' },
-          });
-          reconciledCount++;
+          if (updated) {
+            reconciledCount++;
+          }
         }
       } catch (err) {
         this.logger.error(`Error reconciling payment ${p.id}: ${err}`);

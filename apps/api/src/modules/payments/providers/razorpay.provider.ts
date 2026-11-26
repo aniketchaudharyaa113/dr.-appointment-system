@@ -79,7 +79,7 @@ export class RazorpayProvider implements PaymentProvider {
     }
   }
 
-  parseWebhookEvent(rawBody: string | Buffer): ParsedWebhookEvent {
+  parseWebhookEvent(rawBody: string | Buffer, headerEventId?: string): ParsedWebhookEvent {
     const bodyStr = typeof rawBody === 'string' ? rawBody : rawBody.toString('utf8');
     const json = JSON.parse(bodyStr);
 
@@ -87,13 +87,15 @@ export class RazorpayProvider implements PaymentProvider {
     const providerOrderId = paymentEntity?.order_id || json.order_id || '';
     const providerPaymentId = paymentEntity?.id || json.payment_id;
     const amountPaise = paymentEntity?.amount || json.amount || 0;
+    const currency = (paymentEntity?.currency || json.currency || 'INR').toUpperCase();
 
     return {
-      eventId: json.id || `evt_${crypto.randomUUID().slice(0, 12)}`,
+      eventId: headerEventId || json.id || `evt_${crypto.randomUUID().slice(0, 12)}`,
       eventType: json.event || 'payment.captured',
       providerOrderId,
       providerPaymentId,
       amountPaise,
+      currency,
       status: json.event === 'payment.failed' ? 'FAILED' : 'CAPTURED',
       rawPayload: json,
     };
@@ -141,10 +143,41 @@ export class RazorpayProvider implements PaymentProvider {
     };
   }
 
-  async fetchPaymentStatus(_providerOrderId: string): Promise<{
+  async fetchPaymentStatus(providerOrderId: string): Promise<{
     status: 'CAPTURED' | 'PENDING' | 'FAILED';
     providerPaymentId?: string;
   }> {
+    if (!this.keyId || !this.keySecret) {
+      return { status: 'PENDING' };
+    }
+
+    const auth = Buffer.from(`${this.keyId}:${this.keySecret}`).toString('base64');
+    const response = await fetch(
+      `https://api.razorpay.com/v1/orders/${encodeURIComponent(providerOrderId)}/payments`,
+      {
+        method: 'GET',
+        headers: {
+          Authorization: `Basic ${auth}`,
+        },
+      },
+    );
+
+    if (!response.ok) {
+      this.logger.warn(`Razorpay fetchPaymentStatus failed (${response.status}) for ${providerOrderId}`);
+      return { status: 'PENDING' };
+    }
+
+    const data = (await response.json()) as {
+      items?: Array<{ id: string; status: string }>;
+    };
+    const items = data.items ?? [];
+    const captured = items.find((i) => i.status === 'captured');
+    if (captured) {
+      return { status: 'CAPTURED', providerPaymentId: captured.id };
+    }
+    if (items.length > 0 && items.every((i) => i.status === 'failed')) {
+      return { status: 'FAILED' };
+    }
     return { status: 'PENDING' };
   }
 }

@@ -46,6 +46,13 @@ export const EnvSchema = z
     AI_SERVICE_URL: z.string().default('http://localhost:8000'),
   })
   .superRefine((data, ctx) => {
+    if (data.NODE_ENV === 'production' && data.PAYMENT_PROVIDER === 'FAKE') {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['PAYMENT_PROVIDER'],
+        message: 'PAYMENT_PROVIDER=FAKE is forbidden when NODE_ENV=production',
+      });
+    }
     if (data.PAYMENT_PROVIDER === 'FAKE' && !data.PAYMENT_WEBHOOK_SECRET) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,

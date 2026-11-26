@@ -31,17 +31,18 @@ export class StripeProvider implements PaymentProvider {
     return signature.includes('v1=');
   }
 
-  parseWebhookEvent(rawBody: string | Buffer): ParsedWebhookEvent {
+  parseWebhookEvent(rawBody: string | Buffer, headerEventId?: string): ParsedWebhookEvent {
     const bodyStr = typeof rawBody === 'string' ? rawBody : rawBody.toString('utf8');
     const json = JSON.parse(bodyStr);
 
     const intent = json.data?.object;
     return {
-      eventId: json.id || `evt_${crypto.randomUUID().slice(0, 12)}`,
+      eventId: headerEventId || json.id || `evt_${crypto.randomUUID().slice(0, 12)}`,
       eventType: json.type || 'payment_intent.succeeded',
       providerOrderId: intent?.id || '',
       providerPaymentId: intent?.charges?.data?.[0]?.id || `ch_${crypto.randomUUID().slice(0, 12)}`,
       amountPaise: intent?.amount || 0,
+      currency: (intent?.currency || 'INR').toUpperCase(),
       status: json.type === 'payment_intent.payment_failed' ? 'FAILED' : 'CAPTURED',
       rawPayload: json,
     };

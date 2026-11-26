@@ -67,6 +67,15 @@ export default function CheckoutPage() {
     enabled: !!appointmentId,
   });
 
+  const paymentConfigQuery = useQuery<{ provider: string; simulatorEnabled: boolean }>({
+    queryKey: ['payments-config'],
+    queryFn: () => fetchApi<{ provider: string; simulatorEnabled: boolean }>('/payments/config'),
+  });
+
+  const canShowSimulator =
+    process.env.NEXT_PUBLIC_ENABLE_PAYMENT_SIMULATOR === 'true' &&
+    paymentConfigQuery.data?.simulatorEnabled === true;
+
   const createCheckoutMutation = useMutation({
     mutationFn: () =>
       fetchApi<CheckoutResponse>('/payments/checkout', {
@@ -253,33 +262,39 @@ export default function CheckoutPage() {
               </div>
             )}
 
-            <div className="pt-4 border-t border-slate-100 dark:border-slate-800 space-y-3">
-              <button
-                type="button"
-                disabled={!paymentOrder || simulateWebhookMutation.isPending || secondsLeft === 0}
-                onClick={() => simulateWebhookMutation.mutate('payment.captured')}
-                className="w-full py-3.5 px-4 rounded-xl bg-teal-600 hover:bg-teal-700 disabled:opacity-40 text-white font-bold text-sm shadow-md transition-all flex items-center justify-center gap-2"
-              >
-                {simulateWebhookMutation.isPending ? (
-                  <>
-                    <Sparkles className="w-4 h-4 animate-spin" /> Verifying Signed Webhook & Balancing Ledger...
-                  </>
-                ) : (
-                  <>
-                    <Lock className="w-4 h-4" /> Simulate Payment ({formatPaise(amountPaise)}) via Signed Webhook
-                  </>
-                )}
-              </button>
+            {canShowSimulator ? (
+              <div className="pt-4 border-t border-slate-100 dark:border-slate-800 space-y-3">
+                <button
+                  type="button"
+                  disabled={!paymentOrder || simulateWebhookMutation.isPending || secondsLeft === 0}
+                  onClick={() => simulateWebhookMutation.mutate('payment.captured')}
+                  className="w-full py-3.5 px-4 rounded-xl bg-teal-600 hover:bg-teal-700 disabled:opacity-40 text-white font-bold text-sm shadow-md transition-all flex items-center justify-center gap-2"
+                >
+                  {simulateWebhookMutation.isPending ? (
+                    <>
+                      <Sparkles className="w-4 h-4 animate-spin" /> Verifying Signed Webhook & Balancing Ledger...
+                    </>
+                  ) : (
+                    <>
+                      <Lock className="w-4 h-4" /> Simulate Payment ({formatPaise(amountPaise)}) via Signed Webhook
+                    </>
+                  )}
+                </button>
 
-              <button
-                type="button"
-                disabled={!paymentOrder || simulateWebhookMutation.isPending}
-                onClick={() => simulateWebhookMutation.mutate('payment.failed')}
-                className="w-full py-2.5 px-4 rounded-xl border border-slate-200 dark:border-slate-800 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-600 dark:text-slate-400 text-xs font-semibold transition-colors"
-              >
-                Simulate Payment Failure (Signed Failure Webhook)
-              </button>
-            </div>
+                <button
+                  type="button"
+                  disabled={!paymentOrder || simulateWebhookMutation.isPending}
+                  onClick={() => simulateWebhookMutation.mutate('payment.failed')}
+                  className="w-full py-2.5 px-4 rounded-xl border border-slate-200 dark:border-slate-800 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-600 dark:text-slate-400 text-xs font-semibold transition-colors"
+                >
+                  Simulate Payment Failure (Signed Failure Webhook)
+                </button>
+              </div>
+            ) : (
+              <div className="pt-4 border-t border-slate-100 dark:border-slate-800 text-xs text-slate-500">
+                Complete payment using your configured {paymentConfigQuery.data?.provider ?? 'payment'} gateway to confirm this booking.
+              </div>
+            )}
 
             <div className="flex items-center gap-2 text-xs text-slate-400">
               <ShieldCheck className="w-4 h-4 text-emerald-600 shrink-0" />

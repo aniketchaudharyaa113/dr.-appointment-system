@@ -69,12 +69,12 @@ export class FakePaymentProvider implements PaymentProvider {
       .digest('hex');
   }
 
-  parseWebhookEvent(rawBody: string | Buffer): ParsedWebhookEvent {
+  parseWebhookEvent(rawBody: string | Buffer, headerEventId?: string): ParsedWebhookEvent {
     const bodyStr = typeof rawBody === 'string' ? rawBody : rawBody.toString('utf8');
     const json = JSON.parse(bodyStr);
 
     return {
-      eventId: json.id || `evt_${crypto.randomUUID().slice(0, 12)}`,
+      eventId: headerEventId || json.id || `evt_${crypto.randomUUID().slice(0, 12)}`,
       eventType: json.event || 'payment.captured',
       providerOrderId: json.payload?.payment?.entity?.order_id || json.order_id || '',
       providerPaymentId:
@@ -82,6 +82,7 @@ export class FakePaymentProvider implements PaymentProvider {
         json.payment_id ||
         `fake_pay_${crypto.randomUUID().slice(0, 12)}`,
       amountPaise: json.payload?.payment?.entity?.amount || json.amount || 0,
+      currency: (json.payload?.payment?.entity?.currency || json.currency || 'INR').toUpperCase(),
       status: json.event === 'payment.failed' ? 'FAILED' : 'CAPTURED',
       rawPayload: json,
     };
