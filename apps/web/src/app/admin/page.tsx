@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 import { fetchApi } from '@/lib/api';
 import { formatPaise } from '@/lib/utils';
+import { RoleGuard } from '@/components/role-guard';
 
 interface AdminStats {
   pendingDoctorsCount: number;
@@ -128,7 +129,8 @@ export default function AdminPage() {
   });
 
   return (
-    <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8">
+    <RoleGuard allowedRoles={['ADMIN']}>
+      <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8">
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
         <div>
           <h1 className="text-2xl sm:text-3xl font-extrabold text-slate-900 dark:text-white">Admin Operations Portal</h1>
@@ -429,5 +431,6 @@ export default function AdminPage() {
         </div>
       )}
     </div>
+    </RoleGuard>
   );
 }

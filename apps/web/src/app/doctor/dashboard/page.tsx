@@ -21,6 +21,7 @@ import {
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip } from 'recharts';
 import { fetchApi } from '@/lib/api';
 import { formatPaise } from '@/lib/utils';
+import { RoleGuard } from '@/components/role-guard';
 
 interface DoctorDashboardData {
   doctorId: string;
@@ -292,7 +293,8 @@ export default function DoctorDashboardPage() {
   const isRejected = data.verificationStatus === 'REJECTED';
 
   return (
-    <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-6">
+    <RoleGuard allowedRoles={['DOCTOR']}>
+      <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-6">
       {/* Verification Status Banner */}
       {isPending && (
         <div className="p-4 sm:p-5 rounded-3xl bg-amber-50 dark:bg-amber-950/50 border border-amber-200 dark:border-amber-900 flex items-start gap-3.5">
@@ -743,5 +745,6 @@ export default function DoctorDashboardPage() {
         </div>
       )}
     </div>
+    </RoleGuard>
   );
 }
