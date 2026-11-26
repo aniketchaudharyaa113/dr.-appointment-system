@@ -187,7 +187,7 @@ export const DriverLocationSchema = z.object({
 export type DriverLocationInput = z.infer<typeof DriverLocationSchema>;
 
 export const AiTriageQuerySchema = z.object({
-  query: z.string().min(1).max(2000),
+  query: z.string().min(1).max(1000),
 });
 
 export const AiChatQuerySchema = z.object({

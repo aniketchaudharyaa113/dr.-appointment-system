@@ -211,8 +211,9 @@ export class AiClientService {
       q.includes('cannot breathe') ||
       q.includes('heart attack') ||
       q.includes('unconscious') ||
-      q.includes('stroke');
-
+      q.includes('stroke') ||
+      q.includes('severe bleeding') ||
+      q.includes('head injury');
 
     return {
       isEmergency,
@@ -223,7 +224,12 @@ export class AiClientService {
             callNumber: '112',
             dispatchRecommended: true,
           }
-        : undefined,
+        : {
+            emergencyTitle: 'ADVISORY NOTICE',
+            instructions: 'Call 112 if severe; book a general physician otherwise.',
+            callNumber: '112',
+            dispatchRecommended: false,
+          },
       urgencyLevel: isEmergency ? 'CRITICAL' : 'MEDIUM',
       recommendedSpecialty: isEmergency ? 'Emergency Medicine' : 'General Physician',
       confidence: 0.95,

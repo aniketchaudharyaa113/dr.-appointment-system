@@ -101,6 +101,13 @@ describe('Slice 5: AI Gateway PII Redaction, JWT Forwarding & Circuit Breaker Fa
       expect(result.isEmergency).toBe(false);
       expect(result.reply).toBeDefined();
       expect(result.disclaimer).toContain('MediBook');
+
+      const triageResult = await client.triage('Mild headache and slight fever');
+      expect(triageResult.isEmergency).toBe(false);
+      expect(triageResult.emergencyCard?.instructions).toBe(
+        'Call 112 if severe; book a general physician otherwise.',
+      );
+      expect(triageResult.recommendedSpecialty).toBe('General Physician');
     } finally {
       if (oldUrl !== undefined) process.env.AI_SERVICE_URL = oldUrl;
       else delete process.env.AI_SERVICE_URL;

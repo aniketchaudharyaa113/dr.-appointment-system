@@ -31,6 +31,7 @@ export class AiController {
   ) {}
 
   @Post('triage')
+  @RateLimit({ keyPrefix: 'ai_triage', limit: 10, windowSeconds: 60 })
   @ApiOperation({ summary: 'Emergency triage symptom screening' })
   async triage(
     @Body(new ZodValidationPipe(AiTriageQuerySchema)) body: { query: string },
