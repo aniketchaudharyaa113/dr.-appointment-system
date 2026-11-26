@@ -8,44 +8,31 @@ export interface UserSession {
   token?: string;
 }
 
+let inMemoryAccessToken: string | null = null;
+let inMemoryCurrentUser: UserSession | null = null;
+
 export function getAuthToken(): string | null {
-  if (typeof window === 'undefined') return null;
-  return localStorage.getItem('medibook_token');
+  return inMemoryAccessToken;
 }
 
 export function setAuthToken(token: string | null) {
-  if (typeof window !== 'undefined') {
-    if (token) {
-      localStorage.setItem('medibook_token', token);
-    } else {
-      localStorage.removeItem('medibook_token');
-    }
-  }
+  inMemoryAccessToken = token;
 }
 
 export function getCurrentUser(): UserSession | null {
-  if (typeof window === 'undefined') return null;
-  const data = localStorage.getItem('medibook_user');
-  if (!data) return null;
-  try {
-    return JSON.parse(data);
-  } catch {
-    return null;
-  }
+  return inMemoryCurrentUser;
 }
 
 export function setCurrentUser(user: UserSession | null) {
-  if (typeof window === 'undefined') return;
-  if (!user) {
-    localStorage.removeItem('medibook_user');
-    localStorage.removeItem('medibook_token');
-  } else {
-    localStorage.setItem('medibook_user', JSON.stringify(user));
-    if (user.token) {
-      localStorage.setItem('medibook_token', user.token);
-    }
+  inMemoryCurrentUser = user;
+  if (user?.token) {
+    inMemoryAccessToken = user.token;
+  } else if (!user) {
+    inMemoryAccessToken = null;
   }
-  window.dispatchEvent(new Event('medibook-auth-change'));
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new Event('medibook-auth-change'));
+  }
 }
 
 let inFlightRefresh: Promise<string | null> | null = null;
@@ -139,9 +126,9 @@ export async function fetchApi<T = any>(
       }
       res = retryRes;
     } else {
-      if (typeof window !== 'undefined' && !window.location.pathname.startsWith('/login')) {
+      if (typeof window !== 'undefined' && !window.location.pathname.startsWith('/auth/login') && !window.location.pathname.startsWith('/login')) {
         const currentPath = window.location.pathname + window.location.search;
-        window.location.href = `/login?redirect=${encodeURIComponent(currentPath)}`;
+        window.location.href = `/auth/login?redirect=${encodeURIComponent(currentPath)}`;
       }
     }
   }

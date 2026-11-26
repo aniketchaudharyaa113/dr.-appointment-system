@@ -5,7 +5,8 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useI18n, type Locale } from '@/lib/i18n';
-import { getCurrentUser, setCurrentUser, fetchApi, formatIstTime, type UserSession } from '@/lib/api';
+import { fetchApi, formatIstTime } from '@/lib/api';
+import { useAuth } from '@/lib/auth-context';
 import {
   Activity,
   ShieldAlert,
@@ -24,7 +25,7 @@ export function Navbar() {
   const { t, locale, setLocale } = useI18n();
   const pathname = usePathname();
   const queryClient = useQueryClient();
-  const [user, setUser] = useState<UserSession | null>(null);
+  const { user, logout } = useAuth();
   const [isDark, setIsDark] = useState(false);
   const [isNotifOpen, setIsNotifOpen] = useState(false);
   const notifRef = useRef<HTMLDivElement>(null);
@@ -41,7 +42,7 @@ export function Navbar() {
 
   const notifsQuery = useQuery({
     queryKey: ['my-notifications', user?.id],
-    enabled: Boolean(user?.token),
+    enabled: Boolean(user),
     queryFn: () =>
       fetchApi<
         Array<{
@@ -75,19 +76,11 @@ export function Navbar() {
   const unreadCount = notifications.filter((n) => !n.isRead).length;
 
   useEffect(() => {
-    const syncUser = () => setUser(getCurrentUser());
-    syncUser();
-    window.addEventListener('medibook-auth-change', syncUser);
-    window.addEventListener('storage', syncUser);
     if (typeof window !== 'undefined') {
       const darkMode = document.documentElement.classList.contains('dark') ||
         window.matchMedia('(prefers-color-scheme: dark)').matches;
       setIsDark(darkMode);
     }
-    return () => {
-      window.removeEventListener('medibook-auth-change', syncUser);
-      window.removeEventListener('storage', syncUser);
-    };
   }, []);
 
   const toggleTheme = () => {
@@ -100,10 +93,8 @@ export function Navbar() {
     }
   };
 
-  const handleLogout = () => {
-    setCurrentUser(null);
-    setUser(null);
-    window.location.href = '/';
+  const handleLogout = async () => {
+    await logout();
   };
 
   const navLinks = [

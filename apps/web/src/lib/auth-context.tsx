@@ -1,0 +1,163 @@
+'use client';
+
+import React, { createContext, useContext, useEffect, useState, useCallback, useMemo } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
+import {
+  fetchApi,
+  getAuthToken,
+  setAuthToken,
+  setCurrentUser,
+  refreshAccessToken,
+  type UserSession,
+} from './api';
+import { disconnectAllSockets } from './socket-registry';
+
+export interface AuthUser {
+  id: string;
+  name: string;
+  email: string;
+  phone?: string | null;
+  role: 'PATIENT' | 'DOCTOR' | 'ADMIN' | 'DRIVER';
+  doctorProfile?: any;
+  driverProfile?: any;
+}
+
+export interface AuthContextValue {
+  user: AuthUser | null;
+  isAuthenticated: boolean;
+  isLoading: boolean;
+  login: (email: string, password: string) => Promise<AuthUser>;
+  logout: () => Promise<void>;
+  refresh: () => Promise<void>;
+}
+
+const AuthContext = createContext<AuthContextValue | null>(null);
+
+export function AuthProvider({ children }: { children: React.ReactNode }) {
+  const queryClient = useQueryClient();
+  const [user, setUser] = useState<AuthUser | null>(null);
+  const [isLoading, setIsLoading] = useState<boolean>(true);
+
+  const fetchUserProfile = useCallback(async (): Promise<AuthUser | null> => {
+    try {
+      const profile = await fetchApi<AuthUser>('/auth/me');
+      setUser(profile);
+      setCurrentUser({
+        id: profile.id,
+        name: profile.name,
+        email: profile.email,
+        role: profile.role,
+        token: getAuthToken() || undefined,
+      });
+      return profile;
+    } catch {
+      setUser(null);
+      setCurrentUser(null);
+      return null;
+    }
+  }, []);
+
+  const refresh = useCallback(async () => {
+    try {
+      const token = await refreshAccessToken();
+      if (token) {
+        setAuthToken(token);
+        await fetchUserProfile();
+      } else {
+        setUser(null);
+        setCurrentUser(null);
+      }
+    } catch {
+      setUser(null);
+      setCurrentUser(null);
+    }
+  }, [fetchUserProfile]);
+
+  const logout = useCallback(async () => {
+    try {
+      await fetchApi('/auth/logout', {
+        method: 'POST',
+        body: JSON.stringify({}),
+      }).catch(() => {
+        // Ignore network failure during logout
+      });
+    } finally {
+      setAuthToken(null);
+      setCurrentUser(null);
+      setUser(null);
+      disconnectAllSockets();
+      queryClient.clear();
+      if (typeof window !== 'undefined') {
+        window.location.href = '/auth/login';
+      }
+    }
+  }, [queryClient]);
+
+  const login = useCallback(
+    async (email: string, password: string): Promise<AuthUser> => {
+      const res = await fetchApi<{
+        user: { id: string; email: string; name: string; role: UserSession['role'] };
+        accessToken: string;
+      }>('/auth/login', {
+        method: 'POST',
+        body: JSON.stringify({ email, password }),
+      });
+
+      setAuthToken(res.accessToken);
+      const profile = await fetchUserProfile();
+      if (!profile) {
+        throw new Error('Failed to load user profile after login');
+      }
+      return profile;
+    },
+    [fetchUserProfile],
+  );
+
+  useEffect(() => {
+    let mounted = true;
+    (async () => {
+      try {
+        const token = await refreshAccessToken();
+        if (token && mounted) {
+          setAuthToken(token);
+          await fetchUserProfile();
+        }
+      } catch {
+        if (mounted) {
+          setUser(null);
+          setCurrentUser(null);
+        }
+      } finally {
+        if (mounted) {
+          setIsLoading(false);
+        }
+      }
+    })();
+
+    return () => {
+      mounted = false;
+    };
+  }, [fetchUserProfile]);
+
+  const value = useMemo(
+    () => ({
+      user,
+      isAuthenticated: Boolean(user),
+      isLoading,
+      login,
+      logout,
+      refresh,
+    }),
+    [user, isLoading, login, logout, refresh],
+  );
+
+  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
+}
+
+export function useAuth(): AuthContextValue {
+  const context = useContext(AuthContext);
+  if (!context) {
+    throw new Error('useAuth must be used within an AuthProvider');
+  }
+  return context;
+}
