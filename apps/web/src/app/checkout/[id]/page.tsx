@@ -5,7 +5,9 @@ import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useI18n } from '@/lib/i18n';
-import { fetchApi, formatIstDateTime } from '@/lib/api';
+import { fetchApi } from '@/lib/api';
+import { useAuth } from '@/lib/auth-context';
+import { ClientTime } from '@/components/client-time';
 import { formatPaise } from '@/lib/utils';
 import {
   CreditCard,
@@ -46,8 +48,23 @@ interface CheckoutResponse {
   provider: string;
 }
 
+function loadRazorpayScript(): Promise<boolean> {
+  return new Promise((resolve) => {
+    if (typeof window === 'undefined') return resolve(false);
+    if ((window as any).Razorpay) return resolve(true);
+
+    const script = document.createElement('script');
+    script.src = 'https://checkout.razorpay.com/v1/checkout.js';
+    script.async = true;
+    script.onload = () => resolve(true);
+    script.onerror = () => resolve(false);
+    document.body.appendChild(script);
+  });
+}
+
 export default function CheckoutPage() {
   const { t } = useI18n();
+  const { user } = useAuth();
   const params = useParams();
   const router = useRouter();
   const queryClient = useQueryClient();
@@ -67,10 +84,74 @@ export default function CheckoutPage() {
     enabled: !!appointmentId,
   });
 
-  const paymentConfigQuery = useQuery<{ provider: string; simulatorEnabled: boolean }>({
+  const paymentConfigQuery = useQuery<{
+    provider: string;
+    simulatorEnabled: boolean;
+    keyId?: string;
+  }>({
     queryKey: ['payments-config'],
-    queryFn: () => fetchApi<{ provider: string; simulatorEnabled: boolean }>('/payments/config'),
+    queryFn: () => fetchApi<{ provider: string; simulatorEnabled: boolean; keyId?: string }>('/payments/config'),
   });
+
+  const [isOpeningRazorpay, setIsOpeningRazorpay] = useState(false);
+
+  const handlePayWithRazorpay = async () => {
+    if (!paymentOrder) return;
+    setIsOpeningRazorpay(true);
+    setCheckoutError(null);
+    try {
+      const scriptLoaded = await loadRazorpayScript();
+      if (!scriptLoaded) {
+        setCheckoutError('Failed to load Razorpay Checkout SDK. Please verify your internet connection.');
+        setIsOpeningRazorpay(false);
+        return;
+      }
+
+      const key =
+        paymentConfigQuery.data?.keyId ||
+        process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID ||
+        'rzp_test_placeholder';
+
+      const options = {
+        key,
+        amount: amountPaise,
+        currency: paymentOrder.currency || 'INR',
+        name: 'MediBook Telehealth',
+        description: `Consultation with Dr. ${appt.doctorName}`,
+        order_id: paymentOrder.providerOrderId,
+        prefill: {
+          name: user?.name || '',
+          email: user?.email || '',
+          contact: user?.phone || '',
+        },
+        theme: {
+          color: '#0d9488',
+        },
+        handler: function () {
+          queryClient.invalidateQueries({ queryKey: ['appointment', appointmentId] });
+          queryClient.invalidateQueries({ queryKey: ['my-appointments'] });
+          router.push(`/appointments/${appointmentId}/confirmed`);
+        },
+        modal: {
+          ondismiss: function () {
+            setCheckoutError('Payment cancelled or dismissed. You can retry payment before expiration.');
+          },
+        },
+      };
+
+      const rzp = new (window as any).Razorpay(options);
+      rzp.on('payment.failed', function (resp: any) {
+        setCheckoutError(
+          resp?.error?.description || 'Payment transaction failed. Please retry with another payment method.',
+        );
+      });
+      rzp.open();
+    } catch (err: any) {
+      setCheckoutError(err.message || 'Error launching Razorpay checkout');
+    } finally {
+      setIsOpeningRazorpay(false);
+    }
+  };
 
   const canShowSimulator =
     process.env.NEXT_PUBLIC_ENABLE_PAYMENT_SIMULATOR === 'true' &&
@@ -262,6 +343,7 @@ export default function CheckoutPage() {
               </div>
             )}
 
+            {/* Payment Actions: Real Gateway or Dev Simulator */}
             {canShowSimulator ? (
               <div className="pt-4 border-t border-slate-100 dark:border-slate-800 space-y-3">
                 <button
@@ -291,8 +373,23 @@ export default function CheckoutPage() {
                 </button>
               </div>
             ) : (
-              <div className="pt-4 border-t border-slate-100 dark:border-slate-800 text-xs text-slate-500">
-                Complete payment using your configured {paymentConfigQuery.data?.provider ?? 'payment'} gateway to confirm this booking.
+              <div className="pt-4 border-t border-slate-100 dark:border-slate-800 space-y-3">
+                <button
+                  type="button"
+                  disabled={!paymentOrder || isOpeningRazorpay || secondsLeft === 0}
+                  onClick={handlePayWithRazorpay}
+                  className="w-full py-3.5 px-4 rounded-xl bg-teal-600 hover:bg-teal-700 disabled:opacity-40 text-white font-bold text-sm shadow-md transition-all flex items-center justify-center gap-2"
+                >
+                  {isOpeningRazorpay ? (
+                    <>
+                      <Sparkles className="w-4 h-4 animate-spin" /> Opening Razorpay Secure Checkout...
+                    </>
+                  ) : (
+                    <>
+                      <Lock className="w-4 h-4" /> Pay {formatPaise(amountPaise)} with Razorpay
+                    </>
+                  )}
+                </button>
               </div>
             )}
 
@@ -320,7 +417,7 @@ export default function CheckoutPage() {
               <div className="flex justify-between text-slate-600 dark:text-slate-400">
                 <span>Slot (IST):</span>
                 <span className="font-semibold text-slate-900 dark:text-white">
-                  {formatIstDateTime(appt.slotTime)}
+                  <ClientTime datetime={appt.slotTime} />
                 </span>
               </div>
               <div className="flex justify-between text-slate-600 dark:text-slate-400">
