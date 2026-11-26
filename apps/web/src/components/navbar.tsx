@@ -4,6 +4,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useTheme } from 'next-themes';
 import { useI18n, type Locale } from '@/lib/i18n';
 import { fetchApi, formatIstTime } from '@/lib/api';
 import { useAuth } from '@/lib/auth-context';
@@ -26,9 +27,20 @@ export function Navbar() {
   const pathname = usePathname();
   const queryClient = useQueryClient();
   const { user, logout } = useAuth();
-  const [isDark, setIsDark] = useState(false);
+  const { resolvedTheme, setTheme } = useTheme();
+  const [mounted, setMounted] = useState(false);
   const [isNotifOpen, setIsNotifOpen] = useState(false);
   const notifRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  const isDark = mounted && resolvedTheme === 'dark';
+
+  const toggleTheme = () => {
+    setTheme(resolvedTheme === 'dark' ? 'light' : 'dark');
+  };
 
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
@@ -74,24 +86,6 @@ export function Navbar() {
 
   const notifications = notifsQuery.data || [];
   const unreadCount = notifications.filter((n) => !n.isRead).length;
-
-  useEffect(() => {
-    if (typeof window !== 'undefined') {
-      const darkMode = document.documentElement.classList.contains('dark') ||
-        window.matchMedia('(prefers-color-scheme: dark)').matches;
-      setIsDark(darkMode);
-    }
-  }, []);
-
-  const toggleTheme = () => {
-    const nextDark = !isDark;
-    setIsDark(nextDark);
-    if (nextDark) {
-      document.documentElement.classList.add('dark');
-    } else {
-      document.documentElement.classList.remove('dark');
-    }
-  };
 
   const handleLogout = async () => {
     await logout();
