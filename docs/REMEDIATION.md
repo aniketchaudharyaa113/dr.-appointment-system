@@ -30,7 +30,7 @@ All fixes are committed atomically on `main` (baseline tag: `pre-agent-baseline`
 - [x] **P1-9** (`360ac35`): Doctor search SQL pagination, Haversine geo distance formula (`6371 * acos(...)`), SQL rating filter, AND intersection for symptom+specialty, and batched Redis `MGET` next slot lookups
 - [x] **P1-10** (`a271629`): Doctor notifications & emails on booking/cancel/refund, HTML email escaping (`escapeHtml`), `POST /notifications/read-all`, and Navbar Notification Bell with unread badge + popover dropdown
 - [x] **P1-11** (`bdab0a2`): Real admin endpoints & dashboard (`/admin/stats`, `/admin/ledgers`, `/admin/audit-logs`, `/admin/payments/reconcile`), real doctor clinical workspace (`/doctors/me/dashboard`, today's queue, 7-day earnings chart, dry-run leave conflict preview & cascade refund, verified reviews)
-- [ ] **P1-12**: Doctor registration & onboarding UI flow with license upload, pending verification status, schedule availability editor
+- [x] **P1-12** (`11f273e`): Doctor registration & onboarding flow in UI, pending verification banner (`ShieldAlert`), doctor profile management (`/doctors/me/profile`), and weekly schedule availability editor (`/doctors/me/availability`)
 - [ ] **P1-13**: Consultation mode selector (`IN_CLINIC | VIDEO | CHAT`) in UI, mint LiveKit tokens for `VIDEO` only
 - [ ] **P1-14**: Concurrency lock (`FOR UPDATE`) on prescription create/update, patient notification on prescription issue, multi-medicine form
 - [ ] **P1-15**: Cursor pagination & status/date filters on appointment lists (`getMyAppointments`)
