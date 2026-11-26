@@ -8,7 +8,7 @@
     "start": "next start",
     "lint": "eslint src",
     "typecheck": "tsc --noEmit",
-    "test": "node --test test/utils.test.ts"
+    "test": "node --test test/utils.test.ts test/api.test.ts"
   },
   "dependencies": {
     "@hookform/resolvers": "^4.1.3",

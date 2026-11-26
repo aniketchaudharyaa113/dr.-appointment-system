@@ -48,6 +48,53 @@ export function setCurrentUser(user: UserSession | null) {
   window.dispatchEvent(new Event('medibook-auth-change'));
 }
 
+let inFlightRefresh: Promise<string | null> | null = null;
+
+export async function refreshAccessToken(): Promise<string | null> {
+  if (inFlightRefresh) {
+    return inFlightRefresh;
+  }
+
+  inFlightRefresh = (async () => {
+    try {
+      const refreshRes = await fetch(`${API_URL}/auth/refresh`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      });
+
+      if (!refreshRes.ok) {
+        setAuthToken(null);
+        setCurrentUser(null);
+        return null;
+      }
+
+      const refreshed = await refreshRes.json();
+      const newToken = refreshed?.accessToken || null;
+      if (newToken) {
+        setAuthToken(newToken);
+        const cur = getCurrentUser();
+        if (cur) {
+          setCurrentUser({ ...cur, token: newToken });
+        }
+      } else {
+        setAuthToken(null);
+        setCurrentUser(null);
+      }
+      return newToken;
+    } catch {
+      setAuthToken(null);
+      setCurrentUser(null);
+      return null;
+    } finally {
+      inFlightRefresh = null;
+    }
+  })();
+
+  return inFlightRefresh;
+}
+
 export async function fetchApi<T = any>(
   endpoint: string,
   options: RequestInit = {},
@@ -62,39 +109,45 @@ export async function fetchApi<T = any>(
   }
 
   const normalized = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
-  const res = await fetch(`${API_URL}${normalized}`, {
+  let res = await fetch(`${API_URL}${normalized}`, {
     ...options,
     credentials: 'include',
     headers,
   });
 
-  if (res.status === 401 && token && !normalized.startsWith('/auth/')) {
-    // Attempt silent refresh once
-    const refreshRes = await fetch(`${API_URL}/auth/refresh`, {
-      method: 'POST',
-      credentials: 'include',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({}),
-    });
-    if (refreshRes.ok) {
-      const refreshed = await refreshRes.json();
-      if (refreshed?.accessToken) {
-        setAuthToken(refreshed.accessToken);
-        const cur = getCurrentUser();
-        if (cur) {
-          setCurrentUser({ ...cur, token: refreshed.accessToken });
-        }
-        headers.set('Authorization', `Bearer ${refreshed.accessToken}`);
-        const retryRes = await fetch(`${API_URL}${normalized}`, {
-          ...options,
-          credentials: 'include',
-          headers,
-        });
-        if (retryRes.ok) {
-          return retryRes.json();
-        }
+  if (
+    res.status === 401 &&
+    !normalized.startsWith('/auth/login') &&
+    !normalized.startsWith('/auth/register') &&
+    !normalized.startsWith('/auth/refresh')
+  ) {
+    // Single-flight refresh queue
+    const refreshedToken = await refreshAccessToken();
+    if (refreshedToken) {
+      headers.set('Authorization', `Bearer ${refreshedToken}`);
+      const retryRes = await fetch(`${API_URL}${normalized}`, {
+        ...options,
+        credentials: 'include',
+        headers,
+      });
+      if (retryRes.status === 204) {
+        return undefined as T;
+      }
+      if (retryRes.ok) {
+        const text = await retryRes.text();
+        return text ? (JSON.parse(text) as T) : (undefined as T);
+      }
+      res = retryRes;
+    } else {
+      if (typeof window !== 'undefined' && !window.location.pathname.startsWith('/login')) {
+        const currentPath = window.location.pathname + window.location.search;
+        window.location.href = `/login?redirect=${encodeURIComponent(currentPath)}`;
       }
     }
+  }
+
+  if (res.status === 204) {
+    return undefined as T;
   }
 
   if (!res.ok) {
@@ -108,7 +161,8 @@ export async function fetchApi<T = any>(
     throw new Error(errorMsg);
   }
 
-  return res.json();
+  const text = await res.text();
+  return text ? (JSON.parse(text) as T) : (undefined as T);
 }
 
 export const fetchWithAuth = fetchApi;
