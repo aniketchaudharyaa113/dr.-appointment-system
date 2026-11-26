@@ -330,6 +330,6 @@ cd backend && npm test
 ### k6 Concurrency Benchmark
 Run the end-to-end load test simulating 200 virtual users across search, slot hold, and booking:
 ```bash
-k6 run load/booking.js
+k6 run load/k6-booking-flow.js
 ```
 See [`docs/LOAD_TEST.md`](docs/LOAD_TEST.md) for detailed performance results.
