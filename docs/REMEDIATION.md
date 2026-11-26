@@ -16,7 +16,7 @@ All fixes are committed atomically on `main` (baseline tag: `pre-agent-baseline`
 - [x] **P0-11** (`d0d3d3b`): Remove default secret fallbacks in `docker-compose.yml` (`${VAR:?required}`), reject weak secrets in production, bind admin ports to `127.0.0.1`
 - [x] **P0-12** (`ed36c64`): Fastify `trustProxy`, `req.ip`, nginx `X-Forwarded-For $remote_addr`, atomic login rate limit, rate-limit register/hold/book/ambulance/ai
 - [x] **P0-13** (`834956e`): Auth hardening (`isActive` check cached in Redis, `algorithms: ['HS256']`, `JWT_EXPIRES_IN`, atomic refresh rotation w/ grace window, uniform login timing, P2002->409, password max length/strength, refresh cleanup)
-- [ ] **P0-14**: Public data leak fixes (`GET /ambulance/drivers/online` auth, explicit Doctor public DTO + 404 unverified, strip ledger for non-admin, generic 500 in prod, protect Swagger, Helmet CSP)
+- [x] **P0-14** (`c886fa8`): Public data leak fixes (`GET /ambulance/drivers/online` auth, explicit Doctor public DTO + 404 unverified, strip ledger for non-admin, generic 500 in prod, protect Swagger, Helmet CSP)
 
 ## Phase 2 — P1: Broken or Missing Core Flows
 - [ ] **P1-1** – **P1-15**: (Pending Phase 1 completion)
