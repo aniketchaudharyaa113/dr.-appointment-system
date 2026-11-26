@@ -1,12 +1,13 @@
 'use client';
 
-import React, { useState, Suspense } from 'react';
+import React, { useState, Suspense, useRef } from 'react';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
 import { useQuery } from '@tanstack/react-query';
 import { useI18n } from '@/lib/i18n';
 import { fetchApi, formatIstDateTime } from '@/lib/api';
 import { formatPaise } from '@/lib/utils';
+import { gsap, useGSAP, isReducedMotion } from '@/lib/gsap';
 import {
   Search,
   Filter,
@@ -82,6 +83,24 @@ function DoctorsListContent() {
   });
 
   const doctors = data?.data ?? [];
+  const doctorsListRef = useRef<HTMLDivElement>(null);
+
+  useGSAP(
+    () => {
+      if (isReducedMotion() || !doctorsListRef.current) return;
+      const cards = doctorsListRef.current.querySelectorAll('[data-testid="doctor-card"]');
+      if (cards.length > 0) {
+        gsap.from(cards, {
+          y: 20,
+          opacity: 0,
+          stagger: 0.05,
+          duration: 0.45,
+          ease: 'power2.out',
+        });
+      }
+    },
+    { scope: doctorsListRef, dependencies: [doctors] }
+  );
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8">
@@ -234,7 +253,7 @@ function DoctorsListContent() {
                   </p>
                 </div>
               ) : (
-                <div className="space-y-4">
+                <div ref={doctorsListRef} className="space-y-4">
                   {doctors.map((doc) => (
                     <div
                       key={doc.id}

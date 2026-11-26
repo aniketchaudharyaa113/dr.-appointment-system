@@ -86,3 +86,13 @@ All fixes are committed atomically on `main` (baseline tag: `pre-agent-baseline`
 - [x] **CI-2** (`66e3a85`): Fix E2E Docker Compose failures — PAYMENT_PROVIDER=FAKE for E2E, NEXT_PUBLIC_ENABLE_PAYMENT_SIMULATOR build arg in web Dockerfile, health-wait extended to 180s with error logging
 - [x] **CI-3** (`66e3a85`): pnpm store caching across all CI jobs for faster runs
 - [x] **CI-4** (`66e3a85`): Compose logs on failure step for easier CI debugging
+
+## Phase 8 — GSAP Modern Animations & Micro-Interactions
+- [x] **GSAP-1**: Added `gsap` and `@gsap/react` to web workspace with SSR-safe client registration and `prefers-reduced-motion` compliance
+- [x] **GSAP-2**: Created reusable GSAP components (`AnimatedCounter`, `GsapCard` 3D tilt, `FloatingElement` sine-wave floats, `GsapReveal` scroll entrance)
+- [x] **GSAP-3**: Animated Landing Hero timeline (badge bounce, headline/subtitle stagger, search bar scale emerge, quick pills bounce, trust badge slide-in)
+- [x] **GSAP-4**: Floating live telemetry & ECG telemetry badges alongside 3D biological helix canvas
+- [x] **GSAP-5**: Smooth number interpolation counters for consultations (45,000+), doctors (1,200+), and EMS dispatch (< 8 min)
+- [x] **GSAP-6**: 3D interactive physics tilt on clinical specialty cards with icon hover rotation
+- [x] **GSAP-7**: Doctor directory cards staggered entrance on search and filtering
+
