@@ -517,22 +517,6 @@ export class PaymentService {
         },
       });
 
-      await tx.outboxEvent.create({
-        data: {
-          aggregateType: 'PAYMENT',
-          aggregateId: payment.id,
-          eventType: 'PAYMENT_REFUNDED',
-          payload: {
-            paymentId: payment.id,
-            refundId: refund.id,
-            appointmentId: appointment.id,
-            patientId: appointment.patientId,
-            amountPaise: refundAmountPaise,
-            reason,
-          },
-        },
-      });
-
       return refund;
     });
   }

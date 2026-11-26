@@ -361,4 +361,118 @@ describe('Slice 2: Real Outbox Relay, BullMQ Workers, Mailpit, Reminders, Crash 
       await engine.close();
     }
   });
+
+  it('P0-3: Refund dispatch calls provider idempotently, notifies on success, and marks FAILED on exhaustion', async () => {
+    const { patient, appt } = await seedAppointment(72);
+
+    const payment = await prisma.payment.create({
+      data: {
+        appointmentId: appt.id,
+        provider: 'RAZORPAY',
+        providerOrderId: `order_${randomUUID().slice(0, 8)}`,
+        providerPaymentId: `pay_${randomUUID().slice(0, 8)}`,
+        amountPaise: 60000,
+        status: 'REFUNDED',
+        idempotencyKey: randomUUID(),
+      },
+    });
+
+    const failingRefund = await prisma.refund.create({
+      data: {
+        paymentId: payment.id,
+        amountPaise: 60000,
+        reason: 'Provider down test',
+        status: 'PENDING',
+      },
+    });
+
+    const failOutbox = await prisma.outboxEvent.create({
+      data: {
+        aggregateType: 'PAYMENT',
+        aggregateId: payment.id,
+        eventType: 'PAYMENT_REFUND_REQUESTED',
+        payload: { refundId: failingRefund.id },
+      },
+    });
+
+    let failCalls = 0;
+    const failEngine = new WorkerEngine({
+      prisma,
+      redisUrl,
+      mailer,
+      logger,
+      maxAttempts: 2,
+      backoffDelayMs: 50,
+      refundExecutor: async () => {
+        failCalls++;
+        throw new Error('Razorpay 502 Bad Gateway');
+      },
+    });
+
+    try {
+      await failEngine.pollOutboxOnce();
+      await waitUntil(async () => {
+        const r = await prisma.refund.findUnique({ where: { id: failingRefund.id } });
+        return r?.status === 'FAILED';
+      }, 15000, 150);
+
+      expect(failCalls).toBe(2);
+      const outboxRow = await prisma.outboxEvent.findUnique({ where: { id: failOutbox.id } });
+      expect(outboxRow?.status).toBe('DLQ');
+      const prematureNotifs = await prisma.notification.count({
+        where: { userId: patient.id, type: 'PAYMENT_REFUNDED' },
+      });
+      expect(prematureNotifs).toBe(0);
+    } finally {
+      await failEngine.close();
+    }
+
+    // Now test successful provider call -> PROCESSED + PAYMENT_REFUNDED notification
+    const okRefund = await prisma.refund.create({
+      data: {
+        paymentId: payment.id,
+        amountPaise: 60000,
+        reason: 'Approved refund',
+        status: 'PENDING',
+      },
+    });
+
+    await prisma.outboxEvent.create({
+      data: {
+        aggregateType: 'PAYMENT',
+        aggregateId: payment.id,
+        eventType: 'PAYMENT_REFUND_REQUESTED',
+        payload: { refundId: okRefund.id },
+      },
+    });
+
+    const okEngine = new WorkerEngine({
+      prisma,
+      redisUrl,
+      mailer,
+      logger,
+      refundExecutor: async () => ({
+        providerRefundId: 'rfnd_razorpay_real_999',
+        status: 'PROCESSED',
+      }),
+    });
+
+    try {
+      await okEngine.pollOutboxOnce();
+      await waitUntil(async () => {
+        const r = await prisma.refund.findUnique({ where: { id: okRefund.id } });
+        return r?.status === 'PROCESSED';
+      }, 15000, 150);
+
+      const updated = await prisma.refund.findUnique({ where: { id: okRefund.id } });
+      expect(updated?.providerRefundId).toBe('rfnd_razorpay_real_999');
+
+      const notifCount = await prisma.notification.count({
+        where: { userId: patient.id, type: 'PAYMENT_REFUNDED' },
+      });
+      expect(notifCount).toBe(1);
+    } finally {
+      await okEngine.close();
+    }
+  });
 });

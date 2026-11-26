@@ -2,9 +2,9 @@ import { PrismaClient } from '@prisma/client';
 import { Queue, Worker, Job } from 'bullmq';
 import Redis from 'ioredis';
 import type { Logger } from 'pino';
-import * as crypto from 'crypto';
 import type { Mailer } from './mailer.js';
 import { pollAndPublishOutbox } from './outbox-relay.js';
+import { executeProviderRefund, type RefundExecutor } from './refund-provider.js';
 
 export interface WorkerEngineOptions {
   prisma: PrismaClient;
@@ -17,6 +17,7 @@ export interface WorkerEngineOptions {
   stalledIntervalMs?: number;
   concurrency?: number;
   onJobStart?: (job: Job) => Promise<void> | void;
+  refundExecutor?: RefundExecutor;
 }
 
 export class WorkerEngine {
@@ -35,6 +36,7 @@ export class WorkerEngine {
   private readonly logger: Logger;
   private readonly maxAttempts: number;
   private readonly backoffDelayMs: number;
+  private readonly refundExecutor: RefundExecutor;
 
   constructor(private readonly opts: WorkerEngineOptions) {
     this.prisma = opts.prisma;
@@ -42,6 +44,7 @@ export class WorkerEngine {
     this.logger = opts.logger;
     this.maxAttempts = opts.maxAttempts ?? 3;
     this.backoffDelayMs = opts.backoffDelayMs ?? 500;
+    this.refundExecutor = opts.refundExecutor ?? executeProviderRefund;
 
     this.queueConnection = new Redis(opts.redisUrl, {
       maxRetriesPerRequest: null,
@@ -137,6 +140,16 @@ export class WorkerEngine {
             SET status = 'DLQ', processed_at = NOW()
             WHERE id = ${outboxId}::uuid
           `;
+        }
+
+        if (job.name === 'PAYMENT_REFUND_REQUESTED' && (job.data as any)?.payload?.refundId) {
+          await this.prisma.refund.updateMany({
+            where: {
+              id: (job.data as any).payload.refundId,
+              status: 'PENDING',
+            },
+            data: { status: 'FAILED' },
+          });
         }
 
         this.logger.error(
@@ -360,21 +373,38 @@ export class WorkerEngine {
     if (!refundId) return;
     const refund = await this.prisma.refund.findUnique({
       where: { id: refundId },
-      include: { payment: true },
+      include: { payment: { include: { appointment: true } } },
     });
     if (!refund) return;
     if (refund.status === 'PROCESSED' && refund.providerRefundId) {
       return;
     }
 
-    const providerRefundId = `rfnd_worker_${crypto.randomUUID().slice(0, 12)}`;
+    const providerRes = await this.refundExecutor({
+      refundId: refund.id,
+      paymentId: refund.paymentId,
+      providerPaymentId: refund.payment.providerPaymentId,
+      amountPaise: refund.amountPaise,
+      reason: refund.reason,
+    });
+
     await this.prisma.refund.update({
       where: { id: refund.id },
       data: {
-        providerRefundId,
-        status: 'PROCESSED',
+        providerRefundId: providerRes.providerRefundId,
+        status: providerRes.status === 'PROCESSED' ? 'PROCESSED' : 'PENDING',
       },
     });
+
+    if (providerRes.status === 'PROCESSED') {
+      await this.handlePaymentRefundedNotification({
+        appointmentId: refund.payment.appointmentId,
+        paymentId: refund.paymentId,
+        refundId: refund.id,
+        amountPaise: refund.amountPaise,
+        reason: refund.reason,
+      });
+    }
   }
 
   private async handlePaymentRefundedNotification(payload: Record<string, any>) {
