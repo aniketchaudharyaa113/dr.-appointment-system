@@ -12,6 +12,7 @@ import { RedisService } from '../../platform/redis/redis.service';
 import { SlotService } from './slot.service';
 import { AuditService } from '../../platform/audit/audit.service';
 import { RealtimeService } from '../../platform/realtime/realtime.service';
+import { RefundPolicyService } from '../../payments/services/refund-policy.service';
 import { ConsultationMode } from '@medibook/shared';
 import { getIstDateCompact, getIstDateString } from '../../../common/utils/ist-time';
 
@@ -23,6 +24,7 @@ export class BookingService {
     @Inject(SlotService) private readonly slotService: SlotService,
     @Inject(AuditService) private readonly audit: AuditService,
     @Inject(RealtimeService) private readonly realtime: RealtimeService,
+    @Inject(RefundPolicyService) private readonly refundPolicy: RefundPolicyService,
   ) {}
 
   /**
@@ -385,17 +387,26 @@ export class BookingService {
       throw new ForbiddenException('Not authorized to cancel this appointment');
     }
 
-    if (
-      appointment.status === 'CANCELLED' ||
-      appointment.status === 'COMPLETED' ||
-      appointment.status === 'REFUNDED'
-    ) {
-      throw new BadRequestException(
-        `Cannot cancel an appointment that is already ${appointment.status}`,
-      );
-    }
-
     const updated = await this.prisma.$transaction(async (tx) => {
+      const lockedAppts = await tx.$queryRaw<
+        Array<{ id: string; status: string; slot_time: Date; doctor_id: string; patient_id: string }>
+      >`
+        SELECT id, status, slot_time, doctor_id, patient_id
+        FROM appointments
+        WHERE id = ${appointmentId}::uuid
+        FOR UPDATE
+      `;
+      const lockedAppt = lockedAppts[0];
+      if (!lockedAppt) {
+        throw new NotFoundException('Appointment not found');
+      }
+
+      if (!['PENDING_PAYMENT', 'CONFIRMED', 'HELD'].includes(lockedAppt.status)) {
+        throw new BadRequestException(
+          `Cannot cancel an appointment in status ${lockedAppt.status}`,
+        );
+      }
+
       const cancelled = await tx.appointment.update({
         where: { id: appointmentId },
         data: {
@@ -418,6 +429,37 @@ export class BookingService {
           },
         },
       });
+
+      // If payment was already CAPTURED, create Refund + reverse ledger + enqueue refund dispatch in SAME tx
+      const paymentRows = await tx.$queryRaw<
+        Array<{ id: string; status: string; amount_paise: number; provider_payment_id: string | null }>
+      >`
+        SELECT id, status, amount_paise, provider_payment_id
+        FROM payments
+        WHERE appointment_id = ${appointmentId}::uuid
+        FOR UPDATE
+      `;
+      const payment = paymentRows[0];
+      if (payment && payment.status === 'CAPTURED') {
+        const initiatedBy =
+          userRole === 'ADMIN'
+            ? 'ADMIN'
+            : appointment.doctor.userId === userId
+              ? 'DOCTOR'
+              : 'PATIENT';
+        const { refundAmountPaise } = this.refundPolicy.calculateRefundAmountPaise({
+          amountPaise: payment.amount_paise,
+          slotTime: new Date(lockedAppt.slot_time),
+          initiatedBy,
+        });
+        await this.refundPolicy.recordRefundInTx(tx, {
+          paymentId: payment.id,
+          appointmentId,
+          providerPaymentId: payment.provider_payment_id,
+          refundAmountPaise,
+          reason,
+        });
+      }
 
       return cancelled;
     });

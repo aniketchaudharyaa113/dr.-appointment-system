@@ -16,6 +16,7 @@ import {
 } from '../providers/payment-provider.interface';
 import { FakePaymentProvider } from '../providers/fake.provider';
 import { LedgerService } from './ledger.service';
+import { RefundPolicyService } from './refund-policy.service';
 import { RealtimeService } from '../../platform/realtime/realtime.service';
 import { env } from '../../../common/config/env.schema';
 
@@ -28,6 +29,7 @@ export class PaymentService {
     @Inject(RedisService) private readonly redis: RedisService,
     @Inject(PAYMENT_PROVIDER) private readonly provider: PaymentProvider,
     @Inject(LedgerService) private readonly ledgerService: LedgerService,
+    @Inject(RefundPolicyService) private readonly refundPolicy: RefundPolicyService,
     @Inject(RealtimeService) private readonly realtime: RealtimeService,
   ) {}
 
@@ -464,27 +466,16 @@ export class PaymentService {
         );
       }
 
-      let refundAmountPaise = payment.amount_paise;
-      if (!isDoctor && !isAdmin) {
-        const hoursUntilSlot =
-          (appointment.slotTime.getTime() - Date.now()) / (1000 * 60 * 60);
-        if (hoursUntilSlot < 24) {
-          refundAmountPaise = Math.round(payment.amount_paise * 0.5);
-        }
-      }
-
-      const refund = await tx.refund.create({
-        data: {
-          paymentId: payment.id,
-          amountPaise: refundAmountPaise,
-          reason,
-          status: 'PENDING',
-        },
+      this.refundPolicy.assertRefundableAppointment({
+        status: appointment.status,
+        slotTime: appointment.slotTime,
+        actorRole,
       });
 
-      await tx.payment.update({
-        where: { id: payment.id },
-        data: { status: 'REFUNDED' },
+      const { refundAmountPaise } = this.refundPolicy.calculateRefundAmountPaise({
+        amountPaise: payment.amount_paise,
+        slotTime: appointment.slotTime,
+        initiatedBy: isAdmin ? 'ADMIN' : isDoctor ? 'DOCTOR' : 'PATIENT',
       });
 
       await tx.appointment.update({
@@ -495,29 +486,13 @@ export class PaymentService {
         },
       });
 
-      await this.ledgerService.recordRefund(
-        payment.id,
+      return this.refundPolicy.recordRefundInTx(tx, {
+        paymentId: payment.id,
+        appointmentId: appointment.id,
+        providerPaymentId: payment.provider_payment_id,
         refundAmountPaise,
-        1000,
-        tx,
-      );
-
-      await tx.outboxEvent.create({
-        data: {
-          aggregateType: 'PAYMENT',
-          aggregateId: payment.id,
-          eventType: 'PAYMENT_REFUND_REQUESTED',
-          payload: {
-            refundId: refund.id,
-            paymentId: payment.id,
-            providerPaymentId: payment.provider_payment_id,
-            amountPaise: refundAmountPaise,
-            reason,
-          },
-        },
+        reason,
       });
-
-      return refund;
     });
   }
 

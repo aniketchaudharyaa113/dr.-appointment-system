@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { PaymentsModule } from '../payments/payments.module';
 import { DoctorService } from './services/doctor.service';
 import { SlotService } from './services/slot.service';
 import { BookingService } from './services/booking.service';
@@ -9,6 +10,7 @@ import { AppointmentController } from './controllers/appointment.controller';
 import { WaitlistController } from './controllers/waitlist.controller';
 
 @Module({
+  imports: [PaymentsModule],
   controllers: [
     DoctorController,
     AppointmentController,

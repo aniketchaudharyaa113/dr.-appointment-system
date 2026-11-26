@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { PaymentController } from './controllers/payment.controller';
 import { PaymentService } from './services/payment.service';
 import { LedgerService } from './services/ledger.service';
+import { RefundPolicyService } from './services/refund-policy.service';
 import { FakePaymentProvider } from './providers/fake.provider';
 import { RazorpayProvider } from './providers/razorpay.provider';
 import { StripeProvider } from './providers/stripe.provider';
@@ -13,6 +14,7 @@ import { PlatformModule } from '../platform/platform.module';
   controllers: [PaymentController],
   providers: [
     LedgerService,
+    RefundPolicyService,
     PaymentService,
     FakePaymentProvider,
     RazorpayProvider,
@@ -32,6 +34,6 @@ import { PlatformModule } from '../platform/platform.module';
       inject: [FakePaymentProvider, RazorpayProvider, StripeProvider],
     },
   ],
-  exports: [PaymentService, LedgerService, PAYMENT_PROVIDER],
+  exports: [PaymentService, LedgerService, RefundPolicyService, PAYMENT_PROVIDER],
 })
 export class PaymentsModule {}

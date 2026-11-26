@@ -8,6 +8,7 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../../platform/database/prisma.service';
 import { AuditService } from '../../platform/audit/audit.service';
+import { RefundPolicyService } from '../../payments/services/refund-policy.service';
 import { getIstDayBoundsUtc, getIstDateString } from '../../../common/utils/ist-time';
 
 @Injectable()
@@ -15,6 +16,7 @@ export class LeaveService {
   constructor(
     @Inject(PrismaService) private readonly prisma: PrismaService,
     @Inject(AuditService) private readonly audit: AuditService,
+    @Inject(RefundPolicyService) private readonly refundPolicy: RefundPolicyService,
   ) {}
 
   private async assertLeaveOwnershipAndDates(
@@ -142,13 +144,17 @@ export class LeaveService {
         },
       });
 
-      const activeAppointments = await tx.appointment.findMany({
-        where: {
-          doctorId,
-          slotTime: { gte: startDate, lte: endDate },
-          status: { in: ['PENDING_PAYMENT', 'CONFIRMED'] },
-        },
-      });
+      const activeAppointments = await tx.$queryRaw<
+        Array<{ id: string; patient_id: string; slot_time: Date }>
+      >`
+        SELECT id, patient_id, slot_time
+        FROM appointments
+        WHERE doctor_id = ${doctorId}::uuid
+          AND slot_time >= ${startDate}
+          AND slot_time <= ${endDate}
+          AND status IN ('PENDING_PAYMENT', 'CONFIRMED')
+        FOR UPDATE
+      `;
 
       for (const appt of activeAppointments) {
         await tx.appointment.update({
@@ -167,13 +173,37 @@ export class LeaveService {
             payload: {
               appointmentId: appt.id,
               doctorId,
-              patientId: appt.patientId,
-              slotTime: appt.slotTime.toISOString(),
+              patientId: appt.patient_id,
+              slotTime: new Date(appt.slot_time).toISOString(),
               reason,
               refundPercent: 100,
             },
           },
         });
+
+        const paymentRows = await tx.$queryRaw<
+          Array<{ id: string; status: string; amount_paise: number; provider_payment_id: string | null }>
+        >`
+          SELECT id, status, amount_paise, provider_payment_id
+          FROM payments
+          WHERE appointment_id = ${appt.id}::uuid
+          FOR UPDATE
+        `;
+        const payment = paymentRows[0];
+        if (payment && payment.status === 'CAPTURED') {
+          const { refundAmountPaise } = this.refundPolicy.calculateRefundAmountPaise({
+            amountPaise: payment.amount_paise,
+            slotTime: new Date(appt.slot_time),
+            initiatedBy: 'LEAVE',
+          });
+          await this.refundPolicy.recordRefundInTx(tx, {
+            paymentId: payment.id,
+            appointmentId: appt.id,
+            providerPaymentId: payment.provider_payment_id,
+            refundAmountPaise,
+            reason: `Doctor on leave: ${reason}`,
+          });
+        }
       }
 
       return { leave, cancelledCount: activeAppointments.length };
