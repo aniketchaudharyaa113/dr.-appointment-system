@@ -33,10 +33,24 @@ All fixes are committed atomically on `main` (baseline tag: `pre-agent-baseline`
 - [x] **P1-12** (`11f273e`): Doctor registration & onboarding flow in UI, pending verification banner (`ShieldAlert`), doctor profile management (`/doctors/me/profile`), and weekly schedule availability editor (`/doctors/me/availability`)
 - [x] **P1-13** (`7e2bbe2`): 3-way consultation mode selector (`VIDEO | IN_CLINIC | CHAT`) in slot picker and booking flow, conditional LiveKit video token minting (restricted strictly to `VIDEO` mode, 400 for `IN_CLINIC`/`CHAT`), and dedicated chamber/chat views in consultation room
 - [x] **P1-14** (`ad0751a`): Concurrency row-locking (`FOR UPDATE`) on prescription creation & updates, patient notification dispatch (`PRESCRIPTION_ISSUED` / `PRESCRIPTION_UPDATED`), and interactive multi-medicine form with validation in clinical workspace
-- [ ] **P1-15**: Cursor pagination & status/date filters on appointment lists (`getMyAppointments`)
+- [x] **P1-15** (`8981c46`): Cursor pagination & status/date/mode filters on appointment lists (`getMyAppointments`), limit+1 cursor pagination, date range & mode filters, Next.js interactive filter toolbar and Load More pagination
 
 ## Phase 3 — P2: Backend Quality / Performance
-- [ ] **P2-1** – **P2-15**: (Pending Phase 2 completion)
+- [ ] **P2-1**: Configurable `PLATFORM_COMMISSION_BPS` (remove magic number 1000 repeated in 6 places)
+- [ ] **P2-2**: Single source of truth for timezone (`CLINIC_TIMEZONE` in shared & api)
+- [ ] **P2-3**: Remove redundant `releaseExpiredPendingAppointments` in API, keep worker's `processExpiryJob`, invalidate `cache:next_slot:{doctor}` and emit `slot_freed` event
+- [ ] **P2-4**: `bookAppointment`: Redis failure after DB commit made best-effort with logging; inspect `meta.target` for unique constraint errors
+- [ ] **P2-5**: Slot grid: validate availability rows (no overlap, start<end, duration divides window) and dedupe overlapping slots
+- [ ] **P2-6**: Presigned PUT ContentLength bound and HeadObject verification, attachment metadata table, magic byte MIME scan, path confinement under `appointments/{id}/`
+- [ ] **P2-7**: LiveKit token: display real names instead of "Attending Doctor/Patient", reject non-VIDEO modes, append device suffix to identity
+- [ ] **P2-8**: Socket.IO auth: header/auth only (no token in query string), periodic re-validation, disconnect on token expiry
+- [ ] **P2-9**: FakePaymentProvider persistence (or drop `fetchPaymentStatus` for FAKE) so multi-instance api reconciliation doesn't falsely mark orders FAILED
+- [ ] **P2-10**: DB indexes: `appointments(status, created_at)`, `outbox_events(status, created_at)`, `notifications(user_id, read_at, created_at)`, `chat_messages(appointment_id, created_at)`, and outbox retention job
+- [ ] **P2-11**: Metrics label cardinality protection (use route patterns instead of raw `request.url`), add business metrics (bookings, captures, refunds, DLQ size)
+- [ ] **P2-12**: Gate dev-only endpoints behind `ENABLE_DEV_ENDPOINTS` flag (must be false in production, do not register routes otherwise)
+- [ ] **P2-13**: Ambulance rate limit & active request cap per user, service area coordinate validation, cascade race condition review
+- [ ] **P2-14**: AI gateway rate limiting, request size caps, 3s timeout with safe fallback when AI service is down
+- [ ] **P2-15**: Replace `any` in services (`tx: any`, `body: any`) with Prisma `TransactionClient` and Zod-inferred types
 
 ## Phase 4 — Frontend Bugs (`apps/web`)
 - [ ] **F-1** – **F-15**: (Pending Phase 3 completion)
