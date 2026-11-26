@@ -10,6 +10,7 @@ import * as argon2 from 'argon2';
 import * as jwt from 'jsonwebtoken';
 import { createHash, randomBytes } from 'crypto';
 import { PrismaService } from '../platform/database/prisma.service';
+import { RedisService } from '../platform/redis/redis.service';
 import { AuditService } from '../platform/audit/audit.service';
 import { env } from '../../common/config/env.schema';
 import {
@@ -19,10 +20,14 @@ import {
   UserRole,
 } from '@medibook/shared';
 
+const DUMMY_PASSWORD_HASH =
+  '$argon2id$v=19$m=65536,t=3,p=1$c29tZXNhbHRzb21lc2FsdA$RdescudvJCsgt3ub+b+dWRWJTmaaJObG';
+
 @Injectable()
 export class AuthService {
   constructor(
     @Inject(PrismaService) private readonly prisma: PrismaService,
+    @Inject(RedisService) private readonly redis: RedisService,
     @Inject(AuditService) private readonly audit: AuditService,
   ) {}
 
@@ -55,7 +60,8 @@ export class AuthService {
     };
 
     const accessToken = jwt.sign(payload, env.JWT_SECRET, {
-      expiresIn: '15m',
+      expiresIn: env.JWT_EXPIRES_IN as jwt.SignOptions['expiresIn'],
+      algorithm: 'HS256',
     });
 
     const rawRefreshToken = randomBytes(32).toString('hex');
@@ -93,37 +99,45 @@ export class AuthService {
 
     const passwordHash = await this.hashPassword(input.password);
 
-    const user = await this.prisma.$transaction(async (tx) => {
-      const newUser = await tx.user.create({
-        data: {
-          email: input.email.toLowerCase(),
-          passwordHash,
-          name: input.name,
-          phone: input.phone,
-          role: input.role,
-        },
-      });
-
-      if (input.role === 'DOCTOR') {
-        await tx.doctor.create({
+    let user;
+    try {
+      user = await this.prisma.$transaction(async (tx) => {
+        const newUser = await tx.user.create({
           data: {
-            userId: newUser.id,
-            specialty: input.specialty || 'General Medicine',
-            qualifications: input.qualifications,
-            clinicName: input.clinicName,
-            clinicAddress: input.clinicAddress,
-            clinicLat: input.clinicLat,
-            clinicLng: input.clinicLng,
-            consultationFeePaise: input.consultationFeePaise || 50000,
-            licenseNumber: input.licenseNumber,
-            isVerified: false,
-            verificationStatus: 'PENDING',
+            email: input.email.toLowerCase(),
+            passwordHash,
+            name: input.name,
+            phone: input.phone,
+            role: input.role,
           },
         });
-      }
 
-      return newUser;
-    });
+        if (input.role === 'DOCTOR') {
+          await tx.doctor.create({
+            data: {
+              userId: newUser.id,
+              specialty: input.specialty || 'General Medicine',
+              qualifications: input.qualifications,
+              clinicName: input.clinicName,
+              clinicAddress: input.clinicAddress,
+              clinicLat: input.clinicLat,
+              clinicLng: input.clinicLng,
+              consultationFeePaise: input.consultationFeePaise || 50000,
+              licenseNumber: input.licenseNumber,
+              isVerified: false,
+              verificationStatus: 'PENDING',
+            },
+          });
+        }
+
+        return newUser;
+      });
+    } catch (err: any) {
+      if (err?.code === 'P2002') {
+        throw new ConflictException('A user with this email already exists');
+      }
+      throw err;
+    }
 
     const tokens = this.generateTokens(user);
 
@@ -164,6 +178,7 @@ export class AuthService {
     });
 
     if (!user || !user.isActive) {
+      await this.verifyPassword(DUMMY_PASSWORD_HASH, input.password);
       throw new UnauthorizedException('Invalid email or password');
     }
 
@@ -214,29 +229,86 @@ export class AuthService {
     }
 
     const hashed = this.hashToken(rawRefreshToken);
-    const stored = await this.prisma.refreshToken.findFirst({
-      where: { tokenHash: hashed },
-      include: { user: true },
+
+    const rotationOutcome = await this.prisma.$transaction(async (tx) => {
+      const stored = await tx.refreshToken.findFirst({
+        where: { tokenHash: hashed },
+        include: { user: true },
+      });
+
+      if (!stored) {
+        return { status: 'NOT_FOUND' as const };
+      }
+
+      if (!stored.user.isActive) {
+        return { status: 'INACTIVE' as const };
+      }
+
+      // Atomic compare-and-set rotation inside transaction
+      const updated = await tx.refreshToken.updateMany({
+        where: { id: stored.id, isRevoked: false },
+        data: { isRevoked: true },
+      });
+
+      if (updated.count === 0) {
+        return {
+          status: 'ALREADY_REVOKED' as const,
+          tokenId: stored.id,
+          userId: stored.userId,
+        };
+      }
+
+      if (new Date() > stored.expiresAt) {
+        return { status: 'EXPIRED' as const };
+      }
+
+      const tokens = this.generateTokens(stored.user);
+      await tx.refreshToken.create({
+        data: {
+          userId: stored.user.id,
+          tokenHash: tokens.hashedRefreshToken,
+          expiresAt: tokens.expiresAt,
+        },
+      });
+
+      return {
+        status: 'ROTATED' as const,
+        tokenId: stored.id,
+        accessToken: tokens.accessToken,
+        refreshToken: tokens.rawRefreshToken,
+      };
     });
 
-    // TOKEN REUSE / THEFT DETECTION
-    if (!stored) {
+    if (rotationOutcome.status === 'NOT_FOUND') {
       throw new UnauthorizedException('Invalid refresh token');
     }
+    if (rotationOutcome.status === 'INACTIVE') {
+      throw new UnauthorizedException('User account is inactive');
+    }
+    if (rotationOutcome.status === 'EXPIRED') {
+      throw new UnauthorizedException('Refresh token has expired');
+    }
+    if (rotationOutcome.status === 'ALREADY_REVOKED') {
+      const client = this.redis.getClient();
+      const inGraceWindow = client
+        ? Boolean(await client.get(`refresh_grace:${rotationOutcome.tokenId}`))
+        : false;
 
-    if (stored.isRevoked) {
-      // Security Incident: A previously revoked token was replayed.
-      // Invalidate all active tokens for this user!
+      if (inGraceWindow) {
+        throw new UnauthorizedException('Refresh token already rotated');
+      }
+
+      // Outside grace window: treat as token reuse / theft -> revoke all user sessions
       await this.prisma.refreshToken.updateMany({
-        where: { userId: stored.userId },
+        where: { userId: rotationOutcome.userId },
         data: { isRevoked: true },
       });
 
       await this.audit.log({
-        userId: stored.userId,
+        userId: rotationOutcome.userId,
         action: 'SECURITY_ALERT_REFRESH_TOKEN_REUSE',
         resource: 'REFRESH_TOKEN',
-        resourceId: stored.id,
+        resourceId: rotationOutcome.tokenId,
         details: { alert: 'Compromised token family invalidated' },
         ipAddress,
         userAgent,
@@ -247,29 +319,16 @@ export class AuthService {
       );
     }
 
-    if (new Date() > stored.expiresAt) {
-      throw new UnauthorizedException('Refresh token has expired');
+    const client = this.redis.getClient();
+    if (client) {
+      await client
+        .set(`refresh_grace:${rotationOutcome.tokenId}`, '1', 'EX', 10)
+        .catch(() => {});
     }
 
-    // Revoke old token and mint new pair (Token Rotation)
-    await this.prisma.refreshToken.update({
-      where: { id: stored.id },
-      data: { isRevoked: true },
-    });
-
-    const tokens = this.generateTokens(stored.user);
-
-    await this.prisma.refreshToken.create({
-      data: {
-        userId: stored.user.id,
-        tokenHash: tokens.hashedRefreshToken,
-        expiresAt: tokens.expiresAt,
-      },
-    });
-
     return {
-      accessToken: tokens.accessToken,
-      refreshToken: tokens.rawRefreshToken,
+      accessToken: rotationOutcome.accessToken,
+      refreshToken: rotationOutcome.refreshToken,
     };
   }
 
@@ -277,7 +336,7 @@ export class AuthService {
     if (rawRefreshToken) {
       const hashed = this.hashToken(rawRefreshToken);
       await this.prisma.refreshToken.updateMany({
-        where: { tokenHash: hashed },
+        where: { tokenHash: hashed, isRevoked: false },
         data: { isRevoked: true },
       });
     }

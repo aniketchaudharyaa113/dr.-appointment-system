@@ -555,6 +555,17 @@ export class WorkerEngine {
       return candidates.length;
     });
 
+    // Clean up expired or old-revoked refresh tokens (> 7 days old)
+    const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+    await this.prisma.refreshToken.deleteMany({
+      where: {
+        OR: [
+          { expiresAt: { lt: new Date() } },
+          { isRevoked: true, createdAt: { lt: sevenDaysAgo } },
+        ],
+      },
+    });
+
     return { released };
   }
 

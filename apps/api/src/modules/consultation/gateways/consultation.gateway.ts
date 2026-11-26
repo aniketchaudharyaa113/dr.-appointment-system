@@ -14,8 +14,10 @@ import * as jwt from 'jsonwebtoken';
 import { JwtPayload } from '@medibook/shared';
 import { ChatService } from '../services/chat.service';
 import { PrismaService } from '../../platform/database/prisma.service';
+import { RedisService } from '../../platform/redis/redis.service';
 import { RealtimeService } from '../../platform/realtime/realtime.service';
 import { env } from '../../../common/config/env.schema';
+import { isUserActiveCached } from '../../identity/utils/user-active.util';
 
 @WebSocketGateway({
   namespace: '/consultation',
@@ -31,6 +33,7 @@ export class ConsultationGateway
   constructor(
     @Inject(ChatService) private readonly chatService: ChatService,
     @Inject(PrismaService) private readonly prisma: PrismaService,
+    @Inject(RedisService) private readonly redis: RedisService,
     @Inject(RealtimeService) private readonly realtime: RealtimeService,
   ) {}
 
@@ -53,8 +56,15 @@ export class ConsultationGateway
         return;
       }
 
-      const decoded = jwt.verify(token, env.JWT_SECRET) as JwtPayload;
+      const decoded = jwt.verify(token, env.JWT_SECRET, {
+        algorithms: ['HS256'],
+      }) as JwtPayload;
       if (!decoded?.sub) {
+        client.disconnect(true);
+        return;
+      }
+      const active = await isUserActiveCached(this.prisma, this.redis, decoded.sub);
+      if (!active) {
         client.disconnect(true);
         return;
       }

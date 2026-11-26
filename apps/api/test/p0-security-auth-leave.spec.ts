@@ -153,4 +153,79 @@ describe('P0 Security: Registration Privilege Escalation & RBAC', () => {
     });
     expect(overlapRes.statusCode).toBe(409);
   });
+
+  it('P0-13: enforces isActive check, concurrent refresh grace window, safe logout on revoked token, and password strength', async () => {
+    // Weak password without digit rejected
+    const weakReg = await ctx.app.inject({
+      method: 'POST',
+      url: '/api/auth/register',
+      payload: {
+        email: 'weakpw@medibook.test',
+        password: 'OnlyLettersPassword',
+        name: 'Weak Pw',
+        role: 'PATIENT',
+      },
+    });
+    expect(weakReg.statusCode).toBe(400);
+
+    // Register valid patient
+    const reg = await ctx.app.inject({
+      method: 'POST',
+      url: '/api/auth/register',
+      payload: {
+        email: 'activecheck@medibook.test',
+        password: 'StrongPassword123!',
+        name: 'Active User',
+        role: 'PATIENT',
+      },
+    });
+    expect(reg.statusCode).toBe(201);
+    const { accessToken, user } = reg.json();
+    const refresh1 = (reg.headers['set-cookie'] as string).match(/refreshToken=([^;]+)/)?.[1]!;
+
+    // Concurrent refresh: two requests with refresh1 -> one succeeds (200), one gets 401 within 10s grace window WITHOUT revoking refresh2
+    const [r1, r2] = await Promise.all([
+      ctx.app.inject({ method: 'POST', url: '/api/auth/refresh', payload: { refreshToken: refresh1 } }),
+      ctx.app.inject({ method: 'POST', url: '/api/auth/refresh', payload: { refreshToken: refresh1 } }),
+    ]);
+    const statuses = [r1.statusCode, r2.statusCode].sort();
+    expect(statuses).toEqual([200, 401]);
+    const winner = r1.statusCode === 200 ? r1 : r2;
+    const refresh2 = (winner.headers['set-cookie'] as string).match(/refreshToken=([^;]+)/)?.[1]!;
+
+    // refresh2 must still be valid (no false-positive family revocation)
+    const afterGraceCheck = await ctx.app.inject({
+      method: 'POST',
+      url: '/api/auth/refresh',
+      payload: { refreshToken: refresh2 },
+    });
+    expect(afterGraceCheck.statusCode).toBe(200);
+    const refresh3 = (afterGraceCheck.headers['set-cookie'] as string).match(/refreshToken=([^;]+)/)?.[1]!;
+
+    // Logout with already-revoked refresh1 is safe and does not revoke refresh3
+    const logoutRevoked = await ctx.app.inject({
+      method: 'POST',
+      url: '/api/auth/logout',
+      payload: { refreshToken: refresh1 },
+    });
+    expect(logoutRevoked.statusCode).toBe(200);
+
+    const refresh3Valid = await ctx.app.inject({
+      method: 'POST',
+      url: '/api/auth/refresh',
+      payload: { refreshToken: refresh3 },
+    });
+    expect(refresh3Valid.statusCode).toBe(200);
+
+    // Deactivate user and clear cached active flag -> JwtAuthGuard rejects accessToken
+    await ctx.prisma.user.update({ where: { id: user.id }, data: { isActive: false } });
+    await ctx.redisClient.del(`user:active:${user.id}`);
+
+    const meRes = await ctx.app.inject({
+      method: 'GET',
+      url: '/api/auth/me',
+      headers: { authorization: `Bearer ${accessToken}` },
+    });
+    expect(meRes.statusCode).toBe(401);
+  });
 });

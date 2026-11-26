@@ -71,7 +71,11 @@ describe('Slice 1: Real Auth Token Rotation, Health, Leave Cascade & Waitlist Cl
     expect(refresh2).toBeTruthy();
     expect(refresh2).not.toBe(refresh1);
 
-    // Replay already-rotated refresh1 -> theft detection revokes ALL tokens for user!
+    // Expire the 10s concurrent-refresh grace window in Redis, then replay refresh1 -> theft detection revokes ALL tokens for user!
+    const graceKeys = await ctx.redisClient.keys('refresh_grace:*');
+    if (graceKeys.length > 0) {
+      await ctx.redisClient.del(...graceKeys);
+    }
     const theftAttempt = await ctx.app.inject({
       method: 'POST',
       url: '/api/auth/refresh',
@@ -97,7 +101,7 @@ describe('Slice 1: Real Auth Token Rotation, Health, Leave Cascade & Waitlist Cl
     const hold = await bookingService.holdSlot(doctor.id, slotIso, patient.id);
     const appt = await bookingService.bookAppointment(doctor.id, slotIso, patient.id, hold.holdToken);
 
-    const preview = await leaveService.previewLeaveImpact(doctor.id, dateStr, dateStr);
+    const preview = await leaveService.previewLeaveImpact(doctor.id, dateStr, dateStr, docUser.id);
     expect(preview.affectedCount).toBe(1);
 
     const applied = await leaveService.applyLeave(doctor.id, dateStr, dateStr, 'Medical conference', docUser.id);
