@@ -19,8 +19,8 @@ All fixes are committed atomically on `main` (baseline tag: `pre-agent-baseline`
 - [x] **P0-14** (`c886fa8`): Public data leak fixes (`GET /ambulance/drivers/online` auth, explicit Doctor public DTO + 404 unverified, strip ledger for non-admin, generic 500 in prod, protect Swagger, Helmet CSP)
 
 ## Phase 2 — P1: Broken or Missing Core Flows
-- [x] **P1-1** (`PENDING_COMMIT`): State machine in `appointment-state.ts` (LIVE -> IN_PROGRESS, ENDED -> COMPLETED, NO_SHOW sweep for expired confirmed appts + outbox events); consultation room UI controls for doctor start/end and red phone action
-- [x] **P1-2** (`PENDING_COMMIT`): Safe session status endpoint with upsert, transition validation, doctor-only restriction for LIVE/ENDED, and CONFIRMED/IN_PROGRESS requirement
+- [x] **P1-1** (`66d8523`): State machine in `appointment-state.ts` (LIVE -> IN_PROGRESS, ENDED -> COMPLETED, NO_SHOW sweep for expired confirmed appts + outbox events); consultation room UI controls for doctor start/end and red phone action
+- [x] **P1-2** (`66d8523`): Safe session status endpoint with upsert, transition validation, doctor-only restriction for LIVE/ENDED, and CONFIRMED/IN_PROGRESS requirement
 - [ ] **P1-3**: Chat, uploads, vitals guard (7-day window from `endedAt`, Zod socket schema & length cap, REST POST emit to socket room, align room auth)
 - [ ] **P1-4**: Wire `WaitlistService.offerCancelledSlotToNext` into cancel/expiry/leave/refund via outbox, atomic claim w/ `updateMany`, leave-waitlist endpoint, offer expiration worker job
 - [ ] **P1-5**: Review model endpoint `POST /appointments/:id/review`, aggregate/denormalized rating calculation, doctor reviews UI
