@@ -229,8 +229,8 @@ model Appointment {
   attachments  ConsultationAttachment[]
 
   @@index([patientId, status])
-
   @@index([doctorId, slotTime])
+  @@index([status, createdAt])
   @@map("appointments")
 }
 

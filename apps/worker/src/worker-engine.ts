@@ -822,7 +822,24 @@ export class WorkerEngine {
       });
     }
 
+    // Outbox retention cleanup: purge PROCESSED events older than retentionDays (default 14 days)
+    const retentionDays = (job.data as any)?.retentionDays ?? 14;
+    await this.purgeProcessedOutboxEvents(retentionDays);
+
     return { released, noShowCount: count };
+  }
+
+  async purgeProcessedOutboxEvents(retentionDays = 14): Promise<number> {
+    const cutoff = new Date(Date.now() - retentionDays * 24 * 60 * 60 * 1000);
+    const result = await this.prisma.$executeRaw`
+      DELETE FROM outbox_events
+      WHERE status = 'PROCESSED'
+        AND created_at < ${cutoff}
+    `;
+    if (result > 0) {
+      this.logger.info({ purgedOutboxCount: result, cutoff }, 'Purged old processed outbox events');
+    }
+    return result;
   }
 
   async scheduleExpiryCheck() {
