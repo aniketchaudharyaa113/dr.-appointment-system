@@ -4,6 +4,7 @@ import {
   Post,
   Delete,
   Param,
+  Query,
   Body,
   UseGuards,
   ForbiddenException,
@@ -28,6 +29,8 @@ import {
   CreateReviewSchema,
   CreateReviewInput,
   UuidSchema,
+  MyAppointmentsQuerySchema,
+  MyAppointmentsQuery,
 } from '@medibook/shared';
 
 @ApiTags('Scheduling')
@@ -40,9 +43,12 @@ export class AppointmentController {
   ) {}
 
   @Get('mine')
-  @ApiOperation({ summary: 'List appointments for the authenticated user' })
-  async getMyAppointments(@CurrentUser() user: JwtPayload) {
-    return this.bookingService.getMyAppointments(user.sub, user.role);
+  @ApiOperation({ summary: 'List appointments for authenticated user with cursor pagination & status/date filters' })
+  async getMyAppointments(
+    @CurrentUser() user: JwtPayload,
+    @Query(new ZodValidationPipe(MyAppointmentsQuerySchema)) query: MyAppointmentsQuery,
+  ) {
+    return this.bookingService.getMyAppointments(user.sub, user.role, query);
   }
 
   @Get(':id')

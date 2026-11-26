@@ -14,7 +14,7 @@ import { AuditService } from '../../platform/audit/audit.service';
 import { RealtimeService } from '../../platform/realtime/realtime.service';
 import { RefundPolicyService } from '../../payments/services/refund-policy.service';
 import { assertAppointmentTransition } from '../appointment-state';
-import { ConsultationMode } from '@medibook/shared';
+import { ConsultationMode, MyAppointmentsQuery } from '@medibook/shared';
 import { getIstDateCompact, getIstDateString } from '../../../common/utils/ist-time';
 
 @Injectable()
@@ -538,15 +538,39 @@ export class BookingService {
   }
 
   /**
-   * Lists appointments owned by the authenticated patient or doctor.
+   * Lists appointments owned by the authenticated patient or doctor with cursor pagination & status/date filters.
    */
-  async getMyAppointments(userId: string, role: string) {
-    const whereClause =
+  async getMyAppointments(
+    userId: string,
+    role: string,
+    query: MyAppointmentsQuery = { limit: 20 },
+  ) {
+    const whereClause: any =
       role === 'DOCTOR'
         ? { doctor: { userId } }
         : role === 'ADMIN'
           ? {}
           : { patientId: userId };
+
+    if (query.status) {
+      whereClause.status = query.status;
+    }
+
+    if (query.mode) {
+      whereClause.consultationMode = query.mode;
+    }
+
+    if (query.fromDate || query.toDate) {
+      whereClause.slotTime = {};
+      if (query.fromDate) {
+        whereClause.slotTime.gte = new Date(`${query.fromDate}T00:00:00.000Z`);
+      }
+      if (query.toDate) {
+        whereClause.slotTime.lte = new Date(`${query.toDate}T23:59:59.999Z`);
+      }
+    }
+
+    const limit = query.limit || 20;
 
     const appointments = await this.prisma.appointment.findMany({
       where: whereClause,
@@ -572,10 +596,21 @@ export class BookingService {
           select: { id: true, rating: true, comment: true },
         },
       },
-      orderBy: { slotTime: 'desc' },
+      orderBy: [{ slotTime: 'desc' }, { id: 'desc' }],
+      take: limit + 1,
+      ...(query.cursor
+        ? {
+            cursor: { id: query.cursor },
+            skip: 1,
+          }
+        : {}),
     });
 
-    return appointments.map((a) => ({
+    const hasMore = appointments.length > limit;
+    const items = hasMore ? appointments.slice(0, limit) : appointments;
+    const nextCursor = hasMore ? items[items.length - 1].id : null;
+
+    const formatted = items.map((a) => ({
       id: a.id,
       bookingRef: a.bookingRef,
       doctorId: a.doctorId,
@@ -605,6 +640,11 @@ export class BookingService {
       consultation: a.consultation,
       review: a.review,
     }));
+
+    return {
+      items: formatted,
+      nextCursor,
+    };
   }
 
   async getAppointmentById(appointmentId: string, userId: string, role: string) {

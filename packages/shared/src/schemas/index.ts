@@ -260,3 +260,23 @@ export const UpdateDoctorProfileSchema = z.object({
   photoUrl: z.string().optional(),
 });
 export type UpdateDoctorProfileInput = z.infer<typeof UpdateDoctorProfileSchema>;
+
+export const MyAppointmentsQuerySchema = z.object({
+  cursor: z.string().uuid().optional(),
+  limit: z.coerce.number().int().min(1).max(50).default(20),
+  status: z
+    .enum([
+      'PENDING_PAYMENT',
+      'CONFIRMED',
+      'IN_PROGRESS',
+      'COMPLETED',
+      'CANCELLED',
+      'NO_SHOW',
+      'REFUNDED',
+    ])
+    .optional(),
+  fromDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  toDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  mode: z.enum(['VIDEO', 'IN_CLINIC', 'CHAT']).optional(),
+});
+export type MyAppointmentsQuery = z.infer<typeof MyAppointmentsQuerySchema>;

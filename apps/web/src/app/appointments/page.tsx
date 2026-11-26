@@ -46,6 +46,10 @@ interface AppointmentItem {
 export default function MyAppointmentsPage() {
   const queryClient = useQueryClient();
   const [tab, setTab] = useState<'upcoming' | 'past'>('upcoming');
+  const [selectedStatus, setSelectedStatus] = useState<string>('ALL');
+  const [selectedMode, setSelectedMode] = useState<string>('ALL');
+  const [fromDate, setFromDate] = useState<string>('');
+  const [toDate, setToDate] = useState<string>('');
   const [cancelModalApt, setCancelModalApt] = useState<AppointmentItem | null>(null);
   const [reviewModalApt, setReviewModalApt] = useState<AppointmentItem | null>(null);
   const [reviewRating, setReviewRating] = useState<number>(5);
@@ -54,11 +58,29 @@ export default function MyAppointmentsPage() {
 
   const user = typeof window !== 'undefined' ? getCurrentUser() : null;
 
-  const { data: appointments = [], isLoading, isError, error } = useQuery<AppointmentItem[]>({
-    queryKey: ['my-appointments'],
-    queryFn: () => fetchApi<AppointmentItem[]>('/appointments/mine'),
+  const { data: appointmentData, isLoading, isError, error } = useQuery<{
+    items: AppointmentItem[];
+    nextCursor: string | null;
+  }>({
+    queryKey: ['my-appointments', selectedStatus, selectedMode, fromDate, toDate],
+    queryFn: async () => {
+      const params = new URLSearchParams();
+      if (selectedStatus !== 'ALL') params.set('status', selectedStatus);
+      if (selectedMode !== 'ALL') params.set('mode', selectedMode);
+      if (fromDate) params.set('fromDate', fromDate);
+      if (toDate) params.set('toDate', toDate);
+      params.set('limit', '50');
+
+      const res = await fetchApi<any>(`/appointments/mine?${params.toString()}`);
+      if (Array.isArray(res)) {
+        return { items: res, nextCursor: null };
+      }
+      return res;
+    },
     enabled: !!user?.token,
   });
+
+  const appointments = appointmentData?.items || [];
 
   const reviewMutation = useMutation({
     mutationFn: async ({ aptId, rating, comment }: { aptId: string; rating: number; comment?: string }) => {
@@ -143,6 +165,75 @@ export default function MyAppointmentsPage() {
           {actionMsg}
         </div>
       )}
+
+      {/* Search & Filter Bar */}
+      <div className="p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xs space-y-3">
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
+          <div>
+            <label className="block text-slate-500 font-medium mb-1">Status</label>
+            <select
+              value={selectedStatus}
+              onChange={(e) => setSelectedStatus(e.target.value)}
+              className="w-full p-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-200"
+            >
+              <option value="ALL">All Statuses</option>
+              <option value="CONFIRMED">Confirmed</option>
+              <option value="PENDING_PAYMENT">Pending Payment</option>
+              <option value="IN_PROGRESS">In Progress</option>
+              <option value="COMPLETED">Completed</option>
+              <option value="CANCELLED">Cancelled</option>
+              <option value="REFUNDED">Refunded</option>
+            </select>
+          </div>
+          <div>
+            <label className="block text-slate-500 font-medium mb-1">Consultation Mode</label>
+            <select
+              value={selectedMode}
+              onChange={(e) => setSelectedMode(e.target.value)}
+              className="w-full p-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-200"
+            >
+              <option value="ALL">All Modes</option>
+              <option value="VIDEO">Video Consultation</option>
+              <option value="IN_CLINIC">In-Clinic Visit</option>
+              <option value="CHAT">Live Chat</option>
+            </select>
+          </div>
+          <div>
+            <label className="block text-slate-500 font-medium mb-1">From Date</label>
+            <input
+              type="date"
+              value={fromDate}
+              onChange={(e) => setFromDate(e.target.value)}
+              className="w-full p-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-200"
+            />
+          </div>
+          <div>
+            <label className="block text-slate-500 font-medium mb-1">To Date</label>
+            <input
+              type="date"
+              value={toDate}
+              onChange={(e) => setToDate(e.target.value)}
+              className="w-full p-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-200"
+            />
+          </div>
+        </div>
+        {(selectedStatus !== 'ALL' || selectedMode !== 'ALL' || fromDate || toDate) && (
+          <div className="flex justify-end pt-1">
+            <button
+              type="button"
+              onClick={() => {
+                setSelectedStatus('ALL');
+                setSelectedMode('ALL');
+                setFromDate('');
+                setToDate('');
+              }}
+              className="text-xs font-semibold text-rose-600 hover:underline"
+            >
+              Reset Filters
+            </button>
+          </div>
+        )}
+      </div>
 
       {/* Tabs */}
       <div className="flex border-b border-slate-200 dark:border-slate-800 text-sm font-semibold">
