@@ -82,6 +82,25 @@ export async function refreshAccessToken(): Promise<string | null> {
   return inFlightRefresh;
 }
 
+function formatApiErrorDetails(details: unknown): string | null {
+  if (!details || typeof details !== 'object') return null;
+
+  const entries = Object.entries(details as Record<string, unknown>);
+  const messages: string[] = [];
+
+  for (const [field, value] of entries) {
+    if (!Array.isArray(value)) continue;
+    for (const item of value) {
+      if (typeof item !== 'string' || !item.trim()) continue;
+      const trimmed = item.trim();
+      const includesField = trimmed.toLowerCase().includes(field.toLowerCase());
+      messages.push(includesField ? trimmed : `${field}: ${trimmed}`);
+    }
+  }
+
+  return messages.length > 0 ? messages.join(' • ') : null;
+}
+
 export async function fetchApi<T = any>(
   endpoint: string,
   options: RequestInit = {},
@@ -141,7 +160,8 @@ export async function fetchApi<T = any>(
     let errorMsg = `Request failed (${res.status})`;
     try {
       const errorJson = await res.json();
-      errorMsg = errorJson.message || errorJson.error || errorMsg;
+      const detailMsg = formatApiErrorDetails(errorJson?.details);
+      errorMsg = detailMsg || errorJson?.message || errorJson?.error || errorMsg;
     } catch {
       // ignore non-json
     }

@@ -64,7 +64,7 @@ function loadRazorpayScript(): Promise<boolean> {
 
 export default function CheckoutPage() {
   const { t } = useI18n();
-  const { user } = useAuth();
+  const { user, isLoading: isAuthLoading } = useAuth();
   const params = useParams();
   const router = useRouter();
   const queryClient = useQueryClient();
@@ -81,7 +81,7 @@ export default function CheckoutPage() {
   const apptQuery = useQuery<AppointmentDetail>({
     queryKey: ['appointment', appointmentId],
     queryFn: () => fetchApi<AppointmentDetail>(`/appointments/${appointmentId}`),
-    enabled: !!appointmentId,
+    enabled: !!appointmentId && !isAuthLoading && Boolean(user),
   });
 
   const paymentConfigQuery = useQuery<{
@@ -239,7 +239,14 @@ export default function CheckoutPage() {
     },
     onSuccess: (res, event) => {
       if (event === 'payment.failed') {
-        setCheckoutError('Simulated payment failure: payment declined. You can retry payment before expiry.');
+        idempotencyKeyRef.current =
+          typeof crypto !== 'undefined' ? crypto.randomUUID() : `idem-${Date.now()}`;
+        checkoutInitiatedRef.current = false;
+        setPaymentOrder(null);
+        setCheckoutError(
+          'Simulated payment failure: payment declined. Preparing a fresh payment order for retry.',
+        );
+        queryClient.invalidateQueries({ queryKey: ['appointment', appointmentId] });
         return;
       }
       if (res.status === 'CAPTURED' || res.status === 'ALREADY_CAPTURED') {

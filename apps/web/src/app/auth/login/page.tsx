@@ -79,8 +79,25 @@ function LoginContent() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (mode === 'login') {
-      const matched = demoAccounts.find((a) => a.email === email);
-      await performLogin(email, password, matched?.targetUrl || '/doctors');
+      const matched = demoAccounts.find((a) => a.email === email.trim());
+      await performLogin(email.trim(), password, matched?.targetUrl || '/doctors');
+      return;
+    }
+
+    const trimmedName = name.trim();
+    const trimmedEmail = email.trim();
+    if (trimmedName.length < 2) {
+      setErrorMsg('Full name must be at least 2 characters long.');
+      return;
+    }
+    if (
+      password.length < 8 ||
+      !/[A-Za-z]/.test(password) ||
+      !/[0-9]/.test(password)
+    ) {
+      setErrorMsg(
+        'Password must be at least 8 characters long and contain at least one letter and one number.',
+      );
       return;
     }
 
@@ -88,15 +105,15 @@ function LoginContent() {
     setErrorMsg(null);
     try {
       const payload: any = {
-        name,
-        email,
+        name: trimmedName,
+        email: trimmedEmail,
         password,
         role: registerRole,
       };
 
       if (registerRole === 'DOCTOR') {
         payload.specialty = specialty;
-        payload.licenseNumber = licenseNumber || 'WBMC/' + Math.floor(10000 + Math.random() * 90000);
+        payload.licenseNumber = (licenseNumber || '').trim() || 'WBMC/' + Math.floor(10000 + Math.random() * 90000);
         payload.experienceYears = Number(experienceYears);
         payload.consultationFeePaise = Math.round(Number(consultationFee) * 100);
       }
@@ -179,14 +196,20 @@ function LoginContent() {
           <div className="flex gap-1.5 bg-slate-100 dark:bg-slate-800 p-1 rounded-xl text-xs sm:text-sm font-semibold">
             <button
               type="button"
-              onClick={() => setMode('login')}
+              onClick={() => {
+                setMode('login');
+                setErrorMsg(null);
+              }}
               className={`flex-1 py-2 rounded-lg transition-all ${mode === 'login' ? 'bg-white dark:bg-slate-900 text-teal-600 dark:text-teal-400 shadow-sm' : 'text-slate-500'}`}
             >
               Sign In
             </button>
             <button
               type="button"
-              onClick={() => setMode('register')}
+              onClick={() => {
+                setMode('register');
+                setErrorMsg(null);
+              }}
               className={`flex-1 py-2 rounded-lg transition-all ${mode === 'register' ? 'bg-white dark:bg-slate-900 text-teal-600 dark:text-teal-400 shadow-sm' : 'text-slate-500'}`}
             >
               Register
@@ -202,7 +225,10 @@ function LoginContent() {
                 <div className="grid grid-cols-2 gap-2.5">
                   <button
                     type="button"
-                    onClick={() => setRegisterRole('PATIENT')}
+                    onClick={() => {
+                      setRegisterRole('PATIENT');
+                      setErrorMsg(null);
+                    }}
                     className={`py-2.5 rounded-xl text-xs font-bold border transition-colors ${
                       registerRole === 'PATIENT'
                         ? 'border-teal-600 bg-teal-50 dark:bg-teal-950/60 text-teal-700 dark:text-teal-300'
@@ -213,7 +239,10 @@ function LoginContent() {
                   </button>
                   <button
                     type="button"
-                    onClick={() => setRegisterRole('DOCTOR')}
+                    onClick={() => {
+                      setRegisterRole('DOCTOR');
+                      setErrorMsg(null);
+                    }}
                     className={`py-2.5 rounded-xl text-xs font-bold border transition-colors ${
                       registerRole === 'DOCTOR'
                         ? 'border-teal-600 bg-teal-50 dark:bg-teal-950/60 text-teal-700 dark:text-teal-300'
@@ -343,6 +372,11 @@ function LoginContent() {
               onChange={(e) => setPassword(e.target.value)}
               className="w-full px-3.5 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-sm text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-teal-500"
             />
+            {mode === 'register' && (
+              <p className="mt-1.5 text-[11px] text-slate-500 dark:text-slate-400">
+                At least 8 characters, including 1 letter and 1 number (e.g. ClinicPass1).
+              </p>
+            )}
           </div>
 
           <button

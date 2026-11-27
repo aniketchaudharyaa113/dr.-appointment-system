@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 import { fetchApi } from '@/lib/api';
 import { formatPaise } from '@/lib/utils';
+import { useAuth } from '@/lib/auth-context';
 import { RoleGuard } from '@/components/role-guard';
 import { useToast } from '@/components/toast';
 
@@ -62,18 +63,22 @@ interface AuditLogItem {
 export default function AdminPage() {
   const queryClient = useQueryClient();
   const toast = useToast();
+  const { user, isLoading: isAuthLoading } = useAuth();
+  const isAdmin = !isAuthLoading && user?.role === 'ADMIN';
   const [activeTab, setActiveTab] = useState<'stats' | 'verification' | 'ledger' | 'audit'>('stats');
 
   // Stats query
   const { data: stats, isLoading: statsLoading } = useQuery<AdminStats>({
     queryKey: ['admin-stats'],
     queryFn: () => fetchApi('/admin/stats'),
+    enabled: isAdmin,
     refetchInterval: 30000,
   });
 
   // Pending doctors query
   const { data: pendingDoctors = [], isLoading: doctorsLoading } = useQuery<PendingDoctor[]>({
     queryKey: ['admin-pending-doctors'],
+    enabled: isAdmin,
     queryFn: async () => {
       const res = await fetchApi<any[] | { doctors: any[] }>('/admin/doctors/pending');
       const docs = Array.isArray(res) ? res : res?.doctors || [];
@@ -92,12 +97,14 @@ export default function AdminPage() {
   // Ledger entries query
   const { data: ledgerEntries = [], isLoading: ledgersLoading } = useQuery<LedgerItem[]>({
     queryKey: ['admin-ledgers'],
+    enabled: isAdmin,
     queryFn: () => fetchApi('/admin/ledgers'),
   });
 
   // Audit logs query
   const { data: auditLogs = [], isLoading: auditLoading } = useQuery<AuditLogItem[]>({
     queryKey: ['admin-audit-logs'],
+    enabled: isAdmin,
     queryFn: () => fetchApi('/admin/audit-logs'),
   });
 

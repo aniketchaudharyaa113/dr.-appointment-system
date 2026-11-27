@@ -3,6 +3,7 @@
 import React, { createContext, useContext, useEffect, useState, useCallback, useMemo } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import {
+  API_URL,
   fetchApi,
   getAuthToken,
   setAuthToken,
@@ -149,6 +150,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     let mounted = true;
     (async () => {
       try {
+        const sessionRes = await fetch(`${API_URL}/auth/session`, {
+          credentials: 'include',
+        }).catch(() => null);
+        if (sessionRes?.ok) {
+          const sessionData = await sessionRes.json().catch(() => null);
+          if (sessionData && sessionData.hasSession === false) {
+            return;
+          }
+        }
         const token = await refreshAccessToken();
         if (token && mounted) {
           setAuthToken(token);

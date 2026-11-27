@@ -65,4 +65,36 @@ describe('Web fetchApi & Single-flight token refresh', () => {
       global.fetch = originalFetch;
     }
   });
+
+  it('should surface Zod validation field details instead of generic Validation failed', async () => {
+    const originalFetch = global.fetch;
+    try {
+      global.fetch = (async () => {
+        return new Response(
+          JSON.stringify({
+            statusCode: 400,
+            message: 'Validation failed',
+            error: 'Bad Request',
+            details: {
+              password: ['Password must contain at least one number'],
+            },
+          }),
+          {
+            status: 400,
+            headers: { 'Content-Type': 'application/json' },
+          },
+        );
+      }) as any;
+
+      await assert.rejects(
+        () => fetchApi('/auth/register', { method: 'POST', body: '{}' }),
+        (err: Error) => {
+          assert.strictEqual(err.message, 'Password must contain at least one number');
+          return true;
+        },
+      );
+    } finally {
+      global.fetch = originalFetch;
+    }
+  });
 });

@@ -5,6 +5,7 @@ import { useParams } from 'next/navigation';
 import Link from 'next/link';
 import { useQuery } from '@tanstack/react-query';
 import { fetchApi, formatIstDateTime } from '@/lib/api';
+import { useAuth } from '@/lib/auth-context';
 import { formatPaise } from '@/lib/utils';
 import {
   CheckCircle2,
@@ -34,11 +35,12 @@ interface ConfirmedAppointment {
 export default function BookingConfirmedPage() {
   const params = useParams();
   const appointmentId = params?.id as string;
+  const { user, isLoading: isAuthLoading } = useAuth();
 
   const { data: appt, isLoading, isError } = useQuery<ConfirmedAppointment>({
     queryKey: ['appointment', appointmentId],
     queryFn: () => fetchApi<ConfirmedAppointment>(`/appointments/${appointmentId}`),
-    enabled: !!appointmentId,
+    enabled: !!appointmentId && !isAuthLoading && Boolean(user),
   });
 
   if (isLoading) {
