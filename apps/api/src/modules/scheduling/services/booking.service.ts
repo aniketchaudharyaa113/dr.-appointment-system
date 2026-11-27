@@ -20,8 +20,13 @@ import {
   MyAppointmentsQuery,
   DEFAULT_PLATFORM_COMMISSION_BPS,
   executeNoShowSweep,
+  releaseExpiredPendingAppointmentsShared,
 } from '@medibook/shared';
-import { getIstDateCompact, getIstDateString } from '../../../common/utils/ist-time';
+import {
+  getIstDateCompact,
+  getIstDateString,
+  getIstDayBoundsUtc,
+} from '../../../common/utils/ist-time';
 
 @Injectable()
 export class BookingService {
@@ -54,8 +59,15 @@ export class BookingService {
 
     const doctor = await this.prisma.doctor.findUnique({
       where: { id: doctorId },
+      include: { user: { select: { isActive: true } } },
     });
-    if (!doctor || !doctor.isVerified) {
+    if (!doctor) {
+      throw new BadRequestException('Doctor not found or not verified');
+    }
+    if (!doctor.user?.isActive) {
+      throw new ForbiddenException('Doctor account is deactivated');
+    }
+    if (!doctor.isVerified) {
       throw new BadRequestException('Doctor not found or not verified');
     }
 
@@ -167,53 +179,26 @@ export class BookingService {
    * keyed on the Asia/Kolkata wall-clock date.
    */
   async generateDailyReferenceToken(
-    doctorId: string,
+    _doctorId: string,
     bookingDate: Date,
-    tx: Prisma.TransactionClient,
+    tx?: Prisma.TransactionClient,
   ): Promise<string> {
-    const dateStr = getIstDateString(bookingDate); // YYYY-MM-DD in Asia/Kolkata
-    const dateCompact = getIstDateCompact(bookingDate); // YYYYMMDD in Asia/Kolkata
+    const db = tx ?? this.prisma;
+    const dateStr = getIstDateString(bookingDate); // YYYY-MM-DD in clinic timezone
+    const dateCompact = getIstDateCompact(bookingDate); // YYYYMMDD in clinic timezone
     const dateOnly = new Date(`${dateStr}T00:00:00.000Z`);
-    const lockKey = `booking_ref:${dateCompact}`;
     const refPrefix = `MB-${dateCompact}-`;
 
-    // Serialize daily booking_ref allocation across all doctors on this IST date
-    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${lockKey}))`;
-
-    const counterRes = await tx.$queryRaw<Array<{ last_seq: number }>>`
-      INSERT INTO doctor_daily_counters (doctor_id, booking_date, last_seq)
-      VALUES (${doctorId}::uuid, ${dateOnly}::date, 1)
-      ON CONFLICT (doctor_id, booking_date)
-      DO UPDATE SET last_seq = doctor_daily_counters.last_seq + 1
+    const counterRes = await db.$queryRaw<Array<{ last_seq: number }>>`
+      INSERT INTO daily_booking_counters (booking_date, last_seq)
+      VALUES (${dateOnly}::date, 1)
+      ON CONFLICT (booking_date)
+      DO UPDATE SET last_seq = daily_booking_counters.last_seq + 1
       RETURNING last_seq;
     `;
 
-    const existingRefs = await tx.appointment.findMany({
-      where: {
-        bookingRef: { startsWith: refPrefix },
-      },
-      select: { bookingRef: true },
-    });
-    const usedRefs = new Set(
-      existingRefs.map((row) => row.bookingRef).filter((ref): ref is string => Boolean(ref)),
-    );
-
-    let seq = counterRes[0].last_seq;
-    let candidate = `${refPrefix}${String(seq).padStart(3, '0')}`;
-    while (usedRefs.has(candidate)) {
-      seq += 1;
-      candidate = `${refPrefix}${String(seq).padStart(3, '0')}`;
-    }
-
-    if (seq !== counterRes[0].last_seq) {
-      await tx.$executeRaw`
-        UPDATE doctor_daily_counters
-        SET last_seq = ${seq}
-        WHERE doctor_id = ${doctorId}::uuid AND booking_date = ${dateOnly}::date
-      `;
-    }
-
-    return candidate;
+    const seq = counterRes[0].last_seq;
+    return `${refPrefix}${String(seq).padStart(3, '0')}`;
   }
 
   /**
@@ -244,12 +229,18 @@ export class BookingService {
       if (cached) {
         return cached;
       }
-      const lockAcquired = await this.redis.acquireIdempotencyLock(idemKey, 15);
+      let lockAcquired = await this.redis.acquireIdempotencyLock(idemKey, 15);
       if (!lockAcquired) {
-        await new Promise((r) => setTimeout(r, 150));
-        const retried = await this.redis.getIdempotency<any>(idemKey);
-        if (retried) return retried;
-        throw new ConflictException('Duplicate booking request already in flight');
+        for (let attempt = 0; attempt < 30; attempt++) {
+          await new Promise((r) => setTimeout(r, 100));
+          const retried = await this.redis.getIdempotency<any>(idemKey);
+          if (retried) return retried;
+          lockAcquired = await this.redis.acquireIdempotencyLock(idemKey, 15);
+          if (lockAcquired) break;
+        }
+        if (!lockAcquired) {
+          throw new ConflictException('Duplicate booking request already in flight');
+        }
       }
     }
 
@@ -267,11 +258,18 @@ export class BookingService {
         );
       }
 
-      // 2. Verify doctor is verified
+      // 2. Verify doctor is verified and user account is active
       const doctor = await this.prisma.doctor.findUnique({
         where: { id: doctorId },
+        include: { user: { select: { isActive: true } } },
       });
-      if (!doctor || !doctor.isVerified) {
+      if (!doctor) {
+        throw new BadRequestException('Doctor not found or not verified');
+      }
+      if (!doctor.user?.isActive) {
+        throw new ForbiddenException('Doctor account is deactivated');
+      }
+      if (!doctor.isVerified) {
         throw new BadRequestException('Doctor not found or not verified');
       }
 
@@ -424,76 +422,12 @@ export class BookingService {
    * Returns count of expired appointments released.
    */
   async releaseExpiredPendingAppointments(expiryMinutes = 15): Promise<number> {
-    const cutoff = new Date(Date.now() - expiryMinutes * 60 * 1000);
-
-    return this.prisma.$transaction(async (tx) => {
-      const candidates = await tx.$queryRaw<
-        Array<{ id: string; doctor_id: string; patient_id: string; slot_time: Date }>
-      >`
-        SELECT a.id, a.doctor_id, a.patient_id, a.slot_time
-        FROM appointments a
-        LEFT JOIN payments p ON p.appointment_id = a.id
-        WHERE a.status = 'PENDING_PAYMENT'
-          AND a.created_at < ${cutoff}
-          AND (p.id IS NULL OR p.status <> 'CAPTURED')
-        FOR UPDATE OF a SKIP LOCKED
-      `;
-
-      let releasedCount = 0;
-
-      for (const appt of candidates) {
-        await tx.appointment.update({
-          where: { id: appt.id },
-          data: {
-            status: 'CANCELLED',
-            cancellationReason: 'Payment window expired',
-          },
-        });
-
-        await tx.payment.updateMany({
-          where: {
-            appointmentId: appt.id,
-            status: { in: ['INITIATED', 'PENDING'] },
-          },
-          data: { status: 'FAILED' },
-        });
-
-        await tx.outboxEvent.create({
-          data: {
-            aggregateType: 'APPOINTMENT',
-            aggregateId: appt.id,
-            eventType: 'APPOINTMENT_EXPIRED',
-            payload: {
-              appointmentId: appt.id,
-              doctorId: appt.doctor_id,
-              patientId: appt.patient_id,
-              slotTime: new Date(appt.slot_time).toISOString(),
-            },
-          },
-        });
-
-        await tx.outboxEvent.create({
-          data: {
-            aggregateType: 'APPOINTMENT',
-            aggregateId: appt.id,
-            eventType: 'AppointmentSlotFreed',
-            payload: {
-              appointmentId: appt.id,
-              doctorId: appt.doctor_id,
-              slotTime: new Date(appt.slot_time).toISOString(),
-            },
-          },
-        });
-
-        releasedCount++;
-      }
-
-      for (const appt of candidates) {
-        await this.redis.getClient().del(`cache:next_slot:${appt.doctor_id}`);
-      }
-
-      return releasedCount;
-    });
+    const released = await releaseExpiredPendingAppointmentsShared(
+      this.prisma,
+      this.redis.getClient(),
+      expiryMinutes,
+    );
+    return released.length;
   }
 
   /**
@@ -665,10 +599,10 @@ export class BookingService {
     if (query.fromDate || query.toDate) {
       whereClause.slotTime = {};
       if (query.fromDate) {
-        whereClause.slotTime.gte = new Date(`${query.fromDate}T00:00:00.000Z`);
+        whereClause.slotTime.gte = getIstDayBoundsUtc(query.fromDate).start;
       }
       if (query.toDate) {
-        whereClause.slotTime.lte = new Date(`${query.toDate}T23:59:59.999Z`);
+        whereClause.slotTime.lte = getIstDayBoundsUtc(query.toDate).end;
       }
     }
 

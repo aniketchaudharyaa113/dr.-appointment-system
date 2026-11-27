@@ -42,6 +42,7 @@ export async function resetDatabaseAndRedis(
       refunds,
       payment_events,
       checkout_idempotency_keys,
+      daily_booking_counters,
       payments,
       reviews,
       waitlists,

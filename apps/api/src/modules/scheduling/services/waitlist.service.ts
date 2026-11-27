@@ -4,19 +4,18 @@ import {
   BadRequestException,
   ForbiddenException,
   Inject,
-  Logger,
 } from '@nestjs/common';
-import { randomBytes } from 'crypto';
 import { PrismaService } from '../../platform/database/prisma.service';
 import { RedisService } from '../../platform/redis/redis.service';
 import { BookingService } from './booking.service';
 import { getIstDateString } from '../../../common/utils/ist-time';
-import { ConsultationMode } from '@medibook/shared';
+import {
+  ConsultationMode,
+  offerCancelledSlotToNextShared,
+} from '@medibook/shared';
 
 @Injectable()
 export class WaitlistService {
-  private readonly logger = new Logger(WaitlistService.name);
-
   constructor(
     @Inject(PrismaService) private readonly prisma: PrismaService,
     @Inject(RedisService) private readonly redis: RedisService,
@@ -29,11 +28,12 @@ export class WaitlistService {
     slotDateStr: string,
     slotTime?: string,
   ) {
-    // 1. Verify doctor exists
+    // 1. Verify doctor exists, is verified, and account is active
     const doctor = await this.prisma.doctor.findUnique({
       where: { id: doctorId },
+      include: { user: { select: { isActive: true } } },
     });
-    if (!doctor) {
+    if (!doctor || !doctor.isVerified || !doctor.user?.isActive) {
       throw new NotFoundException(`Doctor ${doctorId} not found`);
     }
 
@@ -95,67 +95,12 @@ export class WaitlistService {
    * Cascading offer: When a slot is cancelled or freed, offer it to the next patient in line.
    */
   async offerCancelledSlotToNext(doctorId: string, slotTimeIso: string) {
-    const istDateStr = getIstDateString(new Date(slotTimeIso));
-    const dateOnly = new Date(`${istDateStr}T00:00:00.000Z`);
-
-    const nextInLine = await this.prisma.waitlist.findFirst({
-      where: {
-        doctorId,
-        slotDate: dateOnly,
-        status: 'WAITING',
-      },
-      orderBy: { createdAt: 'asc' },
-    });
-
-    if (!nextInLine) {
-      return null;
-    }
-
-    const claimExpiresAt = new Date(Date.now() + 15 * 60 * 1000);
-    const holdToken = randomBytes(24).toString('hex');
-
-    const holdAcquired = await this.redis.acquireSlotHold(
+    return offerCancelledSlotToNextShared(
+      this.prisma,
+      this.redis.getClient(),
       doctorId,
       slotTimeIso,
-      nextInLine.patientId,
-      holdToken,
-      900,
     );
-
-    if (!holdAcquired) {
-      this.logger.warn(
-        `Failed to acquire slot hold for waitlist offer: doctor=${doctorId}, slotTime=${slotTimeIso}`,
-      );
-      return null;
-    }
-
-    const updated = await this.prisma.waitlist.update({
-      where: { id: nextInLine.id },
-      data: {
-        status: 'OFFERED',
-        offeredAt: new Date(),
-        claimExpiresAt,
-        holdToken,
-        slotTime: slotTimeIso,
-      },
-    });
-
-    await this.prisma.outboxEvent.create({
-      data: {
-        aggregateType: 'WAITLIST',
-        aggregateId: nextInLine.id,
-        eventType: 'WaitlistSlotOffered',
-        payload: {
-          waitlistId: nextInLine.id,
-          patientId: nextInLine.patientId,
-          doctorId,
-          slotTime: slotTimeIso,
-          claimExpiresAt: claimExpiresAt.toISOString(),
-        },
-      },
-    });
-
-    return updated;
   }
 
   /**
@@ -216,10 +161,20 @@ export class WaitlistService {
       );
       return appointment;
     } catch (err) {
-      // Revert status if booking throws
-      await this.prisma.waitlist.update({
-        where: { id: waitlistId },
-        data: { status: 'OFFERED' },
+      // Only revert to OFFERED if the Redis hold AND claim window are genuinely still valid;
+      // otherwise mark EXPIRED so dead holds are never re-exposed.
+      const held = await this.redis.getSlotHold(entry.doctorId, entry.slotTime);
+      const stillHeldByPatient = Boolean(
+        held &&
+          held.token === entry.holdToken &&
+          held.patientId === patientId &&
+          entry.claimExpiresAt &&
+          entry.claimExpiresAt > new Date(),
+      );
+
+      await this.prisma.waitlist.updateMany({
+        where: { id: waitlistId, status: 'CLAIMED' },
+        data: { status: stillHeldByPatient ? 'OFFERED' : 'EXPIRED' },
       });
       throw err;
     }
@@ -242,26 +197,37 @@ export class WaitlistService {
       throw new ForbiddenException('Not authorized to leave this waitlist entry');
     }
 
-    if (entry.status !== 'WAITING' && entry.status !== 'OFFERED') {
-      throw new BadRequestException(
-        `Cannot leave waitlist entry with status ${entry.status}`,
-      );
-    }
-
-    const wasOffered = entry.status === 'OFFERED';
-    const updated = await this.prisma.waitlist.update({
-      where: { id: waitlistId },
+    // Atomic conditional update prevents overwriting a concurrent CLAIMED transition
+    const updateRes = await this.prisma.waitlist.updateMany({
+      where: {
+        id: waitlistId,
+        patientId,
+        status: { in: ['WAITING', 'OFFERED'] },
+      },
       data: { status: 'CANCELLED' },
     });
 
-    if (wasOffered && entry.holdToken && entry.slotTime) {
+    if (updateRes.count === 0) {
+      const current = await this.prisma.waitlist.findUnique({
+        where: { id: waitlistId },
+        select: { status: true },
+      });
+      throw new BadRequestException(
+        `Cannot leave waitlist entry with status ${current?.status ?? entry.status}`,
+      );
+    }
+
+    const updated = await this.prisma.waitlist.findUniqueOrThrow({
+      where: { id: waitlistId },
+    });
+
+    if (entry.status === 'OFFERED' && entry.holdToken && entry.slotTime) {
       await this.redis.releaseSlotHold(
         entry.doctorId,
         entry.slotTime,
         entry.holdToken,
         entry.patientId,
       );
-      // Immediately cascade offer to next in line
       await this.offerCancelledSlotToNext(entry.doctorId, entry.slotTime);
     }
 

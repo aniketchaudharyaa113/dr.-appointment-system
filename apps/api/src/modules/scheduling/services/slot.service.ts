@@ -1,4 +1,4 @@
-import { Injectable, BadRequestException, Inject } from '@nestjs/common';
+import { Injectable, BadRequestException, NotFoundException, Inject } from '@nestjs/common';
 import { PrismaService } from '../../platform/database/prisma.service';
 import { RedisService } from '../../platform/redis/redis.service';
 import {
@@ -34,6 +34,14 @@ export class SlotService {
   ): Promise<GeneratedSlot[]> {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
       throw new BadRequestException('Invalid date format. Expected YYYY-MM-DD');
+    }
+
+    const doctor = await this.prisma.doctor.findUnique({
+      where: { id: doctorId },
+      include: { user: { select: { isActive: true } } },
+    });
+    if (!doctor || !doctor.isVerified || !doctor.user?.isActive) {
+      throw new NotFoundException('Doctor not found');
     }
 
     const dayOfWeek = getIstDayOfWeek(dateStr);

@@ -205,6 +205,13 @@ model DoctorDailyCounter {
   @@map("doctor_daily_counters")
 }
 
+model DailyBookingCounter {
+  bookingDate DateTime @id @map("booking_date") @db.Date
+  lastSeq     Int      @default(0) @map("last_seq")
+
+  @@map("daily_booking_counters")
+}
+
 model Appointment {
   id                 String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   bookingRef         String?           @unique @map("booking_ref") @db.VarChar(20)

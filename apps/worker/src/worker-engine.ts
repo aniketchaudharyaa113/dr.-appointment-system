@@ -1,9 +1,14 @@
-import { PrismaClient, Prisma } from '@prisma/client';
+import { PrismaClient } from '@prisma/client';
 import { Queue, Worker, Job } from 'bullmq';
 import Redis from 'ioredis';
-import { randomBytes } from 'crypto';
 import type { Logger } from 'pino';
-import { DEFAULT_PLATFORM_COMMISSION_BPS, executeNoShowSweep } from '@medibook/shared';
+import {
+  DEFAULT_PLATFORM_COMMISSION_BPS,
+  executeNoShowSweep,
+  expireWaitlistOffersShared,
+  offerCancelledSlotToNextShared,
+  releaseExpiredPendingAppointmentsShared,
+} from '@medibook/shared';
 import type { Mailer } from './mailer.js';
 import { pollAndPublishOutbox } from './outbox-relay.js';
 import { executeProviderRefund, type RefundExecutor } from './refund-provider.js';
@@ -620,56 +625,16 @@ export class WorkerEngine {
   }
 
   async handleAppointmentSlotFreed(doctorId: string, slotTimeIso: string) {
-    const slotDate = new Date(`${slotTimeIso.slice(0, 10)}T00:00:00.000Z`);
-    const nextInLine = await this.prisma.waitlist.findFirst({
-      where: {
-        doctorId,
-        slotDate,
-        status: 'WAITING',
-      },
-      orderBy: { createdAt: 'asc' },
-    });
-
-    if (!nextInLine) return null;
-
-    const claimExpiresAt = new Date(Date.now() + 15 * 60 * 1000);
-    const holdToken = randomBytes(24).toString('hex');
-
-    const key = `slot:hold:${doctorId}:${slotTimeIso}`;
-    const value = `${holdToken}:${nextInLine.patientId}`;
-    const holdRes = await this.queueConnection.set(key, value, 'EX', 900, 'NX');
-    if (holdRes !== 'OK') {
-      this.logger.warn({ doctorId, slotTimeIso }, 'Could not acquire slot hold for waitlist');
-      return null;
+    const offered = await offerCancelledSlotToNextShared(
+      this.prisma,
+      this.queueConnection,
+      doctorId,
+      slotTimeIso,
+    );
+    if (!offered) {
+      this.logger.debug({ doctorId, slotTimeIso }, 'No eligible waitlist offer created');
     }
-
-    const updated = await this.prisma.waitlist.update({
-      where: { id: nextInLine.id },
-      data: {
-        status: 'OFFERED',
-        offeredAt: new Date(),
-        claimExpiresAt,
-        holdToken,
-        slotTime: slotTimeIso,
-      },
-    });
-
-    await this.prisma.outboxEvent.create({
-      data: {
-        aggregateType: 'WAITLIST',
-        aggregateId: nextInLine.id,
-        eventType: 'WaitlistSlotOffered',
-        payload: {
-          waitlistId: nextInLine.id,
-          patientId: nextInLine.patientId,
-          doctorId,
-          slotTime: slotTimeIso,
-          claimExpiresAt: claimExpiresAt.toISOString(),
-        },
-      },
-    });
-
-    return updated;
+    return offered;
   }
 
   private async processReminderJob(job: Job) {
@@ -715,90 +680,14 @@ export class WorkerEngine {
 
   private async processExpiryJob(job: Job) {
     const expiryMinutes = (job.data as any)?.expiryMinutes ?? 15;
-    const cutoff = new Date(Date.now() - expiryMinutes * 60 * 1000);
-
-    const released = await this.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
-      const candidates = await tx.$queryRaw<
-        Array<{ id: string; doctor_id: string; patient_id: string; slot_time: Date }>
-      >`
-        SELECT a.id, a.doctor_id, a.patient_id, a.slot_time
-        FROM appointments a
-        LEFT JOIN payments p ON p.appointment_id = a.id
-        WHERE a.status = 'PENDING_PAYMENT'
-          AND a.created_at < ${cutoff}
-          AND (p.id IS NULL OR p.status <> 'CAPTURED')
-        FOR UPDATE OF a SKIP LOCKED
-      `;
-
-      for (const appt of candidates) {
-        await tx.appointment.update({
-          where: { id: appt.id },
-          data: {
-            status: 'CANCELLED',
-            cancellationReason: 'Payment window expired',
-          },
-        });
-        await tx.payment.updateMany({
-          where: {
-            appointmentId: appt.id,
-            status: { in: ['INITIATED', 'PENDING'] },
-          },
-          data: { status: 'FAILED' },
-        });
-        await tx.outboxEvent.create({
-          data: {
-            aggregateType: 'APPOINTMENT',
-            aggregateId: appt.id,
-            eventType: 'APPOINTMENT_EXPIRED',
-            payload: {
-              appointmentId: appt.id,
-              doctorId: appt.doctor_id,
-              patientId: appt.patient_id,
-              slotTime: new Date(appt.slot_time).toISOString(),
-            },
-          },
-        });
-        await tx.outboxEvent.create({
-          data: {
-            aggregateType: 'APPOINTMENT',
-            aggregateId: appt.id,
-            eventType: 'AppointmentSlotFreed',
-            payload: {
-              appointmentId: appt.id,
-              doctorId: appt.doctor_id,
-              slotTime: new Date(appt.slot_time).toISOString(),
-            },
-          },
-        });
-      }
-
-      return candidates;
-    });
-
-    if (Array.isArray(released)) {
-      for (const appt of released) {
-        await this.queueConnection.del(`cache:next_slot:${appt.doctor_id}`);
-      }
-    }
+    const released = await releaseExpiredPendingAppointmentsShared(
+      this.prisma,
+      this.queueConnection,
+      expiryMinutes,
+    );
 
     // Sweep expired waitlist offers and cascade to next in line
-    const expiredOffers = await this.prisma.waitlist.findMany({
-      where: {
-        status: 'OFFERED',
-        claimExpiresAt: { lt: new Date() },
-      },
-    });
-    for (const offer of expiredOffers) {
-      await this.prisma.waitlist.update({
-        where: { id: offer.id },
-        data: { status: 'EXPIRED' },
-      });
-      if (offer.holdToken && offer.slotTime) {
-        const holdKey = `slot:hold:${offer.doctorId}:${offer.slotTime}`;
-        await this.queueConnection.del(holdKey);
-        await this.handleAppointmentSlotFreed(offer.doctorId, offer.slotTime);
-      }
-    }
+    await expireWaitlistOffersShared(this.prisma, this.queueConnection);
 
     // Clean up expired or old-revoked refresh tokens (> 7 days old)
     const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);

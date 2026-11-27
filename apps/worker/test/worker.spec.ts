@@ -163,14 +163,14 @@ describe('Slice 2: Real Outbox Relay, BullMQ Workers, Mailpit, Reminders, Crash 
       const published = await engine.pollOutboxOnce();
       expect(published).toBe(1);
 
-      // Verify in-app notification row & Mailpit email & delayed reminders
+      // Verify outbox event finished processing (notifications, Mailpit, & reminders scheduled)
       await waitUntil(async () => {
-        const notifs = await prisma.notification.findMany({ where: { userId: patient.id } });
-        const docNotifs = await prisma.notification.findMany({ where: { userId: doctor.userId } });
-        return notifs.length >= 1 && docNotifs.length >= 1;
+        const row = await prisma.outboxEvent.findUnique({ where: { id: outbox.id } });
+        return row?.status === 'PROCESSED';
       });
 
       const notifs = await prisma.notification.findMany({ where: { userId: patient.id } });
+      expect(notifs.length).toBeGreaterThanOrEqual(1);
       expect(notifs[0].type).toBe('APPOINTMENT_CONFIRMED');
 
       const docNotifs = await prisma.notification.findMany({ where: { userId: doctor.userId } });
@@ -189,7 +189,6 @@ describe('Slice 2: Real Outbox Relay, BullMQ Workers, Mailpit, Reminders, Crash 
       expect(rem24).toBeTruthy();
       expect(rem1).toBeTruthy();
 
-      // Verify outbox event marked PROCESSED
       const processedOutbox = await prisma.outboxEvent.findUnique({ where: { id: outbox.id } });
       expect(processedOutbox?.status).toBe('PROCESSED');
 
