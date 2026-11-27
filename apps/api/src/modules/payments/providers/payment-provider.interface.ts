@@ -15,9 +15,9 @@ export interface ParsedWebhookEvent {
   eventType: string;
   providerOrderId: string;
   providerPaymentId?: string;
-  amountPaise: number;
+  amountPaise?: number;
   currency?: string;
-  status: 'CAPTURED' | 'FAILED';
+  status: 'CAPTURED' | 'FAILED' | 'IGNORED';
   rawPayload: Record<string, any>;
 }
 
@@ -35,6 +35,7 @@ export interface PaymentProvider {
   parseWebhookEvent(rawBody: string | Buffer, headerEventId?: string): ParsedWebhookEvent;
 
   issueRefund(params: {
+    refundId?: string;
     paymentId: string;
     providerPaymentId?: string;
     amountPaise: number;

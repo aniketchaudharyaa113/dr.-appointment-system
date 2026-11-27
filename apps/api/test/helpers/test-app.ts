@@ -41,6 +41,7 @@ export async function resetDatabaseAndRedis(
       ledger_entries,
       refunds,
       payment_events,
+      checkout_idempotency_keys,
       payments,
       reviews,
       waitlists,

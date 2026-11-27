@@ -157,9 +157,12 @@ export class WorkerEngine {
           await this.prisma.refund.updateMany({
             where: {
               id: (job.data as any).payload.refundId,
-              status: 'PENDING',
+              status: { in: ['PENDING', 'IN_FLIGHT'] },
             },
-            data: { status: 'FAILED' },
+            data: {
+              status: 'FAILED',
+              lastError: err.message ? String(err.message).slice(0, 1000) : 'Refund exhausted retries',
+            },
           });
         }
 
@@ -461,28 +464,58 @@ export class WorkerEngine {
 
   private async handleRefundDispatch(refundId?: string) {
     if (!refundId) return;
+
+    // Atomically claim refund execution so concurrent/retried workers cannot double-refund
+    const claim = await this.prisma.refund.updateMany({
+      where: {
+        id: refundId,
+        status: { in: ['PENDING', 'FAILED'] },
+      },
+      data: {
+        status: 'IN_FLIGHT',
+        lastError: null,
+      },
+    });
+
     const refund = await this.prisma.refund.findUnique({
       where: { id: refundId },
       include: { payment: { include: { appointment: true } } },
     });
     if (!refund) return;
-    if (refund.status === 'PROCESSED' && refund.providerRefundId) {
-      return;
+
+    if (claim.count === 0) {
+      if (refund.status === 'PROCESSED' && refund.providerRefundId) {
+        return;
+      }
+      throw new Error(`Refund ${refundId} is currently ${refund.status}`);
     }
 
-    const providerRes = await this.refundExecutor({
-      refundId: refund.id,
-      paymentId: refund.paymentId,
-      providerPaymentId: refund.payment.providerPaymentId,
-      amountPaise: refund.amountPaise,
-      reason: refund.reason,
-    });
+    let providerRes;
+    try {
+      providerRes = await this.refundExecutor({
+        refundId: refund.id,
+        paymentId: refund.paymentId,
+        providerPaymentId: refund.payment.providerPaymentId,
+        amountPaise: refund.amountPaise,
+        reason: refund.reason,
+      });
+    } catch (err: any) {
+      await this.prisma.refund.update({
+        where: { id: refund.id },
+        data: {
+          status: 'PENDING',
+          lastError: err?.message ? String(err.message).slice(0, 1000) : 'Provider refund error',
+        },
+      });
+      throw err;
+    }
 
     await this.prisma.refund.update({
       where: { id: refund.id },
       data: {
         providerRefundId: providerRes.providerRefundId,
         status: providerRes.status === 'PROCESSED' ? 'PROCESSED' : 'PENDING',
+        lastError: null,
       },
     });
 

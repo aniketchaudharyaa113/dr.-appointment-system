@@ -61,19 +61,45 @@ export class StripeProvider implements PaymentProvider {
     const json = JSON.parse(bodyStr);
 
     const intent = json.data?.object;
+    const eventType = String(json.type || '');
+    const rawAmount = intent?.amount;
+    const amountPaise =
+      rawAmount !== undefined && rawAmount !== null ? Number(rawAmount) : undefined;
+    const currency = intent?.currency ? String(intent.currency).toUpperCase() : undefined;
+
+    let status: 'CAPTURED' | 'FAILED' | 'IGNORED' = 'IGNORED';
+    if (eventType === 'payment_intent.succeeded') {
+      status = 'CAPTURED';
+    } else if (eventType === 'payment_intent.payment_failed') {
+      status = 'FAILED';
+    }
+
+    const providerOrderId = intent?.id || '';
+    const providerPaymentId = intent?.charges?.data?.[0]?.id;
+    const entityKey =
+      providerPaymentId ||
+      providerOrderId ||
+      crypto.createHash('sha256').update(bodyStr).digest('hex').slice(0, 16);
+    const deterministicFallback = `evt_${crypto
+      .createHash('sha256')
+      .update(`${eventType}:${entityKey}`)
+      .digest('hex')
+      .slice(0, 24)}`;
+
     return {
-      eventId: headerEventId || json.id || `evt_${crypto.randomUUID().slice(0, 12)}`,
-      eventType: json.type || 'payment_intent.succeeded',
-      providerOrderId: intent?.id || '',
-      providerPaymentId: intent?.charges?.data?.[0]?.id || `ch_${crypto.randomUUID().slice(0, 12)}`,
-      amountPaise: intent?.amount || 0,
-      currency: (intent?.currency || 'INR').toUpperCase(),
-      status: json.type === 'payment_intent.payment_failed' ? 'FAILED' : 'CAPTURED',
+      eventId: headerEventId || json.id || deterministicFallback,
+      eventType: eventType || 'unknown',
+      providerOrderId,
+      providerPaymentId,
+      amountPaise,
+      currency,
+      status,
       rawPayload: json,
     };
   }
 
   async issueRefund(params: {
+    refundId?: string;
     paymentId: string;
     providerPaymentId?: string;
     amountPaise: number;

@@ -40,7 +40,9 @@ export const executeProviderRefund: RefundExecutor = async (params) => {
         headers: {
           Authorization: `Basic ${auth}`,
           'Content-Type': 'application/json',
+          'X-Refund-Idempotency': params.refundId,
         },
+        signal: AbortSignal.timeout(10_000),
         body: JSON.stringify({
           amount: params.amountPaise,
           notes: {

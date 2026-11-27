@@ -538,6 +538,12 @@ export class BookingService {
         );
       }
 
+      this.refundPolicy.assertRefundableAppointment({
+        status: lockedAppt.status,
+        slotTime: new Date(lockedAppt.slot_time),
+        actorRole: userRole || 'PATIENT',
+      });
+
       const cancelled = await tx.appointment.update({
         where: { id: appointmentId },
         data: {
@@ -574,7 +580,7 @@ export class BookingService {
         },
       });
 
-      // If payment was already CAPTURED, create Refund + reverse ledger + enqueue refund dispatch in SAME tx
+      // Global lock order (appointments -> payments): lock payments row AFTER appointments
       const paymentRows = await tx.$queryRaw<
         Array<{ id: string; status: string; amount_paise: number; provider_payment_id: string | null }>
       >`
@@ -602,6 +608,14 @@ export class BookingService {
           providerPaymentId: payment.provider_payment_id,
           refundAmountPaise,
           reason,
+        });
+      } else if (
+        payment &&
+        (payment.status === 'INITIATED' || payment.status === 'PENDING')
+      ) {
+        await tx.payment.update({
+          where: { id: payment.id },
+          data: { status: 'FAILED' },
         });
       }
 

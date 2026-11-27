@@ -203,6 +203,14 @@ export class LeaveService {
             refundAmountPaise,
             reason: `Doctor on leave: ${reason}`,
           });
+        } else if (
+          payment &&
+          (payment.status === 'INITIATED' || payment.status === 'PENDING')
+        ) {
+          await tx.payment.update({
+            where: { id: payment.id },
+            data: { status: 'FAILED' },
+          });
         }
       }
 

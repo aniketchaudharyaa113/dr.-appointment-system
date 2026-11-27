@@ -47,6 +47,7 @@ enum PaymentStatus {
 
 enum RefundStatus {
   PENDING
+  IN_FLIGHT
   PROCESSED
   FAILED
 }
@@ -227,6 +228,7 @@ model Appointment {
   vitals       PatientVitals[]
   labOrders    LabOrder[]
   attachments  ConsultationAttachment[]
+  checkoutKeys CheckoutIdempotencyKey[]
 
   @@index([patientId, status])
   @@index([doctorId, slotTime])
@@ -247,9 +249,10 @@ model Payment {
   createdAt         DateTime      @default(now()) @map("created_at")
   updatedAt         DateTime      @default(now()) @updatedAt @map("updated_at")
 
-  appointment Appointment    @relation(fields: [appointmentId], references: [id], onDelete: Cascade)
-  refunds     Refund[]
-  ledgers     LedgerEntry[]
+  appointment             Appointment               @relation(fields: [appointmentId], references: [id], onDelete: Cascade)
+  refunds                 Refund[]
+  ledgers                 LedgerEntry[]
+  checkoutIdempotencyKeys CheckoutIdempotencyKey[]
 
   @@map("payments")
 }
@@ -274,11 +277,26 @@ model Refund {
   amountPaise      Int          @map("amount_paise")
   reason           String?      @db.VarChar(255)
   status           RefundStatus @default(PENDING)
+  lastError        String?      @map("last_error") @db.Text
   createdAt        DateTime     @default(now()) @map("created_at")
+  updatedAt        DateTime     @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   payment Payment @relation(fields: [paymentId], references: [id], onDelete: Cascade)
 
   @@map("refunds")
+}
+
+model CheckoutIdempotencyKey {
+  idempotencyKey String   @id @map("idempotency_key") @db.VarChar(100)
+  appointmentId  String   @map("appointment_id") @db.Uuid
+  paymentId      String   @map("payment_id") @db.Uuid
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  appointment Appointment @relation(fields: [appointmentId], references: [id], onDelete: Cascade)
+  payment     Payment     @relation(fields: [paymentId], references: [id], onDelete: Cascade)
+
+  @@index([paymentId])
+  @@map("checkout_idempotency_keys")
 }
 
 model LedgerEntry {

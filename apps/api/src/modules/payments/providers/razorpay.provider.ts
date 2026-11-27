@@ -8,6 +8,8 @@ import {
 } from './payment-provider.interface';
 import { env } from '../../../common/config/env.schema';
 
+const PROVIDER_FETCH_TIMEOUT_MS = 10_000;
+
 @Injectable()
 export class RazorpayProvider implements PaymentProvider {
   readonly name = 'RAZORPAY';
@@ -39,6 +41,7 @@ export class RazorpayProvider implements PaymentProvider {
         Authorization: `Basic ${auth}`,
         'Content-Type': 'application/json',
       },
+      signal: AbortSignal.timeout(PROVIDER_FETCH_TIMEOUT_MS),
       body: JSON.stringify({
         amount: params.amountPaise,
         currency,
@@ -84,24 +87,49 @@ export class RazorpayProvider implements PaymentProvider {
     const json = JSON.parse(bodyStr);
 
     const paymentEntity = json.payload?.payment?.entity;
-    const providerOrderId = paymentEntity?.order_id || json.order_id || '';
+    const orderEntity = json.payload?.order?.entity;
+    const eventType = String(json.event || '');
+    const providerOrderId =
+      paymentEntity?.order_id || orderEntity?.id || json.order_id || '';
     const providerPaymentId = paymentEntity?.id || json.payment_id;
-    const amountPaise = paymentEntity?.amount || json.amount || 0;
-    const currency = (paymentEntity?.currency || json.currency || 'INR').toUpperCase();
+    const rawAmount = paymentEntity?.amount ?? orderEntity?.amount ?? json.amount;
+    const amountPaise =
+      rawAmount !== undefined && rawAmount !== null ? Number(rawAmount) : undefined;
+    const rawCurrency =
+      paymentEntity?.currency || orderEntity?.currency || json.currency;
+    const currency = rawCurrency ? String(rawCurrency).toUpperCase() : undefined;
+
+    let status: 'CAPTURED' | 'FAILED' | 'IGNORED' = 'IGNORED';
+    if (eventType === 'payment.captured' || eventType === 'order.paid') {
+      status = 'CAPTURED';
+    } else if (eventType === 'payment.failed') {
+      status = 'FAILED';
+    }
+
+    const entityKey =
+      providerPaymentId ||
+      providerOrderId ||
+      crypto.createHash('sha256').update(bodyStr).digest('hex').slice(0, 16);
+    const deterministicFallback = `evt_${crypto
+      .createHash('sha256')
+      .update(`${eventType}:${entityKey}`)
+      .digest('hex')
+      .slice(0, 24)}`;
 
     return {
-      eventId: headerEventId || json.id || `evt_${crypto.randomUUID().slice(0, 12)}`,
-      eventType: json.event || 'payment.captured',
+      eventId: headerEventId || json.id || deterministicFallback,
+      eventType: eventType || 'unknown',
       providerOrderId,
       providerPaymentId,
       amountPaise,
       currency,
-      status: json.event === 'payment.failed' ? 'FAILED' : 'CAPTURED',
+      status,
       rawPayload: json,
     };
   }
 
   async issueRefund(params: {
+    refundId?: string;
     paymentId: string;
     providerPaymentId?: string;
     amountPaise: number;
@@ -111,6 +139,7 @@ export class RazorpayProvider implements PaymentProvider {
       throw new Error('Razorpay credentials and providerPaymentId required for refund');
     }
 
+    const idempotencyKey = params.refundId || `rfnd_${params.paymentId}`;
     const auth = Buffer.from(`${this.keyId}:${this.keySecret}`).toString('base64');
     const response = await fetch(
       `https://api.razorpay.com/v1/payments/${params.providerPaymentId}/refund`,
@@ -119,10 +148,13 @@ export class RazorpayProvider implements PaymentProvider {
         headers: {
           Authorization: `Basic ${auth}`,
           'Content-Type': 'application/json',
+          'X-Refund-Idempotency': idempotencyKey,
         },
+        signal: AbortSignal.timeout(PROVIDER_FETCH_TIMEOUT_MS),
         body: JSON.stringify({
           amount: params.amountPaise,
           notes: {
+            refundId: idempotencyKey,
             reason: params.reason || 'Requested by patient or system',
           },
         }),
@@ -159,6 +191,7 @@ export class RazorpayProvider implements PaymentProvider {
         headers: {
           Authorization: `Basic ${auth}`,
         },
+        signal: AbortSignal.timeout(PROVIDER_FETCH_TIMEOUT_MS),
       },
     );
 

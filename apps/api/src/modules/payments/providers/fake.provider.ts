@@ -90,22 +90,52 @@ export class FakePaymentProvider implements PaymentProvider {
     const bodyStr = typeof rawBody === 'string' ? rawBody : rawBody.toString('utf8');
     const json = JSON.parse(bodyStr);
 
+    const paymentEntity = json.payload?.payment?.entity;
+    const orderEntity = json.payload?.order?.entity;
+    const eventType = String(json.event || '');
+    const providerOrderId =
+      paymentEntity?.order_id || orderEntity?.id || json.order_id || '';
+    const providerPaymentId = paymentEntity?.id || json.payment_id;
+    const rawAmount = paymentEntity?.amount ?? orderEntity?.amount ?? json.amount;
+    const amountPaise =
+      rawAmount !== undefined && rawAmount !== null ? Number(rawAmount) : undefined;
+    const rawCurrency =
+      paymentEntity?.currency || orderEntity?.currency || json.currency;
+    const currency = rawCurrency ? String(rawCurrency).toUpperCase() : undefined;
+
+    let status: 'CAPTURED' | 'FAILED' | 'IGNORED' = 'IGNORED';
+    if (eventType === 'payment.captured' || eventType === 'order.paid') {
+      status = 'CAPTURED';
+    } else if (eventType === 'payment.failed') {
+      status = 'FAILED';
+    }
+
+    const entityKey =
+      providerPaymentId ||
+      providerOrderId ||
+      crypto.createHash('sha256').update(bodyStr).digest('hex').slice(0, 16);
+    const deterministicFallback = `evt_${crypto
+      .createHash('sha256')
+      .update(`${eventType}:${entityKey}`)
+      .digest('hex')
+      .slice(0, 24)}`;
+
     return {
-      eventId: headerEventId || json.id || `evt_${crypto.randomUUID().slice(0, 12)}`,
-      eventType: json.event || 'payment.captured',
-      providerOrderId: json.payload?.payment?.entity?.order_id || json.order_id || '',
+      eventId: headerEventId || json.id || deterministicFallback,
+      eventType: eventType || 'unknown',
+      providerOrderId,
       providerPaymentId:
-        json.payload?.payment?.entity?.id ||
-        json.payment_id ||
-        `fake_pay_${crypto.randomUUID().slice(0, 12)}`,
-      amountPaise: json.payload?.payment?.entity?.amount || json.amount || 0,
-      currency: (json.payload?.payment?.entity?.currency || json.currency || 'INR').toUpperCase(),
-      status: json.event === 'payment.failed' ? 'FAILED' : 'CAPTURED',
+        providerPaymentId ||
+        (status === 'CAPTURED' ? `fake_pay_${entityKey.slice(0, 12)}` : undefined),
+      amountPaise,
+      currency,
+      status,
       rawPayload: json,
     };
   }
 
   async issueRefund(params: {
+    refundId?: string;
     paymentId: string;
     providerPaymentId?: string;
     amountPaise: number;
