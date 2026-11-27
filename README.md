@@ -1,8 +1,8 @@
-# MediBook — Enterprise Telehealth & Emergency EMS Platform
+# CuraBridge — Enterprise Telehealth & Emergency EMS Platform
 
 A distributed, production-grade telehealth and emergency medical response platform built as a high-throughput TypeScript monorepo alongside an honest Python AI clinical service. 
 
-MediBook pairs board-certified specialist doctor consultations (real-time slot locking, double-entry payment ledger, WebRTC video, and immutable digital prescriptions) with priority Emergency Medical Services (EMS) ambulance dispatch (Redis GEO driver matching, 20-second timeout cascade, and live Leaflet GPS tracking).
+CuraBridge pairs board-certified specialist doctor consultations (real-time slot locking, double-entry payment ledger, WebRTC video, and immutable digital prescriptions) with priority Emergency Medical Services (EMS) ambulance dispatch (Redis GEO driver matching, 20-second timeout cascade, and live Leaflet GPS tracking).
 
 Engineered with **NestJS + Fastify**, **Next.js 15 App Router**, **Prisma ORM**, **PostgreSQL (pgvector)**, **Redis 7**, **BullMQ Transactional Outbox**, **Nginx Load Balancing**, **LiveKit WebRTC**, and **Playwright E2E**.
 

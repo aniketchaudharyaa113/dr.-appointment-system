@@ -3,7 +3,7 @@ export type Locale = 'en' | 'hi' | 'bn';
 export const translations = {
   en: {
     nav: {
-      brand: 'MediBook',
+      brand: 'CuraBridge',
       findDoctors: 'Find Doctors',
       emergency: 'Emergency SOS',
       myAppointments: 'My Appointments',
@@ -89,7 +89,7 @@ export const translations = {
   },
   hi: {
     nav: {
-      brand: 'MediBook',
+      brand: 'CuraBridge',
       findDoctors: 'डॉक्टर खोजें',
       emergency: 'आपातकालीन सेवा (SOS)',
       myAppointments: 'मेरी नियुक्तियाँ',
@@ -175,7 +175,7 @@ export const translations = {
   },
   bn: {
     nav: {
-      brand: 'MediBook',
+      brand: 'CuraBridge',
       findDoctors: 'ডাক্তার খুঁজুন',
       emergency: 'জরুরি সেবা (SOS)',
       myAppointments: 'আমার অ্যাপয়েন্টমেন্ট',

@@ -3,48 +3,62 @@
 @tailwind utilities;
 
 :root {
-  --surface-canvas: #f7fafb;
+  --surface-canvas: #ffffff;
+  --surface-tint: #f4faf7;
   --surface-card: #ffffff;
-  --text-primary: #0b132b;
-  --brand-accent: #0d9488;
-  --scrollbar-track: #eef2f6;
-  --scrollbar-thumb: #94a3b8;
+  --text-primary: #132238;
+  --text-muted: #52637a;
+  --brand-accent: #198754;
+  --brand-forest: #14533c;
+  --border-subtle: #e3ece7;
+  --scrollbar-track: #eef4f0;
+  --scrollbar-thumb: #9fb4a9;
   color-scheme: light dark;
   accent-color: var(--brand-accent);
   scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
 }
 
-/* Pre-hydration dark fallback when user hasn't explicitly forced light theme */
 @media (prefers-color-scheme: dark) {
   :root:not(.light) {
-    --surface-canvas: #060b14;
-    --surface-card: #0d1526;
-    --text-primary: #f1f5f9;
-    --brand-accent: #2dd4bf;
-    --scrollbar-track: #0f172a;
-    --scrollbar-thumb: #475569;
+    --surface-canvas: #091310;
+    --surface-tint: #0e1c17;
+    --surface-card: #12221c;
+    --text-primary: #f2f7f4;
+    --text-muted: #a6bdb1;
+    --brand-accent: #34d399;
+    --brand-forest: #10b981;
+    --border-subtle: #1f352b;
+    --scrollbar-track: #0e1c17;
+    --scrollbar-thumb: #315244;
   }
 }
 
-/* Explicit next-themes class synchronization */
 html.light {
   color-scheme: light;
-  --surface-canvas: #f7fafb;
+  --surface-canvas: #ffffff;
+  --surface-tint: #f4faf7;
   --surface-card: #ffffff;
-  --text-primary: #0b132b;
-  --brand-accent: #0d9488;
-  --scrollbar-track: #eef2f6;
-  --scrollbar-thumb: #94a3b8;
+  --text-primary: #132238;
+  --text-muted: #52637a;
+  --brand-accent: #198754;
+  --brand-forest: #14533c;
+  --border-subtle: #e3ece7;
+  --scrollbar-track: #eef4f0;
+  --scrollbar-thumb: #9fb4a9;
 }
 
 html.dark {
   color-scheme: dark;
-  --surface-canvas: #060b14;
-  --surface-card: #0d1526;
-  --text-primary: #f1f5f9;
-  --brand-accent: #2dd4bf;
-  --scrollbar-track: #0f172a;
-  --scrollbar-thumb: #475569;
+  --surface-canvas: #091310;
+  --surface-tint: #0e1c17;
+  --surface-card: #12221c;
+  --text-primary: #f2f7f4;
+  --text-muted: #a6bdb1;
+  --brand-accent: #34d399;
+  --brand-forest: #10b981;
+  --border-subtle: #1f352b;
+  --scrollbar-track: #0e1c17;
+  --scrollbar-thumb: #315244;
 }
 
 body {
@@ -66,23 +80,29 @@ p {
   text-wrap: pretty;
 }
 
-/* Subtle clinical architectural background pattern */
+/* Soft, clean editorial hero backdrop */
 .bg-clinical-grid {
+  background-color: var(--surface-canvas);
   background-image:
-    radial-gradient(at 18% 0%, rgba(13, 148, 136, 0.08) 0px, transparent 52%),
-    radial-gradient(at 88% 8%, rgba(6, 182, 212, 0.07) 0px, transparent 48%),
-    linear-gradient(to right, rgba(15, 23, 42, 0.03) 1px, transparent 1px),
-    linear-gradient(to bottom, rgba(15, 23, 42, 0.03) 1px, transparent 1px);
-  background-size: 100% 100%, 100% 100%, 40px 40px, 40px 40px;
+    radial-gradient(ellipse 60% 55% at 85% 25%, rgba(34, 160, 107, 0.08) 0%, transparent 70%),
+    radial-gradient(ellipse 45% 40% at 15% 10%, rgba(34, 160, 107, 0.05) 0%, transparent 70%);
 }
 
 html.dark .bg-clinical-grid {
+  background-color: var(--surface-canvas);
   background-image:
-    radial-gradient(at 18% 0%, rgba(20, 184, 166, 0.14) 0px, transparent 52%),
-    radial-gradient(at 88% 8%, rgba(56, 189, 248, 0.11) 0px, transparent 48%),
-    linear-gradient(to right, rgba(255, 255, 255, 0.035) 1px, transparent 1px),
-    linear-gradient(to bottom, rgba(255, 255, 255, 0.035) 1px, transparent 1px);
-  background-size: 100% 100%, 100% 100%, 40px 40px, 40px 40px;
+    radial-gradient(ellipse 60% 55% at 85% 25%, rgba(52, 211, 153, 0.1) 0%, transparent 70%),
+    radial-gradient(ellipse 45% 40% at 15% 10%, rgba(16, 185, 129, 0.07) 0%, transparent 70%);
+}
+
+.cb-card {
+  background-color: var(--surface-card);
+  border: 1px solid var(--border-subtle);
+  box-shadow: 0 6px 24px -10px rgba(19, 34, 56, 0.07);
+}
+
+html.dark .cb-card {
+  box-shadow: 0 10px 28px -12px rgba(0, 0, 0, 0.5);
 }
 
 .visually-hidden:where(:not(:focus-within, :active)) {
@@ -102,14 +122,38 @@ html.dark .bg-clinical-grid {
   outline-offset: 3px;
 }
 
-/* Touch targets WCAG AA compliance (minimum 44x44px for primary controls on touch devices) */
 @media (pointer: coarse) {
   :where(button, a, input, select, textarea):not(.no-touch-target) {
     min-height: 44px;
   }
 }
 
+@keyframes gentle-float {
+  0%,
+  100% {
+    transform: translateY(0px);
+  }
+  50% {
+    transform: translateY(-6px);
+  }
+}
+
+.cb-float {
+  transform: translateY(0px);
+}
+
 @media (prefers-reduced-motion: no-preference) {
+  .cb-float {
+    animation: gentle-float 5.5s ease-in-out infinite;
+  }
+  .cb-float-delayed {
+    animation: gentle-float 6.5s ease-in-out 1.2s infinite;
+  }
+  .cb-paused .cb-float,
+  .cb-paused .cb-float-delayed {
+    animation-play-state: paused;
+  }
+
   :where(button, a) {
     transition:
       box-shadow 160ms ease-out,
@@ -118,14 +162,18 @@ html.dark .bg-clinical-grid {
       border-color 160ms ease-out,
       color 160ms ease-out;
   }
-
-  button:active:not(:disabled) {
-    transform: scale(0.985);
-  }
 }
 
 @media (forced-colors: active) {
+  .bg-clinical-grid {
+    background-image: none;
+  }
+  .cb-card,
   .clinical-card {
     border: 1px solid CanvasText;
+    box-shadow: none;
+  }
+  [aria-selected='true'] {
+    outline: 2px solid Highlight;
   }
 }

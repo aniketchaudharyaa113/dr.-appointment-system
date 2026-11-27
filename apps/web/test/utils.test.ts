@@ -29,9 +29,9 @@ describe('Web Utility Functions & Tokens', () => {
     assert.ok(translations.en.hero.title);
     assert.ok(translations.hi.hero.title);
     assert.ok(translations.bn.hero.title);
-    assert.strictEqual(translations.en.nav.brand, 'MediBook');
-    assert.strictEqual(translations.hi.nav.brand, 'MediBook');
-    assert.strictEqual(translations.bn.nav.brand, 'MediBook');
+    assert.strictEqual(translations.en.nav.brand, 'CuraBridge');
+    assert.strictEqual(translations.hi.nav.brand, 'CuraBridge');
+    assert.strictEqual(translations.bn.nav.brand, 'CuraBridge');
   });
 
   it('should include 112 and 108 emergency hotlines in translations', () => {

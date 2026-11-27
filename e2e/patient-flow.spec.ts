@@ -6,7 +6,7 @@ test.describe('Patient Booking & Payment E2E Journey (Real API + DB + Redis + Si
   }) => {
     // 1. Login as seeded patient
     await page.goto('/auth/login');
-    await expect(page.locator('h1')).toContainText('Sign In to MediBook');
+    await expect(page.locator('h1')).toContainText('Sign In to CuraBridge');
     await page.click('button:has-text("Patient (Anita Roy)")');
 
     // 2. Redirects to Doctor Directory loaded from real API

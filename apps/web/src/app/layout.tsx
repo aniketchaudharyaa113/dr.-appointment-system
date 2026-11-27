@@ -14,12 +14,13 @@ import { I18nProvider } from '@/lib/i18n';
 import { Providers } from '@/components/providers';
 import { Navbar } from '@/components/navbar';
 import { AiDrawer } from '@/components/ai-drawer';
-import { Activity, PhoneCall, ShieldCheck } from 'lucide-react';
+import { BrandLogo } from '@/components/brand-logo';
+import { PhoneCall, ShieldCheck } from 'lucide-react';
 
 export const metadata: Metadata = {
-  title: 'MediBook | Next-Gen Telehealth & Emergency EMS Platform',
+  title: 'CuraBridge | Modern Telehealth, Health Passport & Emergency EMS',
   description:
-    'Instant doctor consultations in Kolkata, certified digital prescriptions, and 24/7 priority emergency ambulance dispatch.',
+    'Find NMC-verified specialists, lock consultation slots instantly, manage your digital Health Passport, and request 24/7 GPS ambulance dispatch.',
 };
 
 export default function RootLayout({
@@ -32,10 +33,10 @@ export default function RootLayout({
       <head>
         <meta name="color-scheme" content="light dark" />
       </head>
-      <body className="font-sans antialiased selection:bg-teal-500 selection:text-white bg-[#f7fafb] dark:bg-[#060b14] text-slate-900 dark:text-slate-100 flex flex-col min-h-screen">
+      <body className="font-sans antialiased selection:bg-emerald-600 selection:text-white bg-white dark:bg-[#091310] text-[#132238] dark:text-slate-100 flex flex-col min-h-screen">
         <a
           href="#main-content"
-          className="visually-hidden focus:not-sr-only fixed top-3 left-3 z-50 px-4 py-2 rounded-xl bg-teal-600 text-white text-xs font-bold shadow-lg"
+          className="visually-hidden focus:not-sr-only fixed top-3 left-3 z-50 px-4 py-2 rounded-xl bg-emerald-700 text-white text-xs font-bold shadow-lg"
         >
           Skip to main content
         </a>
@@ -46,47 +47,59 @@ export default function RootLayout({
               {children}
             </main>
             <AiDrawer />
-            <footer className="border-t border-slate-200/80 dark:border-slate-800/80 bg-white/80 dark:bg-[#0b1220]/90 backdrop-blur-md py-10 px-4 sm:px-6 lg:px-8 mt-20">
-              <div className="max-w-7xl mx-auto grid grid-cols-1 md:grid-cols-3 gap-8 items-center text-sm text-slate-600 dark:text-slate-400">
-                <div className="space-y-2">
-                  <div className="flex items-center gap-2">
-                    <span className="w-7 h-7 rounded-lg bg-teal-600 text-white flex items-center justify-center">
-                      <Activity className="w-4 h-4" aria-hidden="true" />
-                    </span>
-                    <span className="font-display font-bold text-base text-slate-900 dark:text-white">
-                      MediBook Clinical
-                    </span>
+            <footer className="bg-[#132B23] text-emerald-50/90 pt-14 pb-10 px-4 sm:px-6 lg:px-8 border-t border-emerald-950">
+              <div className="max-w-7xl mx-auto space-y-10">
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-8">
+                  <div className="space-y-3">
+                    <BrandLogo variant="light" size="md" />
+                    <p className="text-xs text-emerald-100/75 leading-relaxed max-w-xs">
+                      One unified clinical workspace for verified doctor visits, encrypted LiveKit telehealth, portable Health Passports, and 24/7 EMS dispatch.
+                    </p>
+                    <a
+                      href="tel:112"
+                      className="no-touch-target inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-rose-500/20 border border-rose-400/30 text-rose-200 text-xs font-semibold hover:bg-rose-500/30 transition-colors"
+                    >
+                      <PhoneCall className="w-3.5 h-3.5" aria-hidden="true" />
+                      Emergency Hotline: 112 / 108
+                    </a>
                   </div>
-                  <p className="text-xs text-slate-500 dark:text-slate-400 flex items-center gap-1.5">
-                    <ShieldCheck className="w-3.5 h-3.5 text-teal-600 shrink-0" aria-hidden="true" />
-                    Compliant with India Telemedicine Practice Guidelines 2020
-                  </p>
+
+                  <div className="space-y-3">
+                    <h3 className="text-xs font-bold uppercase tracking-wider text-white">Services</h3>
+                    <ul className="space-y-2 text-xs text-emerald-100/75">
+                      <li><Link href="/doctors" className="hover:text-white transition-colors">Find Specialists</Link></li>
+                      <li><Link href="/appointments" className="hover:text-white transition-colors">My Appointments</Link></li>
+                      <li><Link href="/passport" className="hover:text-white transition-colors">Health Passport &amp; Labs</Link></li>
+                      <li><Link href="/emergency" className="hover:text-white transition-colors">Emergency Ambulance SOS</Link></li>
+                    </ul>
+                  </div>
+
+                  <div className="space-y-3">
+                    <h3 className="text-xs font-bold uppercase tracking-wider text-white">Care Portals</h3>
+                    <ul className="space-y-2 text-xs text-emerald-100/75">
+                      <li><Link href="/auth/login" className="hover:text-white transition-colors">Patient &amp; Doctor Login</Link></li>
+                      <li><Link href="/doctor/dashboard" className="hover:text-white transition-colors">Physician Workspace</Link></li>
+                      <li><Link href="/admin" className="hover:text-white transition-colors">Compliance Admin Portal</Link></li>
+                    </ul>
+                  </div>
+
+                  <div className="space-y-3">
+                    <h3 className="text-xs font-bold uppercase tracking-wider text-white">Standards</h3>
+                    <div className="p-4 rounded-2xl bg-white/5 border border-white/10 space-y-2 text-xs text-emerald-100/80">
+                      <p className="font-semibold text-white flex items-center gap-1.5">
+                        <ShieldCheck className="w-4 h-4 text-emerald-400 shrink-0" aria-hidden="true" />
+                        Clinical Governance
+                      </p>
+                      <p className="text-[11px] leading-relaxed">
+                        Built in alignment with India Telemedicine Practice Guidelines 2020 &amp; ABDM-ready record portability.
+                      </p>
+                    </div>
+                  </div>
                 </div>
 
-                <nav className="flex flex-wrap items-center gap-5 text-xs font-semibold justify-start md:justify-center" aria-label="Footer Navigation">
-                  <Link href="/doctors" className="hover:text-teal-600 dark:hover:text-teal-400 transition-colors">
-                    Find Specialists
-                  </Link>
-                  <Link href="/appointments" className="hover:text-teal-600 dark:hover:text-teal-400 transition-colors">
-                    My Appointments
-                  </Link>
-                  <Link href="/passport" className="hover:text-teal-600 dark:hover:text-teal-400 transition-colors">
-                    Health Passport
-                  </Link>
-                  <Link href="/emergency" className="text-rose-600 dark:text-rose-400 hover:underline">
-                    Emergency SOS
-                  </Link>
-                </nav>
-
-                <div className="flex flex-wrap items-center gap-3 md:justify-end text-xs">
-                  <a
-                    href="tel:112"
-                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-rose-50 dark:bg-rose-950/50 text-rose-700 dark:text-rose-300 font-semibold border border-rose-200/80 dark:border-rose-900/60"
-                  >
-                    <PhoneCall className="w-3.5 h-3.5" aria-hidden="true" />
-                    Emergency: 112 / 108
-                  </a>
-                  <span className="text-slate-400">Kolkata Regional EMS</span>
+                <div className="pt-6 border-t border-white/10 flex flex-col sm:flex-row items-center justify-between gap-4 text-[11px] text-emerald-100/60">
+                  <p>© 2026 CuraBridge Health Platform. All rights reserved.</p>
+                  <p>Regional Clinical &amp; Emergency Hub • Kolkata (IST)</p>
                 </div>
               </div>
             </footer>

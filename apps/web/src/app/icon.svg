@@ -1,16 +1,23 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
   <defs>
-    <linearGradient id="mb-grad" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0%" stop-color="#14b8a6" />
-      <stop offset="100%" stop-color="#0f766e" />
+    <linearGradient id="cb-grad" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#22a06b" />
+      <stop offset="100%" stop-color="#14533c" />
     </linearGradient>
   </defs>
-  <rect width="64" height="64" rx="16" fill="url(#mb-grad)" />
+  <rect width="64" height="64" rx="16" fill="url(#cb-grad)" />
   <path
-    d="M12 34h10l5-14 8 24 6-14h11"
+    d="M32 11L50 18.5V31.5C50 42.5 42.3 51.5 32 54.5C21.7 51.5 14 42.5 14 31.5V18.5L32 11Z"
+    fill="rgba(255,255,255,0.14)"
+    stroke="#ffffff"
+    stroke-width="3"
+    stroke-linejoin="round"
+  />
+  <path
+    d="M20 33h6l3.5-9 4.5 16 3.5-7H44"
     fill="none"
     stroke="#ffffff"
-    stroke-width="4.5"
+    stroke-width="3.4"
     stroke-linecap="round"
     stroke-linejoin="round"
   />

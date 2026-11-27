@@ -27,8 +27,8 @@ export function AiDrawer() {
       id: 'welcome',
       sender: 'assistant',
       content:
-        'Hello! I am your MediBook Clinical Assistant. Ask me about symptoms, verified doctor recommendations, or how our telehealth and emergency dispatch work.',
-      citations: ['MediBook Clinical Protocols v1.2'],
+        'Hello! I am your CuraBridge Clinical Assistant. Ask me about symptoms, verified doctor recommendations, or how our telehealth and emergency dispatch work.',
+      citations: ['CuraBridge Clinical Protocols v1.2'],
     },
   ]);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -109,7 +109,7 @@ export function AiDrawer() {
               ? data.emergencyCard?.instructions ||
                 'CRITICAL ALERT: Potential emergency detected. Dial 112 / 108 immediately.'
               : `Triage Urgency: ${data.urgencyLevel}. Recommended Specialty: ${data.recommendedSpecialty || 'General Medicine'}. Sign in to ask full RAG policy questions or use the live booking agent.`,
-            citations: ['MediBook Clinical Triage Engine'],
+            citations: ['CuraBridge Clinical Triage Engine'],
             suggestedAction: data.isEmergency
               ? {
                   type: 'EMERGENCY_AMBULANCE',
@@ -153,10 +153,10 @@ export function AiDrawer() {
         <button
           type="button"
           onClick={() => setIsOpen(true)}
-          className="fixed bottom-24 md:bottom-6 right-5 z-40 flex items-center gap-2.5 px-4 py-3 rounded-full bg-slate-900 dark:bg-teal-600 hover:bg-teal-700 dark:hover:bg-teal-500 text-white font-semibold shadow-xl shadow-slate-900/20 dark:shadow-teal-600/30 hover:-translate-y-0.5 transition-all border border-white/10"
+          className="fixed bottom-24 md:bottom-6 right-5 z-40 flex items-center gap-2.5 px-4 py-3 rounded-full bg-[#14533C] dark:bg-emerald-600 hover:bg-[#0F3F2D] dark:hover:bg-emerald-500 text-white font-semibold shadow-xl shadow-emerald-950/20 hover:-translate-y-0.5 transition-all border border-white/10"
         >
-          <Sparkles aria-hidden="true" className="w-4 h-4 text-teal-300 dark:text-white" />
-          <span className="text-xs sm:text-sm">Ask MediBook AI</span>
+          <Sparkles aria-hidden="true" className="w-4 h-4 text-emerald-200 dark:text-white" />
+          <span className="text-xs sm:text-sm">Ask CuraBridge AI</span>
         </button>
       )}
 
@@ -164,7 +164,7 @@ export function AiDrawer() {
       {isOpen && (
         <div
           role="dialog"
-          aria-label="MediBook Clinical AI Assistant"
+          aria-label="CuraBridge Clinical AI Assistant"
           className="fixed inset-y-0 right-0 z-50 w-full sm:w-[440px] bg-white/95 dark:bg-[#0b1220]/95 backdrop-blur-xl shadow-2xl border-l border-slate-200 dark:border-slate-800 flex flex-col animate-slide-left-fade"
         >
           {/* Header */}

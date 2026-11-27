@@ -295,7 +295,9 @@ function DoctorsListContent() {
                       className="clinical-card p-6 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 hover:border-teal-500/60 hover:shadow-lg transition-all flex flex-col sm:flex-row items-start sm:items-center justify-between gap-6"
                     >
                       <div className="flex items-start gap-4">
-                        <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-teal-500 to-cyan-600 text-white font-display font-bold text-lg flex items-center justify-center shrink-0 shadow-sm">
+                      <div
+                        className="w-14 h-14 rounded-2xl bg-gradient-to-br from-emerald-500 to-emerald-700 text-white font-display font-bold text-lg flex items-center justify-center shrink-0 shadow-sm"
+                      >
                           {doc.name.replace(/^Dr\.\s*/i, '').slice(0, 2).toUpperCase()}
                         </div>
                         <div className="space-y-1.5">
@@ -314,7 +316,7 @@ function DoctorsListContent() {
                           <p className="text-xs text-slate-500 dark:text-slate-400 flex items-center gap-1.5">
                             <MapPin className="w-3.5 h-3.5 text-slate-400 shrink-0" aria-hidden="true" />
                             <span>
-                              {doc.clinicName || 'MediBook Clinic'}
+                              {doc.clinicName || 'CuraBridge Clinic'}
                               {doc.clinicAddress ? ` • ${doc.clinicAddress}` : ''}
                             </span>
                           </p>
@@ -352,7 +354,7 @@ function DoctorsListContent() {
 
                         <Link
                           href={`/doctors/${doc.id}`}
-                          className="inline-flex items-center gap-1.5 px-5 py-2.5 rounded-xl bg-teal-600 hover:bg-teal-700 text-white font-bold text-xs sm:text-sm shadow-sm transition-colors"
+                          className="inline-flex items-center gap-1.5 px-5 py-2.5 rounded-full bg-[#14533C] hover:bg-[#0F3F2D] dark:bg-emerald-600 dark:hover:bg-emerald-500 text-white font-bold text-xs sm:text-sm shadow-sm transition-colors"
                         >
                           <span>{t.doctors.bookSlot}</span>
                           <ChevronRight className="w-4 h-4" aria-hidden="true" />

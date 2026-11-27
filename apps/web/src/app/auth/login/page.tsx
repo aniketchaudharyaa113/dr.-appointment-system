@@ -130,23 +130,23 @@ function LoginContent() {
 
   const headingTitle =
     mode === 'login'
-      ? 'Sign In to MediBook'
+      ? 'Sign In to CuraBridge'
       : registerRole === 'DOCTOR'
         ? 'Create Doctor Account'
         : 'Create Patient Account';
 
   return (
-    <div className="min-h-[80vh] bg-clinical-grid py-12 px-4">
+    <div className="min-h-[82vh] bg-clinical-grid py-14 px-4">
       <div className="max-w-md mx-auto space-y-6">
         <div className="text-center space-y-2.5">
-          <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-teal-500 to-teal-700 text-white flex items-center justify-center mx-auto shadow-lg shadow-teal-600/20">
+          <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-emerald-500 to-emerald-700 text-white flex items-center justify-center mx-auto shadow-md">
             <Activity className="w-6 h-6" aria-hidden="true" />
           </div>
-          <h1 className="font-display text-2xl sm:text-3xl font-extrabold text-slate-900 dark:text-white">
+          <h1 className="font-display text-2xl sm:text-3xl font-extrabold text-[#132238] dark:text-white">
             {headingTitle}
           </h1>
-          <p className="text-sm text-slate-500 dark:text-slate-400">
-            Verified Telehealth Platform • Encrypted Clinical Access
+          <p className="text-sm text-[#52637A] dark:text-slate-400">
+            CuraBridge Clinical Workspace • Encrypted Access
           </p>
         </div>
 
@@ -382,7 +382,7 @@ function LoginContent() {
           <button
             type="submit"
             disabled={loading}
-            className="w-full py-3.5 px-4 rounded-xl bg-teal-600 hover:bg-teal-700 disabled:opacity-50 text-white font-bold text-sm shadow-md shadow-teal-600/20 transition-colors flex items-center justify-center gap-2"
+            className="w-full py-3.5 px-4 rounded-full bg-[#14533C] hover:bg-[#0F3F2D] dark:bg-emerald-600 dark:hover:bg-emerald-500 disabled:opacity-50 text-white font-bold text-sm shadow-md transition-colors flex items-center justify-center gap-2"
           >
             <Lock className="w-4 h-4" aria-hidden="true" />
             <span>{loading ? 'Authenticating...' : mode === 'login' ? 'Sign In' : 'Create Account'}</span>

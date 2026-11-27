@@ -116,7 +116,7 @@ export default function CheckoutPage() {
         key,
         amount: amountPaise,
         currency: paymentOrder.currency || 'INR',
-        name: 'MediBook Telehealth',
+        name: 'CuraBridge Telehealth',
         description: `Consultation with ${/^dr\.?\s/i.test(appt.doctorName) ? appt.doctorName : `Dr. ${appt.doctorName}`}`,
         order_id: paymentOrder.providerOrderId,
         prefill: {
