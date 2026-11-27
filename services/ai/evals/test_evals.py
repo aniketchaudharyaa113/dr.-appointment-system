@@ -194,20 +194,68 @@ def test_booking_agent_calls_real_api_with_user_jwt():
 
 def test_copilot_soap_note_generation():
     client = TestClient(app)
+    payload = {
+        "appointment_id": "appt-test-123",
+        "doctor_id": "doc-test-456",
+        "patient_name": "Patient",
+        "messages": [
+            {"sender": "Patient", "content": "Doctor, I have had a dry cough for 3 days"},
+            {"sender": "Doctor", "content": "Any fever or breathlessness?"},
+            {"sender": "Patient", "content": "No fever, just throat irritation"},
+        ],
+    }
+
+    # Unauthenticated / non-DOCTOR role rejected even without AI_INTERNAL_TOKEN
+    unauth_role = client.post("/copilot/draft-note", json=payload)
+    assert unauth_role.status_code == 403
+
     res = client.post(
         "/copilot/draft-note",
-        json={
-            "appointment_id": "appt-test-123",
-            "doctor_id": "doc-test-456",
-            "patient_name": "Rohan Sharma",
-            "messages": [
-                {"sender": "Patient", "content": "Doctor, I have had a dry cough for 3 days"},
-                {"sender": "Doctor", "content": "Any fever or breathlessness?"},
-                {"sender": "Patient", "content": "No fever, just throat irritation"},
-            ],
-        },
+        headers={"X-Caller-Role": "DOCTOR"},
+        json=payload,
     )
     assert res.status_code == 200
     soap = res.json()["soap_note"]
     assert len(soap["subjective"]) > 10
     assert "Requires Attending Doctor Review" in soap["watermark"]
+
+
+def test_ai_service_internal_token_enforcement():
+    client = TestClient(app)
+    prev_token = os.environ.get("AI_INTERNAL_TOKEN")
+    os.environ["AI_INTERNAL_TOKEN"] = "eval-internal-secret"
+    try:
+        # Missing token rejected across /triage, /chat, /copilot/draft-note
+        assert client.post("/triage", json={"query": "mild fever"}).status_code == 401
+        assert client.post("/chat", json={"message": "hello"}).status_code == 401
+        assert (
+            client.post(
+                "/copilot/draft-note",
+                headers={"X-Caller-Role": "DOCTOR"},
+                json={"appointment_id": "a", "doctor_id": "d", "patient_name": "Patient", "messages": []},
+            ).status_code
+            == 401
+        )
+
+        # Wrong token rejected
+        assert (
+            client.post(
+                "/triage",
+                headers={"X-Internal-Token": "wrong"},
+                json={"query": "mild fever"},
+            ).status_code
+            == 401
+        )
+
+        # Valid token succeeds
+        ok = client.post(
+            "/triage",
+            headers={"X-Internal-Token": "eval-internal-secret"},
+            json={"query": "mild fever"},
+        )
+        assert ok.status_code == 200
+    finally:
+        if prev_token is not None:
+            os.environ["AI_INTERNAL_TOKEN"] = prev_token
+        else:
+            os.environ.pop("AI_INTERNAL_TOKEN", None)

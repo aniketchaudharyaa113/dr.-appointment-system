@@ -8,9 +8,10 @@ MediBook FastAPI AI Service
 
 from __future__ import annotations
 
+import hmac
 import os
 from typing import Any, Dict, List, Optional
-from fastapi import FastAPI, Header
+from fastapi import Depends, FastAPI, Header, HTTPException
 from pydantic import BaseModel, Field
 
 from booking_agent import RealBookingAgent
@@ -21,6 +22,21 @@ from triage_model import check_emergency_rules, get_triage_model, infer_specialt
 
 
 app = FastAPI(title="MediBook AI Service", version="2.0.0")
+
+
+def verify_internal_service(x_internal_token: Optional[str] = Header(default=None)):
+    expected = os.getenv("AI_INTERNAL_TOKEN", "")
+    if expected:
+        if not x_internal_token or not hmac.compare_digest(x_internal_token, expected):
+            raise HTTPException(status_code=401, detail="Invalid or missing internal service token")
+
+
+def verify_doctor_caller(
+    x_caller_role: Optional[str] = Header(default=None),
+    _: None = Depends(verify_internal_service),
+):
+    if (x_caller_role or "").upper() != "DOCTOR":
+        raise HTTPException(status_code=403, detail="Doctor role required for clinical copilot")
 
 
 class TriageRequest(BaseModel):
@@ -67,7 +83,7 @@ def triage_eval_summary():
     return model.eval_report
 
 
-@app.post("/triage")
+@app.post("/triage", dependencies=[Depends(verify_internal_service)])
 def triage(req: TriageRequest):
     pred = get_triage_model().predict(req.query)
     if pred["is_emergency"]:
@@ -98,7 +114,7 @@ def triage(req: TriageRequest):
     }
 
 
-@app.post("/chat")
+@app.post("/chat", dependencies=[Depends(verify_internal_service)])
 def chat(
     req: ChatRequest,
     authorization: Optional[str] = Header(default=None),
@@ -204,7 +220,7 @@ def chat(
     }
 
 
-@app.post("/copilot/draft-note")
+@app.post("/copilot/draft-note", dependencies=[Depends(verify_doctor_caller)])
 def copilot_draft_note(req: CopilotNoteRequest):
     llm = get_llm_provider()
     soap_note = llm.generate_soap_note(req.patient_name, req.messages)

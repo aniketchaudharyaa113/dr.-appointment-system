@@ -190,6 +190,7 @@ jobs:
           LIVEKIT_API_SECRET: ci_livekit_secret_key_for_e2e_32_chars_2026
           MINIO_ACCESS_KEY: ci_minio_access_2026
           MINIO_SECRET_KEY: ci_minio_secret_2026
+          AI_INTERNAL_TOKEN: ci_ai_internal_token_for_e2e_2026
           # Allow E2E simulate button (FAKE provider)
           NEXT_PUBLIC_ENABLE_PAYMENT_SIMULATOR: "true"
           NEXT_PUBLIC_SHOW_DEMO_LOGINS: "true"

@@ -75,6 +75,19 @@ export class ChatService {
           `attachmentUrl must point to a file strictly within appointments/${appointmentId}/`,
         );
       }
+      const verifiedAttachment = await this.prisma.consultationAttachment.findFirst({
+        where: {
+          appointmentId,
+          fileKey: attachmentUrl,
+          isVerified: true,
+        },
+        select: { id: true },
+      });
+      if (!verifiedAttachment) {
+        throw new BadRequestException(
+          'Attachment must be uploaded and verified before sharing in chat',
+        );
+      }
     }
 
     const senderRole = isDoctor ? 'DOCTOR' : 'PATIENT';

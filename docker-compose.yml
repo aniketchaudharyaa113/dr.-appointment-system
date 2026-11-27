@@ -8,7 +8,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
       POSTGRES_DB: ${POSTGRES_DB:-medibook}
     ports:
-      - "5434:5432"
+      - "127.0.0.1:5434:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -23,7 +23,7 @@ services:
     restart: unless-stopped
     command: redis-server --appendonly yes
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379"
     volumes:
       - redis_data:/data
     healthcheck:
@@ -77,10 +77,11 @@ services:
       dockerfile: services/ai/Dockerfile
     container_name: medibook-ai
     restart: unless-stopped
-    ports:
-      - "8000:8000"
+    expose:
+      - "8000"
     environment:
       PORT: 8000
+      AI_INTERNAL_TOKEN: ${AI_INTERNAL_TOKEN:?AI_INTERNAL_TOKEN is required}
       DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/${POSTGRES_DB:-medibook}
       API_INTERNAL_URL: http://nginx/api
       LLM_PROVIDER: ${LLM_PROVIDER:-ollama}
@@ -110,6 +111,7 @@ services:
       CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost,http://localhost:3000}
       NODE_ENV: production
       AI_SERVICE_URL: http://ai:8000
+      AI_INTERNAL_TOKEN: ${AI_INTERNAL_TOKEN:?AI_INTERNAL_TOKEN is required}
       PAYMENT_PROVIDER: ${PAYMENT_PROVIDER:-RAZORPAY}
       PAYMENT_WEBHOOK_SECRET: ${PAYMENT_WEBHOOK_SECRET:-}
       RAZORPAY_KEY_ID: ${RAZORPAY_KEY_ID:-}
@@ -153,6 +155,7 @@ services:
       CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost,http://localhost:3000}
       NODE_ENV: production
       AI_SERVICE_URL: http://ai:8000
+      AI_INTERNAL_TOKEN: ${AI_INTERNAL_TOKEN:?AI_INTERNAL_TOKEN is required}
       PAYMENT_PROVIDER: ${PAYMENT_PROVIDER:-RAZORPAY}
       PAYMENT_WEBHOOK_SECRET: ${PAYMENT_WEBHOOK_SECRET:-}
       RAZORPAY_KEY_ID: ${RAZORPAY_KEY_ID:-}
@@ -217,7 +220,7 @@ services:
       PORT: 3000
       NODE_ENV: production
     ports:
-      - "3000:3000"
+      - "127.0.0.1:3000:3000"
     depends_on:
       api-1:
         condition: service_healthy

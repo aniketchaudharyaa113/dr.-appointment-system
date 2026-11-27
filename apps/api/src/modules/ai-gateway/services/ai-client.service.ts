@@ -46,19 +46,35 @@ export class AiClientService {
   private readonly baseUrl: string;
   private isCircuitOpen = false;
   private lastFailureTime = 0;
+  private defaultTimeoutMs = 3000;
+  private circuitOpenMs = 15000;
 
   constructor() {
     this.baseUrl = process.env.AI_SERVICE_URL || 'http://localhost:8000';
   }
 
+  configure(options: { timeoutMs?: number; circuitOpenMs?: number }) {
+    if (options.timeoutMs !== undefined) this.defaultTimeoutMs = options.timeoutMs;
+    if (options.circuitOpenMs !== undefined) this.circuitOpenMs = options.circuitOpenMs;
+  }
+
+  private buildInternalHeaders(extra?: Record<string, string>): Record<string, string> {
+    const token = process.env.AI_INTERNAL_TOKEN;
+    return {
+      'Content-Type': 'application/json',
+      ...(token ? { 'x-internal-token': token } : {}),
+      ...(extra ?? {}),
+    };
+  }
+
   /**
-   * PII Redaction: Scrubs email addresses, phone numbers, and Aadhaar-like IDs.
+   * PII Redaction: Scrubs email addresses, standalone 10-digit Indian phone numbers, and 12-digit IDs.
    */
   redactPii(text: string): string {
     return text
       .replace(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g, '[REDACTED_EMAIL]')
-      .replace(/(\+?91[\-\s]?)?[6789]\d{9}/g, '[REDACTED_PHONE]')
-      .replace(/\b\d{4}[\s-]?\d{4}[\s-]?\d{4}\b/g, '[REDACTED_ID]');
+      .replace(/(?<!\d)(?:\+?91[\s-]?)?[6-9]\d{9}(?!\d)/g, '[REDACTED_PHONE]')
+      .replace(/(?<!\d)\d{4}[\s-]?\d{4}[\s-]?\d{4}(?!\d)/g, '[REDACTED_ID]');
   }
 
   /**
@@ -69,7 +85,7 @@ export class AiClientService {
     try {
       const res = await this.fetchWithTimeout(`${this.baseUrl}/triage`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: this.buildInternalHeaders(),
         body: JSON.stringify({ query: redacted, user_id: userId }),
       });
 
@@ -105,23 +121,26 @@ export class AiClientService {
     authHeader?: string,
   ): Promise<ChatResult> {
     const redacted = this.redactPii(message);
+    const redactedHistory = history.map((h) => ({
+      sender: h.sender,
+      content: this.redactPii(h.content),
+    }));
 
     try {
       const res = await this.fetchWithTimeout(
         `${this.baseUrl}/chat`,
         {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            ...(authHeader ? { Authorization: authHeader } : {}),
-          },
+          headers: this.buildInternalHeaders(
+            authHeader ? { Authorization: authHeader } : undefined,
+          ),
           body: JSON.stringify({
             message: redacted,
             user_id: userId,
-            conversation_history: history,
+            conversation_history: redactedHistory,
           }),
         },
-        8000,
+        Math.max(this.defaultTimeoutMs, this.defaultTimeoutMs < 3000 ? this.defaultTimeoutMs : 8000),
       );
 
       if (!res.ok) throw new Error(`AI service returned ${res.status}`);
@@ -155,18 +174,23 @@ export class AiClientService {
   async summarizeNote(
     appointmentId: string,
     doctorId: string,
-    patientName: string,
+    _patientName: string,
     messages: Array<{ sender: string; content: string }>,
   ): Promise<CopilotNoteResult> {
+    const redactedMessages = messages.map((m) => ({
+      sender: m.sender,
+      content: this.redactPii(m.content),
+    }));
+
     try {
       const res = await this.fetchWithTimeout(`${this.baseUrl}/copilot/draft-note`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: this.buildInternalHeaders({ 'x-caller-role': 'DOCTOR' }),
         body: JSON.stringify({
           appointment_id: appointmentId,
           doctor_id: doctorId,
-          patient_name: patientName,
-          messages,
+          patient_name: 'Patient',
+          messages: redactedMessages,
         }),
       });
 
@@ -181,7 +205,7 @@ export class AiClientService {
       return {
         appointmentId,
         soapNote: {
-          subjective: `Patient ${patientName} consultation discussion recorded.`,
+          subjective: 'Patient consultation discussion recorded.',
           objective: 'Telemedicine consultation session completed.',
           assessment: 'Clinical evaluation pending attending physician review.',
           plan: 'Follow-up as advised by attending doctor.',
@@ -191,15 +215,36 @@ export class AiClientService {
     }
   }
 
-  private async fetchWithTimeout(url: string, options: any, timeoutMs = 3000): Promise<Response> {
+  private async fetchWithTimeout(
+    url: string,
+    options: any,
+    timeoutMs = this.defaultTimeoutMs,
+  ): Promise<Response> {
+    if (this.isCircuitOpen) {
+      if (Date.now() - this.lastFailureTime < this.circuitOpenMs) {
+        throw new Error('AI service circuit breaker is open');
+      }
+      // Half-open probe allowed after cooldown
+      this.isCircuitOpen = false;
+    }
+
     const controller = new AbortController();
     const id = setTimeout(() => controller.abort(), timeoutMs);
     try {
       const res = await fetch(url, { ...options, signal: controller.signal });
       clearTimeout(id);
+      if (res.status >= 500) {
+        this.isCircuitOpen = true;
+        this.lastFailureTime = Date.now();
+      } else {
+        this.isCircuitOpen = false;
+        this.lastFailureTime = 0;
+      }
       return res;
     } catch (e) {
       clearTimeout(id);
+      this.isCircuitOpen = true;
+      this.lastFailureTime = Date.now();
       throw e;
     }
   }

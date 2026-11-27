@@ -61,6 +61,7 @@ export const EnvSchema = z
     SMTP_PASS: z.string().optional(),
     // AI Service
     AI_SERVICE_URL: z.string().default('http://localhost:8000'),
+    AI_INTERNAL_TOKEN: z.string().optional(),
   })
   .superRefine((data, ctx) => {
     if (data.NODE_ENV === 'production') {
@@ -89,6 +90,7 @@ export const EnvSchema = z
         ['MINIO_SECRET_KEY', ['minioadmin']],
         ['RAZORPAY_WEBHOOK_SECRET', ['webhook_secret_123']],
         ['PAYMENT_WEBHOOK_SECRET', ['fake_webhook_secret_for_testing_123', 'dev_webhook_secret_key_for_hmac_verification']],
+        ['AI_INTERNAL_TOKEN', ['changeme', 'dev-internal-token']],
       ];
 
       for (const [key, forbidden] of weakSecrets) {

@@ -680,38 +680,60 @@ export class WorkerEngine {
 
   private async processExpiryJob(job: Job) {
     const expiryMinutes = (job.data as any)?.expiryMinutes ?? 15;
-    const released = await releaseExpiredPendingAppointmentsShared(
-      this.prisma,
-      this.queueConnection,
-      expiryMinutes,
-    );
+    let released: Awaited<ReturnType<typeof releaseExpiredPendingAppointmentsShared>> = [];
+    try {
+      released = await releaseExpiredPendingAppointmentsShared(
+        this.prisma,
+        this.queueConnection,
+        expiryMinutes,
+      );
+    } catch (err) {
+      this.logger.error({ err }, 'Expiry step failed: releaseExpiredPendingAppointmentsShared');
+    }
 
     // Sweep expired waitlist offers and cascade to next in line
-    await expireWaitlistOffersShared(this.prisma, this.queueConnection);
+    try {
+      await expireWaitlistOffersShared(this.prisma, this.queueConnection);
+    } catch (err) {
+      this.logger.error({ err }, 'Expiry step failed: expireWaitlistOffersShared');
+    }
 
     // Clean up expired or old-revoked refresh tokens (> 7 days old)
-    const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
-    await this.prisma.refreshToken.deleteMany({
-      where: {
-        OR: [
-          { expiresAt: { lt: new Date() } },
-          { isRevoked: true, createdAt: { lt: sevenDaysAgo } },
-        ],
-      },
-    });
+    try {
+      const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+      await this.prisma.refreshToken.deleteMany({
+        where: {
+          OR: [
+            { expiresAt: { lt: new Date() } },
+            { isRevoked: true, createdAt: { lt: sevenDaysAgo } },
+          ],
+        },
+      });
+    } catch (err) {
+      this.logger.error({ err }, 'Expiry step failed: refreshToken cleanup');
+    }
 
     // Shared no-show sweep (handles patient-waited doctor-no-show auto-refund vs patient no-show)
-    const commissionBps = Number(
-      process.env.PLATFORM_COMMISSION_BPS || DEFAULT_PLATFORM_COMMISSION_BPS,
-    );
-    const sweep = await executeNoShowSweep(this.prisma, { commissionBps });
-    for (const freed of sweep.freedSlots) {
-      await this.queueConnection.del(`cache:next_slot:${freed.doctorId}`);
+    let sweep = { noShowCount: 0, doctorNoShowCount: 0, freedSlots: [] as { doctorId: string }[] };
+    try {
+      const commissionBps = Number(
+        process.env.PLATFORM_COMMISSION_BPS || DEFAULT_PLATFORM_COMMISSION_BPS,
+      );
+      sweep = await executeNoShowSweep(this.prisma, { commissionBps });
+      for (const freed of sweep.freedSlots) {
+        await this.queueConnection.del(`cache:next_slot:${freed.doctorId}`);
+      }
+    } catch (err) {
+      this.logger.error({ err }, 'Expiry step failed: executeNoShowSweep');
     }
 
     // Outbox retention cleanup: purge PROCESSED events older than retentionDays (default 14 days)
-    const retentionDays = (job.data as any)?.retentionDays ?? 14;
-    await this.purgeProcessedOutboxEvents(retentionDays);
+    try {
+      const retentionDays = (job.data as any)?.retentionDays ?? 14;
+      await this.purgeProcessedOutboxEvents(retentionDays);
+    } catch (err) {
+      this.logger.error({ err }, 'Expiry step failed: purgeProcessedOutboxEvents');
+    }
 
     return {
       released,

@@ -479,4 +479,64 @@ describe('Slice 2: Real Outbox Relay, BullMQ Workers, Mailpit, Reminders, Crash 
       await okEngine.close();
     }
   });
+
+  it('B28: fault-isolated expiry sweep continues refresh token and outbox cleanup even if waitlist sweep fails', async () => {
+    const user = await prisma.user.create({
+      data: {
+        email: `b28-worker-${randomUUID()}@medibook.test`,
+        name: 'Expiry User',
+        passwordHash: 'hash',
+        role: 'PATIENT',
+      },
+    });
+
+    const expiredToken = await prisma.refreshToken.create({
+      data: {
+        userId: user.id,
+        tokenHash: `expired-${randomUUID()}`,
+        expiresAt: new Date(Date.now() - 60_000),
+      },
+    });
+
+    const oldProcessed = await prisma.outboxEvent.create({
+      data: {
+        aggregateType: 'APPOINTMENT',
+        aggregateId: randomUUID(),
+        eventType: 'OLD_EVENT',
+        payload: {},
+        status: 'PROCESSED',
+        createdAt: new Date(Date.now() - 20 * 24 * 60 * 60 * 1000),
+      },
+    });
+
+    const engine = new WorkerEngine({
+      prisma,
+      redisUrl,
+      mailer,
+      logger,
+    });
+
+    const origQueryRaw = prisma.$queryRaw.bind(prisma);
+    (prisma as any).$queryRaw = (strings: TemplateStringsArray, ...values: any[]) => {
+      if (strings.join(' ').includes('UPDATE waitlists')) {
+        return Promise.reject(new Error('Simulated waitlist query outage'));
+      }
+      return origQueryRaw(strings, ...values);
+    };
+
+    try {
+      await expect(
+        (engine as any).processExpiryJob({ data: { expiryMinutes: 15, retentionDays: 14 } }),
+      ).resolves.toBeDefined();
+
+      const tokenStillExists = await prisma.refreshToken.findUnique({ where: { id: expiredToken.id } });
+      expect(tokenStillExists).toBeNull();
+
+      const outboxStillExists = await prisma.outboxEvent.findUnique({ where: { id: oldProcessed.id } });
+      expect(outboxStillExists).toBeNull();
+    } finally {
+      (prisma as any).$queryRaw = origQueryRaw;
+      await engine.close();
+    }
+  });
 });

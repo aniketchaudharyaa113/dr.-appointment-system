@@ -1,24 +1,28 @@
 'use client';
 
 import React, { useState, Suspense } from 'react';
+import dynamic from 'next/dynamic';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { type UserSession } from '@/lib/api';
-import { useAuth } from '@/lib/auth-context';
+import { useAuth, type AuthUser } from '@/lib/auth-context';
 import { sanitizeRedirect } from '@/lib/utils';
-import { Activity, ShieldCheck, User, Stethoscope, Ambulance, Lock, ArrowRight, AlertCircle } from 'lucide-react';
+import { Activity, Lock, AlertCircle } from 'lucide-react';
+
+const DemoLoginPanel =
+  process.env.NEXT_PUBLIC_SHOW_DEMO_LOGINS === 'true'
+    ? dynamic(() => import('./demo-panel'), { ssr: false })
+    : null;
 
 function LoginContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const redirectParam = searchParams.get('redirect');
   const { login, register } = useAuth();
-  const showDemoLogins = process.env.NEXT_PUBLIC_SHOW_DEMO_LOGINS === 'true';
 
   const [mode, setMode] = useState<'login' | 'register'>('login');
   const [registerRole, setRegisterRole] = useState<'PATIENT' | 'DOCTOR'>('PATIENT');
   const [name, setName] = useState('');
-  const [email, setEmail] = useState(showDemoLogins ? 'patient@medibook.test' : '');
-  const [password, setPassword] = useState(showDemoLogins ? 'Password123!' : '');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
   const [specialty, setSpecialty] = useState('General Medicine');
   const [licenseNumber, setLicenseNumber] = useState('');
   const [experienceYears, setExperienceYears] = useState(5);
@@ -26,49 +30,20 @@ function LoginContent() {
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
-  const demoAccounts: {
-    role: UserSession['role'];
-    email: string;
-    label: string;
-    icon: any;
-    targetUrl: string;
-  }[] = [
-    {
-      role: 'PATIENT',
-      email: 'patient@medibook.test',
-      label: 'Patient (Anita Roy)',
-      icon: User,
-      targetUrl: '/doctors',
-    },
-    {
-      role: 'DOCTOR',
-      email: 'doctor@medibook.test',
-      label: 'Doctor (Dr. Subhash Chandra)',
-      icon: Stethoscope,
-      targetUrl: '/doctor/dashboard',
-    },
-    {
-      role: 'ADMIN',
-      email: 'admin@medibook.test',
-      label: 'Admin (Compliance & Audit)',
-      icon: ShieldCheck,
-      targetUrl: '/admin',
-    },
-    {
-      role: 'DRIVER',
-      email: 'driver@medibook.test',
-      label: 'Ambulance Driver (Vikram Singh)',
-      icon: Ambulance,
-      targetUrl: '/emergency',
-    },
-  ];
+  const roleLandingMap: Record<AuthUser['role'], string> = {
+    DOCTOR: '/doctor/dashboard',
+    ADMIN: '/admin',
+    DRIVER: '/emergency',
+    PATIENT: '/doctors',
+  };
 
-  const performLogin = async (loginEmail: string, loginPassword: string, fallbackUrl: string) => {
+  const performLogin = async (loginEmail: string, loginPassword: string, fallbackUrl?: string) => {
     setLoading(true);
     setErrorMsg(null);
     try {
-      await login(loginEmail, loginPassword);
-      router.push(sanitizeRedirect(redirectParam, fallbackUrl));
+      const loggedIn = await login(loginEmail, loginPassword);
+      const target = fallbackUrl || roleLandingMap[loggedIn.role] || '/doctors';
+      router.push(sanitizeRedirect(redirectParam, target));
     } catch (err: any) {
       setErrorMsg(err.message || 'Authentication failed');
     } finally {
@@ -79,8 +54,7 @@ function LoginContent() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (mode === 'login') {
-      const matched = demoAccounts.find((a) => a.email === email.trim());
-      await performLogin(email.trim(), password, matched?.targetUrl || '/doctors');
+      await performLogin(email.trim(), password);
       return;
     }
 
@@ -150,34 +124,8 @@ function LoginContent() {
           </p>
         </div>
 
-        {/* 1-Click Demo Accounts */}
-        {showDemoLogins && (
-          <div className="p-4 rounded-2xl bg-teal-50/80 dark:bg-teal-950/40 border border-teal-200/80 dark:border-teal-900/60 space-y-2.5">
-            <div className="text-xs font-bold text-teal-800 dark:text-teal-200">
-              1-Click Seeded Account Sign-In:
-            </div>
-            <div className="grid grid-cols-1 gap-2">
-              {demoAccounts.map((acc) => {
-                const Icon = acc.icon;
-                return (
-                  <button
-                    key={acc.role}
-                    type="button"
-                    disabled={loading}
-                    onClick={() => performLogin(acc.email, 'Password123!', acc.targetUrl)}
-                    className="w-full flex items-center justify-between p-2.5 rounded-xl bg-white dark:bg-slate-900 border border-teal-100 dark:border-teal-900 hover:border-teal-400 disabled:opacity-50 text-xs font-semibold text-slate-800 dark:text-slate-200 transition-colors shadow-sm"
-                  >
-                    <div className="flex items-center gap-2.5">
-                      <Icon className="w-4 h-4 text-teal-600" aria-hidden="true" />
-                      <span>{acc.label}</span>
-                    </div>
-                    <ArrowRight className="w-3.5 h-3.5 text-slate-400" aria-hidden="true" />
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-        )}
+        {/* 1-Click Demo Accounts (stripped from production builds when NEXT_PUBLIC_SHOW_DEMO_LOGINS !== 'true') */}
+        {DemoLoginPanel && <DemoLoginPanel loading={loading} onSelectDemo={performLogin} />}
 
         {errorMsg && (
           <div
