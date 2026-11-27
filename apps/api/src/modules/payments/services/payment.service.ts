@@ -170,7 +170,9 @@ export class PaymentService {
     return {
       provider: this.provider.name,
       simulatorEnabled:
-        env.NODE_ENV !== 'production' && env.PAYMENT_PROVIDER === 'FAKE',
+        env.NODE_ENV !== 'production' &&
+        env.PAYMENT_PROVIDER === 'FAKE' &&
+        env.ENABLE_DEV_ENDPOINTS,
       keyId: env.RAZORPAY_KEY_ID || undefined,
     };
   }
