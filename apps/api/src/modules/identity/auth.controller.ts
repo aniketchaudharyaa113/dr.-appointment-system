@@ -25,6 +25,14 @@ import {
   LoginSchema,
   LoginInput,
   RefreshTokenBodySchema,
+  ChangePasswordSchema,
+  ChangePasswordInput,
+  ForgotPasswordSchema,
+  ForgotPasswordInput,
+  ResetPasswordSchema,
+  ResetPasswordInput,
+  VerifyEmailSchema,
+  VerifyEmailInput,
   JwtPayload,
 } from '@medibook/shared';
 import { env } from '../../common/config/env.schema';
@@ -50,7 +58,20 @@ export class AuthController {
 
     const result = await this.authService.register(body, ip, userAgent);
 
-    res.setCookie('refreshToken', result.refreshToken, {
+    if ('pendingVerification' in result && result.pendingVerification) {
+      return res.status(HttpStatus.ACCEPTED).send({
+        pendingVerification: true,
+        message: result.message,
+      });
+    }
+
+    const regSuccess = result as {
+      user: { id: string; email: string; name: string; role: string };
+      accessToken: string;
+      refreshToken: string;
+    };
+
+    res.setCookie('refreshToken', regSuccess.refreshToken, {
       httpOnly: true,
       secure: env.NODE_ENV === 'production',
       sameSite: 'lax',
@@ -59,8 +80,8 @@ export class AuthController {
     });
 
     return res.status(HttpStatus.CREATED).send({
-      user: result.user,
-      accessToken: result.accessToken,
+      user: regSuccess.user,
+      accessToken: regSuccess.accessToken,
     });
   }
 
@@ -149,6 +170,77 @@ export class AuthController {
   getSessionStatus(@Req() req: FastifyRequest) {
     const cookies = (req as any).cookies || {};
     return { hasSession: Boolean(cookies.refreshToken) };
+  }
+
+  @Post('change-password')
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Change authenticated user password and revoke active refresh tokens' })
+  async changePassword(
+    @CurrentUser() user: JwtPayload,
+    @Body(new ZodValidationPipe(ChangePasswordSchema)) body: ChangePasswordInput,
+    @Req() req: FastifyRequest,
+  ) {
+    return this.authService.changePassword(
+      user.sub,
+      body.currentPassword,
+      body.newPassword,
+      req.ip,
+      req.headers['user-agent'],
+    );
+  }
+
+  @Post('forgot-password')
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(RateLimitGuard)
+  @RateLimit({ keyPrefix: 'forgot_pw', limit: 5, windowSeconds: 60 })
+  @ApiOperation({ summary: 'Request password reset link/token without user enumeration' })
+  async forgotPassword(
+    @Body(new ZodValidationPipe(ForgotPasswordSchema)) body: ForgotPasswordInput,
+    @Req() req: FastifyRequest,
+  ) {
+    return this.authService.requestPasswordReset(
+      body.email,
+      req.ip,
+      req.headers['user-agent'],
+    );
+  }
+
+  @Post('reset-password')
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(RateLimitGuard)
+  @RateLimit({ keyPrefix: 'reset_pw', limit: 10, windowSeconds: 60 })
+  @ApiOperation({ summary: 'Reset password using a valid single-use reset token' })
+  async resetPassword(
+    @Body(new ZodValidationPipe(ResetPasswordSchema)) body: ResetPasswordInput,
+    @Req() req: FastifyRequest,
+  ) {
+    return this.authService.resetPassword(
+      body.token,
+      body.newPassword,
+      req.ip,
+      req.headers['user-agent'],
+    );
+  }
+
+  @Post('verify-email')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Verify user email address using verification token' })
+  async verifyEmail(
+    @Body(new ZodValidationPipe(VerifyEmailSchema)) body: VerifyEmailInput,
+  ) {
+    return this.authService.verifyEmail(body.token);
+  }
+
+  @Post('resend-verification')
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(JwtAuthGuard, RateLimitGuard)
+  @RateLimit({ keyPrefix: 'resend_verify', limit: 3, windowSeconds: 60 })
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Resend email verification message to signed-in user' })
+  async resendVerification(@CurrentUser() user: JwtPayload) {
+    return this.authService.resendVerification(user.sub);
   }
 
   @Get('me')

@@ -52,8 +52,10 @@ export async function refreshAccessToken(): Promise<string | null> {
       });
 
       if (!refreshRes.ok) {
-        setAuthToken(null);
-        setCurrentUser(null);
+        if (refreshRes.status === 401 || refreshRes.status === 403) {
+          setAuthToken(null);
+          setCurrentUser(null);
+        }
         return null;
       }
 
@@ -71,8 +73,7 @@ export async function refreshAccessToken(): Promise<string | null> {
       }
       return newToken;
     } catch {
-      setAuthToken(null);
-      setCurrentUser(null);
+      // Preserve in-memory session state on transient network errors so offline blips don't force logout
       return null;
     } finally {
       inFlightRefresh = null;

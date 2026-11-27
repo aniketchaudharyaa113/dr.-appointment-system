@@ -179,12 +179,14 @@ export class AmbulanceService implements OnModuleDestroy {
   /**
    * Lists online drivers with active Redis heartbeats and their live GEO coordinates.
    */
-  async getOnlineDrivers(lat = 22.5726, lng = 88.3639) {
+  async getOnlineDrivers(lat = 22.5726, lng = 88.3639, role = 'PATIENT') {
     const client = this.redis.getClient();
-    const results = (await client.georadius(
+    const results = (await (client as any).geosearch(
       this.geoKey,
+      'FROMLONLAT',
       lng,
       lat,
+      'BYRADIUS',
       50,
       'km',
       'WITHDIST',
@@ -219,16 +221,30 @@ export class AmbulanceService implements OnModuleDestroy {
       include: { user: { select: { name: true, phone: true } } },
     });
 
+    const isAdmin = role === 'ADMIN';
+
     return profiles
       .map((p) => {
         const coords = coordMap.get(p.id);
+        const rawLat = coords?.latitude ?? (p.lastLat ? Number(p.lastLat) : null);
+        const rawLng = coords?.longitude ?? (p.lastLng ? Number(p.lastLng) : null);
+
+        if (isAdmin) {
+          return {
+            driverId: p.id,
+            vehicleNumber: p.vehicleNumber,
+            driverName: p.user.name,
+            latitude: rawLat,
+            longitude: rawLng,
+            distanceKm: coords?.distanceKm ?? null,
+          };
+        }
+
+        // Redact driver identity & vehicle plate and coarse-grain coordinates for non-admin callers
         return {
           driverId: p.id,
-          vehicleNumber: p.vehicleNumber,
-          driverName: p.user.name,
-          latitude: coords?.latitude ?? (p.lastLat ? Number(p.lastLat) : null),
-          longitude:
-            coords?.longitude ?? (p.lastLng ? Number(p.lastLng) : null),
+          latitude: rawLat !== null ? Math.round(rawLat * 100) / 100 : null,
+          longitude: rawLng !== null ? Math.round(rawLng * 100) / 100 : null,
           distanceKm: coords?.distanceKm ?? null,
         };
       })
@@ -355,10 +371,12 @@ export class AmbulanceService implements OnModuleDestroy {
     // If no live drivers in Redis GEO, double check any seeded online drivers wouldn't be falsely claimed unless heartbeating
     const nearestDrivers: { driverId: string; distanceKm: number }[] = [];
     try {
-      const results = (await client.georadius(
+      const results = (await (client as any).geosearch(
         this.geoKey,
+        'FROMLONLAT',
         pickupLng,
         pickupLat,
+        'BYRADIUS',
         25,
         'km',
         'WITHDIST',
@@ -697,10 +715,12 @@ export class AmbulanceService implements OnModuleDestroy {
     );
     triedDrivers.add(timedOutDriverId);
 
-    const results = (await client.georadius(
+    const results = (await (client as any).geosearch(
       this.geoKey,
+      'FROMLONLAT',
       Number(request.pickupLng),
       Number(request.pickupLat),
+      'BYRADIUS',
       25,
       'km',
       'WITHDIST',
@@ -886,7 +906,7 @@ export class AmbulanceService implements OnModuleDestroy {
    * Dev/Demo simulator helper (only available when PAYMENT_PROVIDER === 'FAKE').
    * Drives a real driver through Redis GEO telemetry -> acceptRequest -> EN_ROUTE -> live interpolated steps -> ARRIVED.
    */
-  async simulateDriverTrip(requestId: string) {
+  async simulateDriverTrip(requestId: string, userId?: string, role?: string) {
     if (env.PAYMENT_PROVIDER !== 'FAKE') {
       throw new ForbiddenException(
         'Driver simulator endpoint is disabled in non-FAKE environments',
@@ -902,6 +922,12 @@ export class AmbulanceService implements OnModuleDestroy {
       },
     });
     if (!request) throw new NotFoundException('Ambulance request not found');
+
+    if (userId && request.patientId !== userId && role !== 'ADMIN') {
+      throw new ForbiddenException(
+        'Only the requesting patient or an admin can simulate this ambulance trip',
+      );
+    }
 
     // If request had no driver yet (because drivers hadn't heartbeated yet), wake seeded drivers and offer to nearest
     let activeDriver = request.driver;

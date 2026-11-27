@@ -37,8 +37,8 @@ interface EmergencyInfo {
 
 interface OnlineUnit {
   driverId: string;
-  vehicleNumber: string;
-  driverName: string;
+  vehicleNumber?: string;
+  driverName?: string;
   latitude: number | null;
   longitude: number | null;
   distanceKm: number | null;

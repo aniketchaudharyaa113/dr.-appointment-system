@@ -31,12 +31,32 @@ local ttl = redis.call('TTL', KEYS[1])
 return { current, ttl }
 `;
 
+interface BucketEntry {
+  count: number;
+  resetAtMs: number;
+}
+
 @Injectable()
 export class RateLimitGuard implements CanActivate {
+  private readonly fallbackBuckets = new Map<string, BucketEntry>();
+
   constructor(
     @Inject(Reflector) private readonly reflector: Reflector,
     @Inject(RedisService) private readonly redis: RedisService,
   ) {}
+
+  private consumeFallback(key: string, windowSeconds: number): [number, number] {
+    const now = Date.now();
+    const existing = this.fallbackBuckets.get(key);
+    if (!existing || existing.resetAtMs <= now) {
+      const resetAtMs = now + windowSeconds * 1000;
+      this.fallbackBuckets.set(key, { count: 1, resetAtMs });
+      return [1, windowSeconds];
+    }
+    existing.count += 1;
+    const ttl = Math.max(1, Math.ceil((existing.resetAtMs - now) / 1000));
+    return [existing.count, ttl];
+  }
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const options = this.reflector.getAllAndOverride<RateLimitOptions>(
@@ -52,31 +72,36 @@ export class RateLimitGuard implements CanActivate {
     const key = `ratelimit:${options.keyPrefix}:${actor}`;
 
     const client = this.redis.getClient();
-    if (!client) return true;
+    let current = 0;
+    let ttl = options.windowSeconds;
 
-    try {
-      const result = (await client.eval(
-        ATOMIC_INCR_EXPIRE_LUA,
-        1,
-        key,
-        String(options.windowSeconds),
-      )) as [number, number];
-      const current = Number(result?.[0] ?? 0);
-      const ttl = Math.max(1, Number(result?.[1] ?? options.windowSeconds));
-
-      if (current > options.limit) {
-        throw new HttpException(
-          {
-            statusCode: HttpStatus.TOO_MANY_REQUESTS,
-            message: `Rate limit exceeded. Please try again in ${ttl} seconds.`,
-            error: 'Too Many Requests',
-            retryAfter: ttl,
-          },
-          HttpStatus.TOO_MANY_REQUESTS,
-        );
+    if (!client) {
+      [current, ttl] = this.consumeFallback(key, options.windowSeconds);
+    } else {
+      try {
+        const result = (await client.eval(
+          ATOMIC_INCR_EXPIRE_LUA,
+          1,
+          key,
+          String(options.windowSeconds),
+        )) as [number, number];
+        current = Number(result?.[0] ?? 0);
+        ttl = Math.max(1, Number(result?.[1] ?? options.windowSeconds));
+      } catch {
+        [current, ttl] = this.consumeFallback(key, options.windowSeconds);
       }
-    } catch (err) {
-      if (err instanceof HttpException) throw err;
+    }
+
+    if (current > options.limit) {
+      throw new HttpException(
+        {
+          statusCode: HttpStatus.TOO_MANY_REQUESTS,
+          message: `Rate limit exceeded. Please try again in ${ttl} seconds.`,
+          error: 'Too Many Requests',
+          retryAfter: ttl,
+        },
+        HttpStatus.TOO_MANY_REQUESTS,
+      );
     }
 
     return true;

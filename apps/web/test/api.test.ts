@@ -1,6 +1,11 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert';
-import { fetchApi } from '../src/lib/api.ts';
+import {
+  fetchApi,
+  getCurrentUser,
+  refreshAccessToken,
+  setCurrentUser,
+} from '../src/lib/api.ts';
 
 describe('Web fetchApi & Single-flight token refresh', () => {
   it('should handle 204 No Content without throwing JSON parse error', async () => {
@@ -95,6 +100,44 @@ describe('Web fetchApi & Single-flight token refresh', () => {
       );
     } finally {
       global.fetch = originalFetch;
+    }
+  });
+
+  it('B25: refreshAccessToken preserves current session on transient network/503 error and clears on 401', async () => {
+    const originalFetch = global.fetch;
+    try {
+      setCurrentUser({
+        id: 'u1',
+        name: 'Patient One',
+        email: 'p1@medibook.test',
+        role: 'PATIENT',
+        token: 'old-token',
+      });
+
+      // Transient network error should NOT clear currentUser
+      global.fetch = (async () => {
+        throw new TypeError('Failed to fetch');
+      }) as any;
+      const netRes = await refreshAccessToken();
+      assert.strictEqual(netRes, null);
+      assert.strictEqual(getCurrentUser()?.id, 'u1');
+
+      // Transient 503 should NOT clear currentUser
+      global.fetch = (async () =>
+        new Response(null, { status: 503, statusText: 'Service Unavailable' })) as any;
+      const err503 = await refreshAccessToken();
+      assert.strictEqual(err503, null);
+      assert.strictEqual(getCurrentUser()?.id, 'u1');
+
+      // Explicit 401 Unauthorized MUST clear currentUser
+      global.fetch = (async () =>
+        new Response(null, { status: 401, statusText: 'Unauthorized' })) as any;
+      const err401 = await refreshAccessToken();
+      assert.strictEqual(err401, null);
+      assert.strictEqual(getCurrentUser(), null);
+    } finally {
+      global.fetch = originalFetch;
+      setCurrentUser(null);
     }
   });
 });

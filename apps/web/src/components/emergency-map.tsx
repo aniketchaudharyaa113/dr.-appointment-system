@@ -20,7 +20,7 @@ interface HospitalMarker {
 
 interface OnlineUnit {
   driverId: string;
-  vehicleNumber: string;
+  vehicleNumber?: string;
   latitude: number | null;
   longitude: number | null;
 }
@@ -132,7 +132,7 @@ export function EmergencyMap({
             iconAnchor: [17, 9],
           });
           return L.marker([u.latitude!, u.longitude!], { icon })
-            .bindPopup(`Unit ${escapeHtml(u.vehicleNumber)}`)
+            .bindPopup(escapeHtml(u.vehicleNumber ? `Unit ${u.vehicleNumber}` : 'Active EMS Unit'))
             .addTo(map);
         });
 

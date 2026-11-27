@@ -221,7 +221,6 @@ export class DoctorService {
         id: string;
         userId: string;
         userName: string;
-        userEmail: string;
         specialty: string;
         qualifications: string | null;
         experienceYears: number;
@@ -238,7 +237,6 @@ export class DoctorService {
         d.id,
         d.user_id AS "userId",
         u.name AS "userName",
-        u.email AS "userEmail",
         d.specialty,
         d.qualifications,
         d.experience_years AS "experienceYears",
@@ -286,7 +284,6 @@ export class DoctorService {
     const mapped = doctors.map((doc) => ({
       id: doc.id,
       name: doc.userName,
-      email: doc.userEmail,
       specialty: doc.specialty,
       qualifications: doc.qualifications,
       experienceYears: doc.experienceYears,

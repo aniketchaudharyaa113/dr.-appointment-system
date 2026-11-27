@@ -18,22 +18,37 @@ local ttl = redis.call('TTL', KEYS[1])
 return { current, ttl }
 `;
 
+interface BucketEntry {
+  count: number;
+  resetAtMs: number;
+}
+
 @Injectable()
 export class LoginRateLimitGuard implements CanActivate {
+  private readonly fallbackBuckets = new Map<string, BucketEntry>();
+
   constructor(@Inject(RedisService) private readonly redis: RedisService) {}
 
-  async canActivate(context: ExecutionContext): Promise<boolean> {
-    const request = context.switchToHttp().getRequest<FastifyRequest>();
-    const body = (request.body as Record<string, any>) || {};
-    const email = (body.email as string)?.toLowerCase().trim() || 'unknown';
-    const ip = request.ip || 'unknown-ip';
+  private consumeFallback(key: string, windowSeconds: number): [number, number] {
+    const now = Date.now();
+    const existing = this.fallbackBuckets.get(key);
+    if (!existing || existing.resetAtMs <= now) {
+      const resetAtMs = now + windowSeconds * 1000;
+      this.fallbackBuckets.set(key, { count: 1, resetAtMs });
+      return [1, windowSeconds];
+    }
+    existing.count += 1;
+    const ttl = Math.max(1, Math.ceil((existing.resetAtMs - now) / 1000));
+    return [existing.count, ttl];
+  }
 
-    const key = `ratelimit:login:${ip}:${email}`;
+  private async incrementCounter(
+    key: string,
+    windowSeconds: number,
+  ): Promise<[number, number]> {
     const client = this.redis.getClient();
-
     if (!client) {
-      // If redis is unavailable in unit test, proceed
-      return true;
+      return this.consumeFallback(key, windowSeconds);
     }
 
     try {
@@ -41,12 +56,33 @@ export class LoginRateLimitGuard implements CanActivate {
         ATOMIC_INCR_EXPIRE_LUA,
         1,
         key,
-        '60',
+        String(windowSeconds),
       )) as [number, number];
-      const current = Number(result?.[0] ?? 0);
-      const ttl = Math.max(1, Number(result?.[1] ?? 60));
+      return [Number(result?.[0] ?? 0), Math.max(1, Number(result?.[1] ?? windowSeconds))];
+    } catch {
+      // Fail closed against brute-force attacks by enforcing strict in-memory limits if Redis errors
+      return this.consumeFallback(key, windowSeconds);
+    }
+  }
 
-      if (current > 5) {
+  async canActivate(context: ExecutionContext): Promise<boolean> {
+    const request = context.switchToHttp().getRequest<FastifyRequest>();
+    const body = (request.body as Record<string, any>) || {};
+    const email = (body.email as string)?.toLowerCase().trim() || 'unknown';
+    const ip = request.ip || 'unknown-ip';
+
+    const checks: Array<{ key: string; limit: number; windowSeconds: number }> = [
+      // Strict per-(IP, email) burst limit
+      { key: `ratelimit:login:${ip}:${email}`, limit: 5, windowSeconds: 60 },
+      // Per-account limit across all IPs to mitigate distributed credential stuffing
+      { key: `ratelimit:login:acct:${email}`, limit: 10, windowSeconds: 300 },
+      // Per-IP limit across all emails to mitigate horizontal spraying
+      { key: `ratelimit:login:ip:${ip}`, limit: 20, windowSeconds: 60 },
+    ];
+
+    for (const check of checks) {
+      const [current, ttl] = await this.incrementCounter(check.key, check.windowSeconds);
+      if (current > check.limit) {
         throw new HttpException(
           {
             statusCode: HttpStatus.TOO_MANY_REQUESTS,
@@ -57,9 +93,6 @@ export class LoginRateLimitGuard implements CanActivate {
           HttpStatus.TOO_MANY_REQUESTS,
         );
       }
-    } catch (err) {
-      if (err instanceof HttpException) throw err;
-      // In case of redis transient errors, fail open to avoid total lockout
     }
 
     return true;

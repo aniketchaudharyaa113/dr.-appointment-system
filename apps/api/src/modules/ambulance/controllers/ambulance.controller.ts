@@ -60,10 +60,11 @@ export class AmbulanceController {
       'List active ambulance units with live Redis GEO coordinates and heartbeats',
   })
   getOnlineDrivers(
+    @CurrentUser() user: JwtPayload,
     @Query(new ZodValidationPipe(EmergencyQuerySchema))
     query: { lat?: number; lng?: number },
   ) {
-    return this.ambulanceService.getOnlineDrivers(query.lat, query.lng);
+    return this.ambulanceService.getOnlineDrivers(query.lat, query.lng, user.role);
   }
 
   @Get('requests/active')
@@ -190,10 +191,11 @@ export class AmbulanceController {
   })
   async simulateTrip(
     @Param('id', new ZodValidationPipe(UuidSchema)) requestId: string,
+    @CurrentUser() user: JwtPayload,
   ) {
     if (!env.ENABLE_DEV_ENDPOINTS) {
       throw new NotFoundException('Dev simulation endpoints are disabled');
     }
-    return this.ambulanceService.simulateDriverTrip(requestId);
+    return this.ambulanceService.simulateDriverTrip(requestId, user.sub, user.role);
   }
 }

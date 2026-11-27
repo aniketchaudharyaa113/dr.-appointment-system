@@ -1,6 +1,7 @@
 import { Injectable, NotFoundException, ConflictException, Inject } from '@nestjs/common';
 import * as argon2 from 'argon2';
 import { PrismaService } from '../platform/database/prisma.service';
+import { RedisService } from '../platform/redis/redis.service';
 import { AuditService } from '../platform/audit/audit.service';
 import { PaymentService } from '../payments/services/payment.service';
 import { DoctorVerificationStatus } from '@prisma/client';
@@ -10,6 +11,7 @@ import { AdminCreateUserInput } from '@medibook/shared';
 export class AdminService {
   constructor(
     @Inject(PrismaService) private readonly prisma: PrismaService,
+    @Inject(RedisService) private readonly redis: RedisService,
     @Inject(AuditService) private readonly audit: AuditService,
     @Inject(PaymentService) private readonly paymentService: PaymentService,
   ) {}
@@ -224,5 +226,47 @@ export class AdminService {
     });
 
     return created;
+  }
+
+  async deactivateUser(
+    userId: string,
+    adminId: string,
+    ipAddress?: string,
+    userAgent?: string,
+  ) {
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.user.update({
+        where: { id: userId },
+        data: { isActive: false },
+      });
+      await tx.refreshToken.updateMany({
+        where: { userId, isRevoked: false },
+        data: { isRevoked: true, revokedReason: 'ACCOUNT_REVOKED' },
+      });
+      await this.audit.log(
+        {
+          userId: adminId,
+          action: 'ADMIN_DEACTIVATED_USER',
+          resource: 'USER',
+          resourceId: userId,
+          details: { targetEmail: user.email, targetRole: user.role },
+          ipAddress,
+          userAgent,
+        },
+        tx,
+      );
+    });
+
+    const redisClient = this.redis.getClient();
+    if (redisClient) {
+      await redisClient.set(`user:active:${userId}`, '0', 'EX', 30).catch(() => {});
+    }
+
+    return { id: userId, isActive: false };
   }
 }

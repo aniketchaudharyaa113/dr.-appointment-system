@@ -58,6 +58,35 @@ export const RefreshTokenBodySchema = z.object({
   refreshToken: z.string().min(1).optional(),
 });
 
+export const PasswordPolicySchema = z
+  .string()
+  .min(8, 'Password must be at least 8 characters long')
+  .max(128, 'Password must be at most 128 characters long')
+  .regex(/[A-Za-z]/, 'Password must contain at least one letter')
+  .regex(/[0-9]/, 'Password must contain at least one number');
+
+export const ChangePasswordSchema = z.object({
+  currentPassword: z.string().min(1, 'Current password is required').max(128),
+  newPassword: PasswordPolicySchema,
+});
+export type ChangePasswordInput = z.infer<typeof ChangePasswordSchema>;
+
+export const ForgotPasswordSchema = z.object({
+  email: z.string().email(),
+});
+export type ForgotPasswordInput = z.infer<typeof ForgotPasswordSchema>;
+
+export const ResetPasswordSchema = z.object({
+  token: z.string().min(12, 'Invalid reset token').max(255),
+  newPassword: PasswordPolicySchema,
+});
+export type ResetPasswordInput = z.infer<typeof ResetPasswordSchema>;
+
+export const VerifyEmailSchema = z.object({
+  token: z.string().min(12, 'Invalid verification token').max(255),
+});
+export type VerifyEmailInput = z.infer<typeof VerifyEmailSchema>;
+
 export const HoldSlotSchema = z.object({
   doctorId: z.string().uuid(),
   slotTime: z.string().datetime({ offset: true }),

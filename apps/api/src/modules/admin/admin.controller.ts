@@ -6,6 +6,8 @@ import {
   Body,
   UseGuards,
   Req,
+  HttpCode,
+  HttpStatus,
   Inject,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
@@ -95,5 +97,21 @@ export class AdminController {
     const ip = req.ip;
     const userAgent = req.headers['user-agent'];
     return this.adminService.createPrivilegedUser(body, admin.sub, ip, userAgent);
+  }
+
+  @Post('users/:id/deactivate')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Deactivate a user account and revoke all active refresh sessions' })
+  async deactivateUser(
+    @Param('id', new ZodValidationPipe(UuidSchema)) userId: string,
+    @CurrentUser() admin: JwtPayload,
+    @Req() req: FastifyRequest,
+  ) {
+    return this.adminService.deactivateUser(
+      userId,
+      admin.sub,
+      req.ip,
+      req.headers['user-agent'],
+    );
   }
 }

@@ -4,6 +4,20 @@ import { DEFAULT_PLATFORM_COMMISSION_BPS, CLINIC_TIMEZONE as SHARED_CLINIC_TIMEZ
 
 dotenv.config();
 
+const strictBooleanEnv = z.preprocess((val) => {
+  if (typeof val === 'boolean') return val;
+  if (typeof val === 'number') {
+    if (val === 1) return true;
+    if (val === 0) return false;
+  }
+  if (typeof val === 'string') {
+    const normalized = val.trim().toLowerCase();
+    if (normalized === 'true' || normalized === '1') return true;
+    if (normalized === 'false' || normalized === '0' || normalized === '') return false;
+  }
+  return val;
+}, z.boolean());
+
 export const EnvSchema = z
   .object({
     NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
@@ -18,7 +32,7 @@ export const EnvSchema = z
     COOKIE_SECRET: z.string().min(16, 'COOKIE_SECRET must be at least 16 characters'),
     CLINIC_TIMEZONE: z.string().default(SHARED_CLINIC_TIMEZONE),
     PLATFORM_COMMISSION_BPS: z.coerce.number().int().min(0).max(10000).default(DEFAULT_PLATFORM_COMMISSION_BPS),
-    ENABLE_DEV_ENDPOINTS: z.coerce.boolean().default(false),
+    ENABLE_DEV_ENDPOINTS: strictBooleanEnv.default(false),
     // Payments (fail-fast: no hardcoded secret defaults)
     PAYMENT_PROVIDER: z.enum(['RAZORPAY', 'STRIPE', 'FAKE']).default('FAKE'),
     PAYMENT_WEBHOOK_SECRET: z.string().min(8).optional(),

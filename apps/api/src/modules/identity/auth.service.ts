@@ -1,6 +1,6 @@
 import {
   Injectable,
-  ConflictException,
+  BadRequestException,
   UnauthorizedException,
   NotFoundException,
   ForbiddenException,
@@ -89,22 +89,32 @@ export class AuthService {
       );
     }
 
+    const email = input.email.toLowerCase();
     const existing = await this.prisma.user.findUnique({
-      where: { email: input.email.toLowerCase() },
+      where: { email },
+      select: { id: true },
     });
 
     if (existing) {
-      throw new ConflictException('A user with this email already exists');
+      // Equalize timing without disclosing whether the email already belongs to an account
+      await this.hashPassword(input.password);
+      return {
+        pendingVerification: true,
+        message: 'If this email is eligible, confirmation instructions have been sent.',
+      };
     }
 
     const passwordHash = await this.hashPassword(input.password);
+    const rawVerifyToken = randomBytes(32).toString('hex');
+    const verifyTokenHash = this.hashToken(rawVerifyToken);
+    const verifyExpiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
 
     let user;
     try {
       user = await this.prisma.$transaction(async (tx) => {
         const newUser = await tx.user.create({
           data: {
-            email: input.email.toLowerCase(),
+            email,
             passwordHash,
             name: input.name,
             phone: input.phone,
@@ -131,11 +141,37 @@ export class AuthService {
           });
         }
 
+        await tx.userSecurityToken.create({
+          data: {
+            userId: newUser.id,
+            type: 'EMAIL_VERIFY',
+            tokenHash: verifyTokenHash,
+            expiresAt: verifyExpiresAt,
+          },
+        });
+
+        await tx.outboxEvent.create({
+          data: {
+            aggregateType: 'USER',
+            aggregateId: newUser.id,
+            eventType: 'EMAIL_VERIFICATION_REQUESTED',
+            payload: {
+              userId: newUser.id,
+              email: newUser.email,
+              name: newUser.name,
+              token: rawVerifyToken,
+            },
+          },
+        });
+
         return newUser;
       });
     } catch (err: any) {
       if (err?.code === 'P2002') {
-        throw new ConflictException('A user with this email already exists');
+        return {
+          pendingVerification: true,
+          message: 'If this email is eligible, confirmation instructions have been sent.',
+        };
       }
       throw err;
     }
@@ -248,7 +284,7 @@ export class AuthService {
       // Atomic compare-and-set rotation inside transaction
       const updated = await tx.refreshToken.updateMany({
         where: { id: stored.id, isRevoked: false },
-        data: { isRevoked: true },
+        data: { isRevoked: true, revokedReason: 'ROTATED' },
       });
 
       if (updated.count === 0) {
@@ -256,6 +292,7 @@ export class AuthService {
           status: 'ALREADY_REVOKED' as const,
           tokenId: stored.id,
           userId: stored.userId,
+          revokedReason: stored.revokedReason,
         };
       }
 
@@ -290,6 +327,16 @@ export class AuthService {
       throw new UnauthorizedException('Refresh token has expired');
     }
     if (rotationOutcome.status === 'ALREADY_REVOKED') {
+      // Logged-out or administratively invalidated tokens fail without nuking other sessions
+      if (
+        rotationOutcome.revokedReason === 'LOGOUT' ||
+        rotationOutcome.revokedReason === 'ACCOUNT_REVOKED' ||
+        rotationOutcome.revokedReason === 'PASSWORD_CHANGED' ||
+        rotationOutcome.revokedReason === 'PASSWORD_RESET'
+      ) {
+        throw new UnauthorizedException('Refresh token has been revoked');
+      }
+
       const client = this.redis.getClient();
       const inGraceWindow = client
         ? Boolean(await client.get(`refresh_grace:${rotationOutcome.tokenId}`))
@@ -299,10 +346,10 @@ export class AuthService {
         throw new UnauthorizedException('Refresh token already rotated');
       }
 
-      // Outside grace window: treat as token reuse / theft -> revoke all user sessions
+      // Outside grace window for ROTATED token: treat as token theft -> revoke all user sessions
       await this.prisma.refreshToken.updateMany({
-        where: { userId: rotationOutcome.userId },
-        data: { isRevoked: true },
+        where: { userId: rotationOutcome.userId, isRevoked: false },
+        data: { isRevoked: true, revokedReason: 'REUSE_THEFT' },
       });
 
       await this.audit.log({
@@ -338,10 +385,233 @@ export class AuthService {
       const hashed = this.hashToken(rawRefreshToken);
       await this.prisma.refreshToken.updateMany({
         where: { tokenHash: hashed, isRevoked: false },
-        data: { isRevoked: true },
+        data: { isRevoked: true, revokedReason: 'LOGOUT' },
       });
     }
     return { success: true };
+  }
+
+  async changePassword(
+    userId: string,
+    currentPassword: string,
+    newPassword: string,
+    ipAddress?: string,
+    userAgent?: string,
+  ) {
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (!user || !user.isActive) {
+      throw new UnauthorizedException('Account not active');
+    }
+
+    const valid = await this.verifyPassword(user.passwordHash, currentPassword);
+    if (!valid) {
+      throw new UnauthorizedException('Current password is incorrect');
+    }
+
+    const passwordHash = await this.hashPassword(newPassword);
+    await this.prisma.$transaction(async (tx) => {
+      await tx.user.update({
+        where: { id: userId },
+        data: { passwordHash },
+      });
+      await tx.refreshToken.updateMany({
+        where: { userId, isRevoked: false },
+        data: { isRevoked: true, revokedReason: 'PASSWORD_CHANGED' },
+      });
+      await this.audit.log(
+        {
+          userId,
+          action: 'USER_PASSWORD_CHANGED',
+          resource: 'USER',
+          resourceId: userId,
+          ipAddress,
+          userAgent,
+        },
+        tx,
+      );
+    });
+
+    return { success: true, message: 'Password updated successfully' };
+  }
+
+  async requestPasswordReset(email: string, ipAddress?: string, userAgent?: string) {
+    const normalizedEmail = email.toLowerCase();
+    const user = await this.prisma.user.findUnique({
+      where: { email: normalizedEmail },
+    });
+
+    if (user && user.isActive) {
+      const rawToken = randomBytes(32).toString('hex');
+      const tokenHash = this.hashToken(rawToken);
+      const expiresAt = new Date(Date.now() + 30 * 60 * 1000);
+
+      await this.prisma.$transaction(async (tx) => {
+        await tx.userSecurityToken.create({
+          data: {
+            userId: user.id,
+            type: 'PASSWORD_RESET',
+            tokenHash,
+            expiresAt,
+          },
+        });
+        await tx.outboxEvent.create({
+          data: {
+            aggregateType: 'USER',
+            aggregateId: user.id,
+            eventType: 'PASSWORD_RESET_REQUESTED',
+            payload: {
+              userId: user.id,
+              email: user.email,
+              name: user.name,
+              token: rawToken,
+            },
+          },
+        });
+        await this.audit.log(
+          {
+            userId: user.id,
+            action: 'PASSWORD_RESET_REQUESTED',
+            resource: 'USER',
+            resourceId: user.id,
+            ipAddress,
+            userAgent,
+          },
+          tx,
+        );
+      });
+    }
+
+    return {
+      success: true,
+      message: 'If an account exists for that email, password reset instructions have been sent.',
+    };
+  }
+
+  async resetPassword(
+    rawToken: string,
+    newPassword: string,
+    ipAddress?: string,
+    userAgent?: string,
+  ) {
+    const tokenHash = this.hashToken(rawToken);
+    const now = new Date();
+    const newHash = await this.hashPassword(newPassword);
+
+    await this.prisma.$transaction(async (tx) => {
+      const claim = await tx.userSecurityToken.updateMany({
+        where: {
+          tokenHash,
+          type: 'PASSWORD_RESET',
+          usedAt: null,
+          expiresAt: { gt: now },
+        },
+        data: { usedAt: now },
+      });
+
+      if (claim.count === 0) {
+        throw new BadRequestException('Password reset token is invalid or expired');
+      }
+
+      const tokenRow = await tx.userSecurityToken.findUniqueOrThrow({
+        where: { tokenHash },
+      });
+
+      await tx.user.update({
+        where: { id: tokenRow.userId },
+        data: { passwordHash: newHash },
+      });
+
+      await tx.refreshToken.updateMany({
+        where: { userId: tokenRow.userId, isRevoked: false },
+        data: { isRevoked: true, revokedReason: 'PASSWORD_RESET' },
+      });
+
+      await this.audit.log(
+        {
+          userId: tokenRow.userId,
+          action: 'USER_PASSWORD_RESET',
+          resource: 'USER',
+          resourceId: tokenRow.userId,
+          ipAddress,
+          userAgent,
+        },
+        tx,
+      );
+    });
+
+    return { success: true, message: 'Password has been reset successfully' };
+  }
+
+  async verifyEmail(rawToken: string) {
+    const tokenHash = this.hashToken(rawToken);
+    const now = new Date();
+
+    await this.prisma.$transaction(async (tx) => {
+      const claim = await tx.userSecurityToken.updateMany({
+        where: {
+          tokenHash,
+          type: 'EMAIL_VERIFY',
+          usedAt: null,
+          expiresAt: { gt: now },
+        },
+        data: { usedAt: now },
+      });
+
+      if (claim.count === 0) {
+        throw new BadRequestException('Email verification token is invalid or expired');
+      }
+
+      const tokenRow = await tx.userSecurityToken.findUniqueOrThrow({
+        where: { tokenHash },
+      });
+
+      await tx.user.update({
+        where: { id: tokenRow.userId },
+        data: { emailVerified: true, emailVerifiedAt: now },
+      });
+    });
+
+    return { success: true, verified: true };
+  }
+
+  async resendVerification(userId: string) {
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (!user || !user.isActive) {
+      throw new NotFoundException('User not found');
+    }
+    if (user.emailVerified) {
+      return { success: true, alreadyVerified: true };
+    }
+
+    const rawToken = randomBytes(32).toString('hex');
+    const tokenHash = this.hashToken(rawToken);
+    const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.userSecurityToken.create({
+        data: {
+          userId: user.id,
+          type: 'EMAIL_VERIFY',
+          tokenHash,
+          expiresAt,
+        },
+      });
+      await tx.outboxEvent.create({
+        data: {
+          aggregateType: 'USER',
+          aggregateId: user.id,
+          eventType: 'EMAIL_VERIFICATION_REQUESTED',
+          payload: {
+            userId: user.id,
+            email: user.email,
+            name: user.name,
+            token: rawToken,
+          },
+        },
+      });
+    });
+
+    return { success: true, message: 'Verification email sent' };
   }
 
   async getMe(userId: string) {
@@ -360,6 +630,7 @@ export class AuthService {
       name: user.name,
       phone: user.phone,
       role: user.role,
+      emailVerified: user.emailVerified,
       doctorProfile: user.doctorProfile,
       driverProfile: user.driverProfile,
     };
