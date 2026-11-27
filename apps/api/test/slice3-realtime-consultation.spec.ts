@@ -149,6 +149,10 @@ describe('Slice 3: Cross-Instance Sockets, Room Authorization, LiveKit Join Wind
       patient.id,
       hold.holdToken,
     );
+    await prisma.appointment.update({
+      where: { id: appt.id },
+      data: { status: 'CONFIRMED' },
+    });
 
     // Invalid JWT secret must be disconnected
     const badToken = jwt.sign(
@@ -171,57 +175,59 @@ describe('Slice 3: Cross-Instance Sockets, Room Authorization, LiveKit Join Wind
     const doctorSock = await connectSocket(urlB, '/consultation', signJwtForUser(doctorUser));
     const intruderSock = await connectSocket(urlB, '/consultation', signJwtForUser(intruder));
 
-    // Intruder join_room denied by DB check
-    const intruderJoin = await new Promise<any>((resolve) =>
-      intruderSock.emit('join_room', { appointmentId: appt.id }, resolve),
-    );
-    expect(intruderJoin.error).toContain('Forbidden');
+    try {
+      // Intruder join_room denied by DB check
+      const intruderJoin = await new Promise<any>((resolve) =>
+        intruderSock.emit('join_room', { appointmentId: appt.id }, resolve),
+      );
+      expect(intruderJoin.error).toContain('Forbidden');
 
-    // Patient & Doctor join room
-    const pJoin = await new Promise<any>((resolve) =>
-      patientSock.emit('join_room', { appointmentId: appt.id }, resolve),
-    );
-    const dJoin = await new Promise<any>((resolve) =>
-      doctorSock.emit('join_room', { appointmentId: appt.id }, resolve),
-    );
-    expect(pJoin.joined).toBe(`consult:${appt.id}`);
-    expect(dJoin.joined).toBe(`consult:${appt.id}`);
+      // Patient & Doctor join room
+      const pJoin = await new Promise<any>((resolve) =>
+        patientSock.emit('join_room', { appointmentId: appt.id }, resolve),
+      );
+      const dJoin = await new Promise<any>((resolve) =>
+        doctorSock.emit('join_room', { appointmentId: appt.id }, resolve),
+      );
+      expect(pJoin.joined).toBe(`consult:${appt.id}`);
+      expect(dJoin.joined).toBe(`consult:${appt.id}`);
 
-    const doctorReceived: any[] = [];
-    const intruderReceived: any[] = [];
-    doctorSock.on('new_message', (msg) => doctorReceived.push(msg));
-    intruderSock.on('new_message', (msg) => intruderReceived.push(msg));
+      const doctorReceived: any[] = [];
+      const intruderReceived: any[] = [];
+      doctorSock.on('new_message', (msg) => doctorReceived.push(msg));
+      intruderSock.on('new_message', (msg) => intruderReceived.push(msg));
 
-    await new Promise((r) => setTimeout(r, 150));
+      await new Promise((r) => setTimeout(r, 150));
 
-    // Patient sends message on Instance A -> Doctor on Instance B receives it, Intruder does not
-    const sendAck = await new Promise<any>((resolve) =>
-      patientSock.emit(
-        'send_message',
-        { appointmentId: appt.id, content: 'Doctor, my BP is 138/88' },
-        resolve,
-      ),
-    );
-    expect(sendAck.success).toBe(true);
+      // Patient sends message on Instance A -> Doctor on Instance B receives it, Intruder does not
+      const sendAck = await new Promise<any>((resolve) =>
+        patientSock.emit(
+          'send_message',
+          { appointmentId: appt.id, content: 'Doctor, my BP is 138/88' },
+          resolve,
+        ),
+      );
+      expect(sendAck.success).toBe(true);
 
-    await new Promise((r) => setTimeout(r, 400));
+      await new Promise((r) => setTimeout(r, 400));
 
-    expect(doctorReceived).toHaveLength(1);
-    expect(doctorReceived[0].content).toBe('Doctor, my BP is 138/88');
-    expect(intruderReceived).toHaveLength(0);
+      expect(doctorReceived).toHaveLength(1);
+      expect(doctorReceived[0].content).toBe('Doctor, my BP is 138/88');
+      expect(intruderReceived).toHaveLength(0);
 
-    // Persisted in Postgres
-    const historyRes = await appB.inject({
-      method: 'GET',
-      url: `/api/consultations/${appt.id}/messages`,
-      headers: { authorization: `Bearer ${signJwtForUser(doctorUser)}` },
-    });
-    expect(historyRes.statusCode).toBe(200);
-    expect(historyRes.json()).toHaveLength(1);
-
-    patientSock.disconnect();
-    doctorSock.disconnect();
-    intruderSock.disconnect();
+      // Persisted in Postgres
+      const historyRes = await appB.inject({
+        method: 'GET',
+        url: `/api/consultations/${appt.id}/messages`,
+        headers: { authorization: `Bearer ${signJwtForUser(doctorUser)}` },
+      });
+      expect(historyRes.statusCode).toBe(200);
+      expect(historyRes.json()).toHaveLength(1);
+    } finally {
+      patientSock.disconnect();
+      doctorSock.disconnect();
+      intruderSock.disconnect();
+    }
   });
 
   it('LiveKit join window enforcement, consent requirement, and immutable prescription versioning', async () => {

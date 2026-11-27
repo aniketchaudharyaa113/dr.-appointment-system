@@ -143,6 +143,14 @@ export class AuthController {
     return res.status(HttpStatus.OK).send({ success: true });
   }
 
+  @Get('session')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Check quietly whether a refresh session cookie is present' })
+  getSessionStatus(@Req() req: FastifyRequest) {
+    const cookies = (req as any).cookies || {};
+    return { hasSession: Boolean(cookies.refreshToken) };
+  }
+
   @Get('me')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()

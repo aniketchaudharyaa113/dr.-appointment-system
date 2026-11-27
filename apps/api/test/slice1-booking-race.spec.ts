@@ -285,4 +285,38 @@ describe('Slice 1: Real Postgres & Redis Booking, Holds, Concurrency & IST Timez
     expect(ref1).toBe('MB-20261125-001');
     expect(ref2).toBe('MB-20261126-001');
   });
+
+  it('allocates unique daily bookingRef values across different doctors on the same IST date', async () => {
+    const { doctor: doctorA } = await seedVerifiedDoctor(ctx.prisma, {
+      specialty: 'Cardiology',
+    });
+    const { doctor: doctorB } = await seedVerifiedDoctor(ctx.prisma, {
+      specialty: 'Dermatology',
+    });
+    const patientA = await seedPatient(ctx.prisma, 'multi-doc-a@test.com');
+    const patientB = await seedPatient(ctx.prisma, 'multi-doc-b@test.com');
+
+    const slotsA = await slotService.getDoctorSlotsForDate(doctorA.id, '2026-12-02');
+    const slotsB = await slotService.getDoctorSlotsForDate(doctorB.id, '2026-12-02');
+
+    const holdA = await bookingService.holdSlot(doctorA.id, slotsA[0].slotTime, patientA.id);
+    const apptA = await bookingService.bookAppointment(
+      doctorA.id,
+      slotsA[0].slotTime,
+      patientA.id,
+      holdA.holdToken,
+    );
+
+    const holdB = await bookingService.holdSlot(doctorB.id, slotsB[0].slotTime, patientB.id);
+    const apptB = await bookingService.bookAppointment(
+      doctorB.id,
+      slotsB[0].slotTime,
+      patientB.id,
+      holdB.holdToken,
+    );
+
+    expect(apptA.bookingRef).toBe('MB-20261202-001');
+    expect(apptB.bookingRef).toBe('MB-20261202-002');
+    expect(apptA.bookingRef).not.toBe(apptB.bookingRef);
+  });
 });

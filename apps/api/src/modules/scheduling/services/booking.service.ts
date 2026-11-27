@@ -170,6 +170,11 @@ export class BookingService {
     const dateStr = getIstDateString(bookingDate); // YYYY-MM-DD in Asia/Kolkata
     const dateCompact = getIstDateCompact(bookingDate); // YYYYMMDD in Asia/Kolkata
     const dateOnly = new Date(`${dateStr}T00:00:00.000Z`);
+    const lockKey = `booking_ref:${dateCompact}`;
+    const refPrefix = `MB-${dateCompact}-`;
+
+    // Serialize daily booking_ref allocation across all doctors on this IST date
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${lockKey}))`;
 
     const counterRes = await tx.$queryRaw<Array<{ last_seq: number }>>`
       INSERT INTO doctor_daily_counters (doctor_id, booking_date, last_seq)
@@ -179,9 +184,32 @@ export class BookingService {
       RETURNING last_seq;
     `;
 
-    const seq = counterRes[0].last_seq;
-    const seqPadded = String(seq).padStart(3, '0');
-    return `MB-${dateCompact}-${seqPadded}`;
+    const existingRefs = await tx.appointment.findMany({
+      where: {
+        bookingRef: { startsWith: refPrefix },
+      },
+      select: { bookingRef: true },
+    });
+    const usedRefs = new Set(
+      existingRefs.map((row) => row.bookingRef).filter((ref): ref is string => Boolean(ref)),
+    );
+
+    let seq = counterRes[0].last_seq;
+    let candidate = `${refPrefix}${String(seq).padStart(3, '0')}`;
+    while (usedRefs.has(candidate)) {
+      seq += 1;
+      candidate = `${refPrefix}${String(seq).padStart(3, '0')}`;
+    }
+
+    if (seq !== counterRes[0].last_seq) {
+      await tx.$executeRaw`
+        UPDATE doctor_daily_counters
+        SET last_seq = ${seq}
+        WHERE doctor_id = ${doctorId}::uuid AND booking_date = ${dateOnly}::date
+      `;
+    }
+
+    return candidate;
   }
 
   /**
