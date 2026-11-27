@@ -23,7 +23,7 @@ export const PAYMENT_STATUSES = [
   'REFUNDED',
 ] as const;
 
-export const REFUND_STATUSES = ['PENDING', 'PROCESSED', 'FAILED'] as const;
+export const REFUND_STATUSES = ['PENDING', 'IN_FLIGHT', 'PROCESSED', 'FAILED'] as const;
 
 export const CONSULTATION_SESSION_STATUSES = [
   'SCHEDULED',

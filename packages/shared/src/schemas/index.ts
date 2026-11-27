@@ -245,7 +245,7 @@ export const CreateReviewSchema = z.object({
 export type CreateReviewInput = z.infer<typeof CreateReviewSchema>;
 
 export const UpdateLabResultsSchema = z.object({
-  status: z.enum(['SAMPLE_COLLECTED', 'PROCESSING', 'COMPLETED', 'CANCELLED']).optional().default('COMPLETED'),
+  status: z.enum(['SAMPLE_COLLECTED', 'PROCESSING', 'COMPLETED', 'CANCELLED']).optional(),
   results: z.union([z.string().min(1), z.record(z.any())]).optional(),
   resultsJson: z.record(z.any()).optional(),
   resultNotes: z.string().max(1000).optional(),

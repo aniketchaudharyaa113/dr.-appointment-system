@@ -137,6 +137,23 @@ export class ChatService {
    * Marks unread messages as read.
    */
   async markRead(appointmentId: string, readerUserId: string) {
+    const appointment = await this.prisma.appointment.findUnique({
+      where: { id: appointmentId },
+      include: { doctor: true },
+    });
+
+    if (!appointment) {
+      throw new NotFoundException(`Appointment ${appointmentId} not found`);
+    }
+
+    const isPatient = appointment.patientId === readerUserId;
+    const isDoctor = appointment.doctor.userId === readerUserId;
+    if (!isPatient && !isDoctor) {
+      throw new ForbiddenException(
+        'Access denied: You are not a participant in this consultation',
+      );
+    }
+
     await this.prisma.chatMessage.updateMany({
       where: {
         appointmentId,

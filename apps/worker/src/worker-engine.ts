@@ -3,6 +3,7 @@ import { Queue, Worker, Job } from 'bullmq';
 import Redis from 'ioredis';
 import { randomBytes } from 'crypto';
 import type { Logger } from 'pino';
+import { DEFAULT_PLATFORM_COMMISSION_BPS, executeNoShowSweep } from '@medibook/shared';
 import type { Mailer } from './mailer.js';
 import { pollAndPublishOutbox } from './outbox-relay.js';
 import { executeProviderRefund, type RefundExecutor } from './refund-provider.js';
@@ -810,56 +811,24 @@ export class WorkerEngine {
       },
     });
 
-    // Mark CONFIRMED appointments past slotTime + 30m without live/ended session as NO_SHOW
-    const noShowCutoff = new Date(Date.now() - 30 * 60 * 1000);
-    const noShowCandidates = await this.prisma.appointment.findMany({
-      where: {
-        status: 'CONFIRMED',
-        slotTime: { lt: noShowCutoff },
-        OR: [
-          { consultation: null },
-          { consultation: { status: { in: ['SCHEDULED', 'WAITING'] } } },
-        ],
-      },
-      select: { id: true, doctorId: true, patientId: true, slotTime: true },
-    });
-
-    let count = 0;
-    for (const appt of noShowCandidates) {
-      await this.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
-        const locked = await tx.appointment.findUnique({
-          where: { id: appt.id },
-          select: { status: true },
-        });
-        if (locked?.status !== 'CONFIRMED') return;
-
-        await tx.appointment.update({
-          where: { id: appt.id },
-          data: { status: 'NO_SHOW' },
-        });
-
-        await tx.outboxEvent.create({
-          data: {
-            aggregateType: 'APPOINTMENT',
-            aggregateId: appt.id,
-            eventType: 'APPOINTMENT_NO_SHOW',
-            payload: {
-              appointmentId: appt.id,
-              patientId: appt.patientId,
-              doctorId: appt.doctorId,
-              slotTime: appt.slotTime.toISOString(),
-            },
-          },
-        });
-        count++;
-      });
+    // Shared no-show sweep (handles patient-waited doctor-no-show auto-refund vs patient no-show)
+    const commissionBps = Number(
+      process.env.PLATFORM_COMMISSION_BPS || DEFAULT_PLATFORM_COMMISSION_BPS,
+    );
+    const sweep = await executeNoShowSweep(this.prisma, { commissionBps });
+    for (const freed of sweep.freedSlots) {
+      await this.queueConnection.del(`cache:next_slot:${freed.doctorId}`);
     }
 
     // Outbox retention cleanup: purge PROCESSED events older than retentionDays (default 14 days)
     const retentionDays = (job.data as any)?.retentionDays ?? 14;
     await this.purgeProcessedOutboxEvents(retentionDays);
 
-    return { released, noShowCount: count };
+    return {
+      released,
+      noShowCount: sweep.noShowCount,
+      doctorNoShowCount: sweep.doctorNoShowCount,
+    };
   }
 
   async purgeProcessedOutboxEvents(retentionDays = 14): Promise<number> {

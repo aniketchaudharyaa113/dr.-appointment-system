@@ -1,4 +1,5 @@
 import { Injectable, Inject } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../database/prisma.service';
 import { logger } from '../../../common/logger/pino-logger.service';
 
@@ -16,9 +17,10 @@ export interface AuditLogParams {
 export class AuditService {
   constructor(@Inject(PrismaService) private readonly prisma: PrismaService) {}
 
-  async log(params: AuditLogParams): Promise<void> {
+  async log(params: AuditLogParams, tx?: Prisma.TransactionClient): Promise<void> {
+    const db = tx || this.prisma;
     try {
-      await this.prisma.auditLog.create({
+      await db.auditLog.create({
         data: {
           userId: params.userId,
           action: params.action,
@@ -40,6 +42,7 @@ export class AuditService {
         'Audit log recorded',
       );
     } catch (error) {
+      if (tx) throw error;
       logger.error({ err: error, params }, 'Failed to write audit log');
     }
   }
@@ -51,18 +54,22 @@ export class AuditService {
     recordId: string,
     ipAddress?: string,
     userAgent?: string,
+    tx?: Prisma.TransactionClient,
   ): Promise<void> {
-    await this.log({
-      userId: accessorId,
-      action: 'PHI_READ',
-      resource: recordType,
-      resourceId: recordId,
-      details: {
-        patientId,
-        readTimestamp: new Date().toISOString(),
+    await this.log(
+      {
+        userId: accessorId,
+        action: 'PHI_READ',
+        resource: recordType,
+        resourceId: recordId,
+        details: {
+          patientId,
+          readTimestamp: new Date().toISOString(),
+        },
+        ipAddress,
+        userAgent,
       },
-      ipAddress,
-      userAgent,
-    });
+      tx,
+    );
   }
 }

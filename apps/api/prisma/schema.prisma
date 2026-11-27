@@ -324,6 +324,8 @@ model ConsultationSession {
   endedAt              DateTime?                 @map("ended_at")
   patientConsentGiven  Boolean                   @default(false) @map("patient_consent_given")
   consentTimestamp     DateTime?                 @map("consent_timestamp")
+  doctorJoinedAt       DateTime?                 @map("doctor_joined_at") @db.Timestamptz(6)
+  patientJoinedAt      DateTime?                 @map("patient_joined_at") @db.Timestamptz(6)
 
   appointment Appointment @relation(fields: [appointmentId], references: [id], onDelete: Cascade)
 

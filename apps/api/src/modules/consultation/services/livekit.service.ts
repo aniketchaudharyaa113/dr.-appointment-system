@@ -78,19 +78,30 @@ export class LiveKitService {
       );
     }
 
-    if (
-      appointment.status === 'CANCELLED' ||
-      appointment.status === 'REFUNDED' ||
-      appointment.status === 'PENDING_PAYMENT'
-    ) {
+    if (appointment.status !== 'CONFIRMED' && appointment.status !== 'IN_PROGRESS') {
       throw new BadRequestException(
         `Cannot join video consultation while appointment status is ${appointment.status}`,
       );
     }
 
+    if (appointment.consultation?.status === 'ENDED') {
+      throw new BadRequestException('Consultation session has already ended');
+    }
+
     const slotTimeMs = appointment.slotTime.getTime();
     const windowStartMs = slotTimeMs - 10 * 60 * 1000;
-    const windowEndMs = slotTimeMs + 30 * 60 * 1000;
+    const isOverrunActive =
+      appointment.status === 'IN_PROGRESS' ||
+      appointment.consultation?.status === 'LIVE';
+    const overrunAnchorMs = Math.max(
+      slotTimeMs,
+      appointment.consultation?.startedAt?.getTime() ?? slotTimeMs,
+    );
+    // Allow overrun reconnects up to 2 hours while session is LIVE/IN_PROGRESS;
+    // unstarted appointments close 30 minutes after slot start.
+    const windowEndMs = isOverrunActive
+      ? overrunAnchorMs + 120 * 60 * 1000
+      : slotTimeMs + 30 * 60 * 1000;
     const nowMs = now.getTime();
 
     if (nowMs < windowStartMs) {
@@ -118,6 +129,7 @@ export class LiveKitService {
           appointmentId: appointment.id,
           roomName,
           status: 'SCHEDULED',
+          doctorJoinedAt: isDoctor ? now : undefined,
         },
       });
     }
@@ -126,6 +138,18 @@ export class LiveKitService {
       throw new BadRequestException(
         'Patient must accept telemedicine consent before joining consultation',
       );
+    }
+
+    if (isDoctor && !session.doctorJoinedAt) {
+      session = await this.prisma.consultationSession.update({
+        where: { id: session.id },
+        data: { doctorJoinedAt: now },
+      });
+    } else if (isPatient && !session.patientJoinedAt) {
+      session = await this.prisma.consultationSession.update({
+        where: { id: session.id },
+        data: { patientJoinedAt: now },
+      });
     }
 
     const rawDocName = appointment.doctor.user?.name?.trim();
@@ -176,13 +200,30 @@ export class LiveKitService {
       include: { consultation: true },
     });
 
-    if (!appointment || appointment.patientId !== userId) {
+    if (!appointment) {
+      throw new NotFoundException(`Appointment ${appointmentId} not found`);
+    }
+
+    if (appointment.patientId !== userId) {
       throw new ForbiddenException(
         'Only the appointed patient can grant telemedicine consent',
       );
     }
 
+    if (appointment.status !== 'CONFIRMED' && appointment.status !== 'IN_PROGRESS') {
+      throw new BadRequestException(
+        `Cannot record telemedicine consent when appointment status is ${appointment.status}`,
+      );
+    }
+
+    if (appointment.consultation?.status === 'ENDED') {
+      throw new BadRequestException('Consultation session has already ended');
+    }
+
     const roomName = `consult-${appointment.id}`;
+    const shouldMoveToWaiting =
+      !appointment.consultation || appointment.consultation.status === 'SCHEDULED';
+
     await this.prisma.consultationSession.upsert({
       where: { appointmentId: appointment.id },
       create: {
@@ -194,7 +235,8 @@ export class LiveKitService {
       },
       update: {
         patientConsentGiven: true,
-        consentTimestamp: new Date(),
+        consentTimestamp: appointment.consultation?.consentTimestamp || new Date(),
+        ...(shouldMoveToWaiting ? { status: 'WAITING' } : {}),
       },
     });
 
@@ -205,6 +247,7 @@ export class LiveKitService {
     appointmentId: string,
     userId: string,
     newStatus: 'WAITING' | 'LIVE' | 'ENDED',
+    now: Date = new Date(),
   ) {
     const appointment = await this.prisma.appointment.findUnique({
       where: { id: appointmentId },
@@ -234,11 +277,34 @@ export class LiveKitService {
       );
     }
 
+    const slotTimeMs = appointment.slotTime.getTime();
+    const nowMs = now.getTime();
+    const windowStartMs = slotTimeMs - 10 * 60 * 1000;
+    const startDeadlineMs = slotTimeMs + 30 * 60 * 1000;
+
+    if (newStatus === 'LIVE' && (nowMs < windowStartMs || nowMs > startDeadlineMs)) {
+      throw new BadRequestException(
+        `Consultation can only go LIVE within [slotTime - 10min, slotTime + 30min] (${new Date(
+          windowStartMs,
+        ).toISOString()} to ${new Date(startDeadlineMs).toISOString()})`,
+      );
+    }
+
+    if (newStatus === 'ENDED' && nowMs < windowStartMs) {
+      throw new BadRequestException(
+        `Consultation cannot be ended before its scheduled window opens (${new Date(
+          windowStartMs,
+        ).toISOString()})`,
+      );
+    }
+
     if (appointment.consultation) {
       assertSessionTransition(
         appointment.consultation.status as SessionStatus,
         newStatus,
       );
+    } else if (newStatus === 'ENDED') {
+      assertSessionTransition('SCHEDULED', 'ENDED');
     }
 
     return this.prisma.$transaction(async (tx) => {
@@ -249,16 +315,21 @@ export class LiveKitService {
           appointmentId,
           roomName,
           status: newStatus,
-          startedAt: newStatus === 'LIVE' ? new Date() : undefined,
-          endedAt: newStatus === 'ENDED' ? new Date() : undefined,
+          startedAt: newStatus === 'LIVE' ? now : undefined,
+          endedAt: newStatus === 'ENDED' ? now : undefined,
+          doctorJoinedAt: isDoctor && newStatus === 'LIVE' ? now : undefined,
+          patientJoinedAt: isPatient && newStatus === 'WAITING' ? now : undefined,
         },
         update: {
           status: newStatus,
           startedAt:
             newStatus === 'LIVE'
-              ? appointment.consultation?.startedAt || new Date()
+              ? appointment.consultation?.startedAt || now
               : undefined,
-          endedAt: newStatus === 'ENDED' ? new Date() : undefined,
+          endedAt: newStatus === 'ENDED' ? now : undefined,
+          ...(isDoctor && newStatus === 'LIVE' && !appointment.consultation?.doctorJoinedAt
+            ? { doctorJoinedAt: now }
+            : {}),
         },
       });
 

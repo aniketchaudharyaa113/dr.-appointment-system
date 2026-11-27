@@ -103,14 +103,17 @@ export class PrescriptionService {
         },
       });
 
-      // Audit log the creation
-      await this.auditService.log({
-        userId: doctorUserId,
-        action: 'CREATE_PRESCRIPTION',
-        resource: 'PRESCRIPTION',
-        resourceId: prescription.id,
-        details: { version: 1, diagnosis: data.diagnosis },
-      });
+      // Audit log the creation inside transaction so rollback leaves no orphan audit row
+      await this.auditService.log(
+        {
+          userId: doctorUserId,
+          action: 'CREATE_PRESCRIPTION',
+          resource: 'PRESCRIPTION',
+          resourceId: prescription.id,
+          details: { version: 1, diagnosis: data.diagnosis },
+        },
+        tx,
+      );
 
       // Notify patient of digital prescription issuance
       await tx.notification.create({
@@ -203,13 +206,16 @@ export class PrescriptionService {
         },
       });
 
-      await this.auditService.log({
-        userId: doctorUserId,
-        action: 'UPDATE_PRESCRIPTION_VERSION',
-        resource: 'PRESCRIPTION',
-        resourceId: lockedRx.id,
-        details: { newVersion, previousVersion: lockedRx.current_version },
-      });
+      await this.auditService.log(
+        {
+          userId: doctorUserId,
+          action: 'UPDATE_PRESCRIPTION_VERSION',
+          resource: 'PRESCRIPTION',
+          resourceId: lockedRx.id,
+          details: { newVersion, previousVersion: lockedRx.current_version },
+        },
+        tx,
+      );
 
       await tx.notification.create({
         data: {

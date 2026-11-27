@@ -133,10 +133,15 @@ export class ClinicalService {
   /**
    * Doctor creates a diagnostic lab order for an appointment
    */
-  async createLabOrder(appointmentId: string, doctorUserId: string, dto: CreateLabOrderDto) {
+  async createLabOrder(
+    appointmentId: string,
+    doctorUserId: string,
+    dto: CreateLabOrderDto,
+    now: Date = new Date(),
+  ) {
     const appointment = await this.prisma.appointment.findUnique({
       where: { id: appointmentId },
-      include: { doctor: true },
+      include: { doctor: true, consultation: true },
     });
 
     if (!appointment) {
@@ -145,6 +150,42 @@ export class ClinicalService {
 
     if (appointment.doctor.userId !== doctorUserId) {
       throw new ForbiddenException('Only the treating doctor can prescribe diagnostic lab tests');
+    }
+
+    if (
+      appointment.status !== 'CONFIRMED' &&
+      appointment.status !== 'IN_PROGRESS' &&
+      appointment.status !== 'COMPLETED'
+    ) {
+      throw new BadRequestException(
+        `Cannot create diagnostic lab order for appointment in status ${appointment.status}`,
+      );
+    }
+
+    const nowMs = now.getTime();
+    if (appointment.status === 'CONFIRMED' || appointment.status === 'IN_PROGRESS') {
+      const earliestMs = appointment.slotTime.getTime() - 24 * 60 * 60 * 1000;
+      const latestMs = appointment.slotTime.getTime() + 7 * 24 * 60 * 60 * 1000;
+      if (nowMs < earliestMs) {
+        throw new BadRequestException(
+          'Diagnostic lab orders cannot be placed more than 24 hours before the consultation slot',
+        );
+      }
+      if (nowMs > latestMs) {
+        throw new BadRequestException(
+          'Consultation window for ordering diagnostic lab tests has closed',
+        );
+      }
+    } else if (appointment.status === 'COMPLETED') {
+      const completedTime =
+        appointment.consultation?.endedAt?.getTime() ||
+        appointment.updatedAt.getTime();
+      const sevenDaysMs = 7 * 24 * 60 * 60 * 1000;
+      if (nowMs - completedTime > sevenDaysMs) {
+        throw new BadRequestException(
+          'Follow-up lab ordering window has closed (limited to 7 days post-consultation)',
+        );
+      }
     }
 
     const labOrder = await this.prisma.labOrder.create({
@@ -213,6 +254,18 @@ export class ClinicalService {
       throw new ForbiddenException('Only the ordering physician can record laboratory results');
     }
 
+    if (order.status === 'COMPLETED' || order.status === 'CANCELLED') {
+      throw new BadRequestException(
+        `Cannot modify diagnostic lab order in terminal status ${order.status}`,
+      );
+    }
+
+    const allowedTransitions: Record<string, string[]> = {
+      ORDERED: ['ORDERED', 'SAMPLE_COLLECTED', 'PROCESSING', 'COMPLETED', 'CANCELLED'],
+      SAMPLE_COLLECTED: ['SAMPLE_COLLECTED', 'PROCESSING', 'COMPLETED', 'CANCELLED'],
+      PROCESSING: ['PROCESSING', 'COMPLETED', 'CANCELLED'],
+    };
+
     let finalResultsJson: any = dto.resultsJson;
     if (dto.results !== undefined) {
       if (typeof dto.results === 'string') {
@@ -222,9 +275,14 @@ export class ClinicalService {
       }
     }
 
-    const nextStatus = dto.status || 'COMPLETED';
-    const isCompleted = nextStatus === 'COMPLETED' || finalResultsJson !== undefined;
-    const completedAt = isCompleted ? (order.completedAt || new Date()) : undefined;
+    const nextStatus = dto.status ?? order.status;
+    if (!(allowedTransitions[order.status] ?? []).includes(nextStatus)) {
+      throw new BadRequestException(
+        `Invalid lab order status transition from ${order.status} to ${nextStatus}`,
+      );
+    }
+
+    const completedAt = nextStatus === 'COMPLETED' ? (order.completedAt || new Date()) : undefined;
 
     return this.prisma.labOrder.update({
       where: { id: orderId },

@@ -30,8 +30,8 @@ export const ALLOWED_SESSION_TRANSITIONS: Record<
   SessionStatus,
   SessionStatus[]
 > = {
-  SCHEDULED: ['WAITING', 'LIVE', 'ENDED'],
-  WAITING: ['LIVE', 'ENDED'],
+  SCHEDULED: ['WAITING', 'LIVE'],
+  WAITING: ['LIVE'],
   LIVE: ['ENDED'],
   ENDED: [],
 };
