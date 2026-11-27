@@ -89,3 +89,18 @@ AssertionError: expected [ { raw: { …(2) }, …(10) }, …(9) ] to have a leng
 ```
 - **Output AFTER restoring guard (PASS):**
   Verified in `slice4-ambulance.spec.ts` (4/4 passed against real `pgvector/pgvector:pg16` + `redis:7-alpine`: 1 accepted `201`, 10 conflicting/unoffered rejected `409`).
+
+---
+
+## Security Audit Remediation Proofs (WS1–WS6, Defects B1–B28)
+
+New real-infrastructure integration & unit suites added on `main` to reproduce and verify all 28 audit findings (`pgvector/pgvector:pg16`, `redis:7-alpine`, real Mailpit/MinIO containers, FastAPI `TestClient`, Playwright + Axe):
+
+| Workstream | Test Suite | Defects Covered | Verification Environment |
+| --- | --- | --- | --- |
+| **WS1** (`3ce5543`) | `apps/api/test/ws1-payments-refunds.spec.ts` | `B1, B6, B7, B8, B11, B12, B13` | Testcontainers Postgres + Redis |
+| **WS2** (`74a27ec`) | `apps/api/test/ws2-consultation-noshow.spec.ts` | `B2, B3, B9, B19, B21, B22` | Testcontainers Postgres + Redis + Shared Logic |
+| **WS3** (`99a1930`) | `apps/api/test/ws3-concurrency-waitlist-tz.spec.ts` | `B8, B10, B14, B16, B17, B18, B22` | Testcontainers Postgres + Redis + Shared Logic |
+| **WS4** (`b8039aa`) | `apps/api/test/ws4-auth-privacy-ambulance.spec.ts`, `apps/web/test/api.test.ts` | `B5, B15, B20, B23, B25` | Testcontainers Postgres + Redis + Node test runner |
+| **WS5** (`c91855d`) | `apps/api/test/ws5-ai-infra-hardening.spec.ts`, `apps/worker/test/worker.spec.ts`, `services/ai/evals/test_evals.py` | `B4, B24, B27, B28` | Testcontainers Postgres + Redis + Mailpit + FastAPI TestClient (`7/7 passed`) |
+| **WS6** | `apps/api/test/ws6-performance-search.spec.ts`, `e2e/*.spec.ts` | `B26` + Full E2E (`5/5`) | Testcontainers Postgres + Redis + Full Docker Compose + Playwright/Axe |

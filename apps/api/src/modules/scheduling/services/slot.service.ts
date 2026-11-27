@@ -8,6 +8,8 @@ import {
   istWallClockToUtcDate,
 } from '../../../common/utils/ist-time';
 
+export const NEXT_SLOT_NONE_SENTINEL = 'NONE';
+
 export interface GeneratedSlot {
   slotTime: string; // ISO string (UTC instant corresponding to IST wall clock)
   displayTime: string; // HH:mm in Asia/Kolkata
@@ -82,7 +84,13 @@ export class SlotService {
     const minLeadTimeMs = 15 * 60 * 1000; // 15 minutes minimum lead time
     const maxAdvanceMs = 30 * 24 * 60 * 60 * 1000; // 30 days max advance
 
-    const slots: GeneratedSlot[] = [];
+    const rawSlots: Array<{
+      slotTime: string;
+      displayTime: string;
+      isBooked: boolean;
+      isOnLeave: boolean;
+      withinBookingWindow: boolean;
+    }> = [];
 
     for (const avail of availabilityList) {
       const [startHour, startMin] = avail.startTime.split(':').map(Number);
@@ -103,21 +111,12 @@ export class SlotService {
         const isPastOrTooSoon = slotMs < nowMs + minLeadTimeMs;
         const isBeyondMaxAdvance = slotMs > nowMs + maxAdvanceMs;
 
-        const isBooked = bookedIsoSet.has(slotTimeIso);
-        const held = await this.redis.getSlotHold(doctorId, slotTimeIso);
-        const isHeld = !!held;
-        const isOnLeave = !!onLeave;
-
-        const isAvailable =
-          !isBooked && !isHeld && !isOnLeave && !isPastOrTooSoon && !isBeyondMaxAdvance;
-
-        slots.push({
+        rawSlots.push({
           slotTime: slotTimeIso,
           displayTime,
-          isAvailable,
-          isHeld,
-          isBooked,
-          isOnLeave,
+          isBooked: bookedIsoSet.has(slotTimeIso),
+          isOnLeave: !!onLeave,
+          withinBookingWindow: !isPastOrTooSoon && !isBeyondMaxAdvance,
         });
 
         currentMinutes += slotDuration;
@@ -125,13 +124,33 @@ export class SlotService {
     }
 
     const seenSlots = new Set<string>();
-    const uniqueSlots: GeneratedSlot[] = [];
-    for (const slot of slots) {
+    const dedupedRaw: typeof rawSlots = [];
+    for (const slot of rawSlots) {
       if (!seenSlots.has(slot.slotTime)) {
         seenSlots.add(slot.slotTime);
-        uniqueSlots.push(slot);
+        dedupedRaw.push(slot);
       }
     }
+
+    // Batch-check Redis holds with a single MGET instead of N per-slot GETs
+    const holdsMap = await this.redis.getSlotHoldsBatch(
+      doctorId,
+      dedupedRaw.map((s) => s.slotTime),
+    );
+
+    const uniqueSlots: GeneratedSlot[] = dedupedRaw.map((s) => {
+      const isHeld = !!holdsMap.get(s.slotTime);
+      const isAvailable =
+        !s.isBooked && !isHeld && !s.isOnLeave && s.withinBookingWindow;
+      return {
+        slotTime: s.slotTime,
+        displayTime: s.displayTime,
+        isAvailable,
+        isHeld,
+        isBooked: s.isBooked,
+        isOnLeave: s.isOnLeave,
+      };
+    });
 
     uniqueSlots.sort((a, b) => a.slotTime.localeCompare(b.slotTime));
     return uniqueSlots;
@@ -147,6 +166,7 @@ export class SlotService {
     if (client) {
       try {
         const cached = await client.get(cacheKey);
+        if (cached === NEXT_SLOT_NONE_SENTINEL) return null;
         if (cached) return cached;
       } catch {
         // Ignore Redis cache miss errors
@@ -175,6 +195,15 @@ export class SlotService {
           }
         }
         return available.slotTime;
+      }
+    }
+
+    // Negative cache sentinel to avoid repeating 7-day scans for unavailable doctors
+    if (client) {
+      try {
+        await client.set(cacheKey, NEXT_SLOT_NONE_SENTINEL, 'EX', 60);
+      } catch {
+        // Ignore Redis cache write errors
       }
     }
 

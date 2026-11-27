@@ -177,3 +177,7 @@ html.dark .cb-card {
     outline: 2px solid Highlight;
   }
 }
+
+.leaflet-control-attribution a {
+  text-decoration: underline !important;
+}

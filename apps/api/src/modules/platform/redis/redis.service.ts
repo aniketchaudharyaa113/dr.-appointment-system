@@ -71,12 +71,7 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
     return res === 'OK';
   }
 
-  async getSlotHold(
-    doctorId: string,
-    slotTimeIso: string,
-  ): Promise<ParsedSlotHold | null> {
-    const key = this.holdKey(doctorId, slotTimeIso);
-    const raw = await this.client.get(key);
+  private parseSlotHoldValue(raw: string | null): ParsedSlotHold | null {
     if (!raw) return null;
     const sepIndex = raw.lastIndexOf(':');
     if (sepIndex <= 0) return null;
@@ -84,6 +79,33 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
       token: raw.slice(0, sepIndex),
       patientId: raw.slice(sepIndex + 1),
     };
+  }
+
+  async getSlotHold(
+    doctorId: string,
+    slotTimeIso: string,
+  ): Promise<ParsedSlotHold | null> {
+    const key = this.holdKey(doctorId, slotTimeIso);
+    const raw = await this.client.get(key);
+    return this.parseSlotHoldValue(raw);
+  }
+
+  /**
+   * Batch slot-hold lookup using a single Redis MGET instead of N per-slot GETs.
+   */
+  async getSlotHoldsBatch(
+    doctorId: string,
+    slotTimeIsos: string[],
+  ): Promise<Map<string, ParsedSlotHold | null>> {
+    const result = new Map<string, ParsedSlotHold | null>();
+    if (slotTimeIsos.length === 0) return result;
+    const uniqueIsos = Array.from(new Set(slotTimeIsos));
+    const keys = uniqueIsos.map((iso) => this.holdKey(doctorId, iso));
+    const values = await this.client.mget(...keys);
+    for (let i = 0; i < uniqueIsos.length; i++) {
+      result.set(uniqueIsos[i], this.parseSlotHoldValue(values[i] ?? null));
+    }
+    return result;
   }
 
   async refreshSlotHoldTtl(

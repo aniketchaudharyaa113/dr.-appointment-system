@@ -35,7 +35,7 @@ describe('Slice 3: Cross-Instance Sockets, Room Authorization, LiveKit Join Wind
         MINIO_ROOT_PASSWORD: env.MINIO_SECRET_KEY,
       })
       .withExposedPorts(9000)
-      .withWaitStrategy(Wait.forListeningPorts())
+      .withWaitStrategy(Wait.forHttp('/minio/health/live', 9000))
       .start();
 
     const minioHost = minioContainer.getHost();

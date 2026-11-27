@@ -168,7 +168,7 @@ jobs:
         run: |
           docker pull pgvector/pgvector:pg16 &
           docker pull redis:7-alpine &
-          docker pull minio/minio:latest &
+          docker pull bitnamilegacy/minio:latest &
           docker pull axllent/mailpit:latest &
           docker pull livekit/livekit-server:latest &
           wait
@@ -176,6 +176,8 @@ jobs:
 
       - name: Boot full-stack Docker Compose (FAKE payment for E2E)
         env:
+          NODE_ENV: test
+          ENABLE_DEV_ENDPOINTS: "true"
           POSTGRES_PASSWORD: ci_pg_strong_password_2026
           JWT_SECRET: ci_strong_jwt_secret_key_for_github_actions_e2e_2026
           COOKIE_SECRET: ci_strong_cookie_secret_key_for_e2e_2026

@@ -385,10 +385,11 @@ export default function EmergencyPage() {
                 )}
 
                 <div className="space-y-2">
-                  <label className="block text-xs font-medium text-slate-600 dark:text-slate-400">
+                  <label htmlFor="pickup-address" className="block text-xs font-medium text-slate-600 dark:text-slate-400">
                     Pickup Address
                   </label>
                   <input
+                    id="pickup-address"
                     type="text"
                     value={pickupAddress}
                     onChange={(e) => setPickupAddress(e.target.value)}
@@ -420,8 +421,9 @@ export default function EmergencyPage() {
 
                 <div className="grid grid-cols-2 gap-2 text-xs text-slate-500">
                   <div>
-                    <label className="block font-medium mb-1">Latitude</label>
+                    <label htmlFor="pickup-lat" className="block font-medium mb-1">Latitude</label>
                     <input
+                      id="pickup-lat"
                       type="number"
                       step="0.0001"
                       value={pickupLat}
@@ -430,8 +432,9 @@ export default function EmergencyPage() {
                     />
                   </div>
                   <div>
-                    <label className="block font-medium mb-1">Longitude</label>
+                    <label htmlFor="pickup-lng" className="block font-medium mb-1">Longitude</label>
                     <input
+                      id="pickup-lng"
                       type="number"
                       step="0.0001"
                       value={pickupLng}

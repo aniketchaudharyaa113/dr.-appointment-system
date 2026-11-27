@@ -2,7 +2,7 @@ import { Injectable, NotFoundException, BadRequestException, Inject } from '@nes
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../platform/database/prisma.service';
 import { RedisService } from '../../platform/redis/redis.service';
-import { SlotService } from './slot.service';
+import { SlotService, NEXT_SLOT_NONE_SENTINEL } from './slot.service';
 import { getIstDayBoundsUtc, getIstDateString } from '../../../common/utils/ist-time';
 import { UpdateDoctorAvailabilityInput, UpdateDoctorProfileInput } from '@medibook/shared';
 
@@ -57,10 +57,11 @@ export class DoctorService {
 
     let symptomSpecialties: string[] | null = null;
     const rawSearchQuery = params.symptomQuery?.trim();
+    const escapedSearchQuery = rawSearchQuery ? rawSearchQuery.replace(/[!%_]/g, '!$&') : '';
 
     // 1. If symptom/search query provided, lookup matching specialties via pg_trgm similarity OR substring match
     if (rawSearchQuery) {
-      const likePattern = `%${rawSearchQuery}%`;
+      const likePattern = `%${escapedSearchQuery}%`;
       try {
         const trgmMatches = await this.prisma.$queryRaw<
           Array<{ specialty: string; similarity: number }>
@@ -68,8 +69,8 @@ export class DoctorService {
           SELECT DISTINCT ON (specialty) specialty, similarity(symptom, ${rawSearchQuery}) AS similarity
           FROM symptom_specialty_map
           WHERE symptom % ${rawSearchQuery}
-             OR symptom ILIKE ${likePattern}
-             OR specialty ILIKE ${likePattern}
+             OR symptom ILIKE ${likePattern} ESCAPE '!'
+             OR specialty ILIKE ${likePattern} ESCAPE '!'
           ORDER BY specialty, similarity DESC
           LIMIT 5;
         `;
@@ -125,9 +126,9 @@ export class DoctorService {
             Prisma.sql`d.specialty IN (${Prisma.join(requestedSpecs)})`,
           );
           if (symptomSpecialties.length === 0 && rawSearchQuery) {
-            const likeQ = `%${rawSearchQuery}%`;
+            const likeQ = `%${escapedSearchQuery}%`;
             whereConditions.push(
-              Prisma.sql`(u.name ILIKE ${likeQ} OR d.specialty ILIKE ${likeQ} OR COALESCE(d.qualifications, '') ILIKE ${likeQ} OR COALESCE(d.clinic_name, '') ILIKE ${likeQ})`,
+              Prisma.sql`(u.name ILIKE ${likeQ} ESCAPE '!' OR d.specialty ILIKE ${likeQ} ESCAPE '!' OR COALESCE(d.qualifications, '') ILIKE ${likeQ} ESCAPE '!' OR COALESCE(d.clinic_name, '') ILIKE ${likeQ} ESCAPE '!')`,
             );
           }
         }
@@ -140,14 +141,14 @@ export class DoctorService {
       const expandedSpecs = Array.from(
         new Set(symptomSpecialties.flatMap(expandSpecialtySynonyms)),
       );
-      const likeQ = `%${rawSearchQuery}%`;
+      const likeQ = `%${escapedSearchQuery}%`;
       if (expandedSpecs.length > 0) {
         whereConditions.push(
-          Prisma.sql`(d.specialty IN (${Prisma.join(expandedSpecs)}) OR u.name ILIKE ${likeQ} OR d.specialty ILIKE ${likeQ})`,
+          Prisma.sql`(d.specialty IN (${Prisma.join(expandedSpecs)}) OR u.name ILIKE ${likeQ} ESCAPE '!' OR d.specialty ILIKE ${likeQ} ESCAPE '!')`,
         );
       } else {
         whereConditions.push(
-          Prisma.sql`(u.name ILIKE ${likeQ} OR d.specialty ILIKE ${likeQ} OR COALESCE(d.qualifications, '') ILIKE ${likeQ} OR COALESCE(d.clinic_name, '') ILIKE ${likeQ})`,
+          Prisma.sql`(u.name ILIKE ${likeQ} ESCAPE '!' OR d.specialty ILIKE ${likeQ} ESCAPE '!' OR COALESCE(d.qualifications, '') ILIKE ${likeQ} ESCAPE '!' OR COALESCE(d.clinic_name, '') ILIKE ${likeQ} ESCAPE '!')`,
         );
       }
     }
@@ -263,8 +264,12 @@ export class DoctorService {
         const keys = doctors.map((d) => `cache:next_slot:${d.id}`);
         const cached = await client.mget(...keys);
         for (let i = 0; i < doctors.length; i++) {
-          if (cached && cached[i]) {
-            slotMap.set(doctors[i].id, cached[i]);
+          const val = cached ? cached[i] : null;
+          if (val !== null && val !== undefined) {
+            slotMap.set(
+              doctors[i].id,
+              val === NEXT_SLOT_NONE_SENTINEL ? null : val,
+            );
           }
         }
       } catch {
@@ -594,7 +599,7 @@ export class DoctorService {
       }
     }
 
-    return this.prisma.$transaction(async (tx) => {
+    const updated = await this.prisma.$transaction(async (tx) => {
       await tx.availability.deleteMany({
         where: { doctorId: doctor.id },
       });
@@ -616,5 +621,16 @@ export class DoctorService {
         orderBy: [{ dayOfWeek: 'asc' }, { startTime: 'asc' }],
       });
     });
+
+    const redisClient = this.redis.getClient();
+    if (redisClient) {
+      try {
+        await redisClient.del(`cache:next_slot:${doctor.id}`);
+      } catch {
+        // Non-fatal cache invalidation failure
+      }
+    }
+
+    return updated;
   }
 }

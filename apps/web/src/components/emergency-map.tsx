@@ -97,6 +97,8 @@ export function EmergencyMap({
       } else {
         layersRef.current.pickup = L.marker([pickup.lat, pickup.lng], {
           icon: pickupIcon,
+          title: pickup.label || 'Emergency Pickup Location',
+          alt: pickup.label || 'Emergency Pickup Location',
         })
           .bindPopup(escapeHtml(pickup.label || 'Emergency Pickup'))
           .addTo(map);
@@ -111,7 +113,7 @@ export function EmergencyMap({
           iconSize: [22, 22],
           iconAnchor: [11, 11],
         });
-        return L.marker([h.latitude, h.longitude], { icon })
+        return L.marker([h.latitude, h.longitude], { icon, title: h.name, alt: h.name })
           .bindPopup(
             `<strong>${escapeHtml(h.name)}</strong><br/>Emergency: ${escapeHtml(h.emergencyPhone)}${
               h.distanceKm !== undefined ? `<br/>${h.distanceKm} km away` : ''
@@ -131,7 +133,8 @@ export function EmergencyMap({
             iconSize: [34, 18],
             iconAnchor: [17, 9],
           });
-          return L.marker([u.latitude!, u.longitude!], { icon })
+          const label = u.vehicleNumber ? `EMS Unit ${u.vehicleNumber}` : 'Active EMS Unit';
+          return L.marker([u.latitude!, u.longitude!], { icon, title: label, alt: label })
             .bindPopup(escapeHtml(u.vehicleNumber ? `Unit ${u.vehicleNumber}` : 'Active EMS Unit'))
             .addTo(map);
         });
@@ -152,7 +155,11 @@ export function EmergencyMap({
         } else {
           layersRef.current.ambulance = L.marker(
             [ambulance.lat, ambulance.lng],
-            { icon: ambIcon },
+            {
+              icon: ambIcon,
+              title: `Dispatched Ambulance ${ambulance.vehicleNumber || ''}`.trim(),
+              alt: `Dispatched Ambulance ${ambulance.vehicleNumber || ''}`.trim(),
+            },
           ).addTo(map);
         }
 

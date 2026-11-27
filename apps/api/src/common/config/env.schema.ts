@@ -18,6 +18,11 @@ const strictBooleanEnv = z.preprocess((val) => {
   return val;
 }, z.boolean());
 
+const optionalSecretMin8 = z.preprocess(
+  (val) => (typeof val === 'string' && val.trim() === '' ? undefined : val),
+  z.string().min(8).optional(),
+);
+
 export const EnvSchema = z
   .object({
     NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
@@ -35,10 +40,13 @@ export const EnvSchema = z
     ENABLE_DEV_ENDPOINTS: strictBooleanEnv.default(false),
     // Payments (fail-fast: no hardcoded secret defaults)
     PAYMENT_PROVIDER: z.enum(['RAZORPAY', 'STRIPE', 'FAKE']).default('FAKE'),
-    PAYMENT_WEBHOOK_SECRET: z.string().min(8).optional(),
-    RAZORPAY_KEY_ID: z.string().optional(),
-    RAZORPAY_KEY_SECRET: z.string().min(8).optional(),
-    RAZORPAY_WEBHOOK_SECRET: z.string().min(8).optional(),
+    PAYMENT_WEBHOOK_SECRET: optionalSecretMin8,
+    RAZORPAY_KEY_ID: z.preprocess(
+      (val) => (typeof val === 'string' && val.trim() === '' ? undefined : val),
+      z.string().optional(),
+    ),
+    RAZORPAY_KEY_SECRET: optionalSecretMin8,
+    RAZORPAY_WEBHOOK_SECRET: optionalSecretMin8,
     // LiveKit (no hardcoded secret defaults)
     LIVEKIT_API_KEY: z.string().min(3, 'LIVEKIT_API_KEY is required'),
     LIVEKIT_API_SECRET: z.string().min(16, 'LIVEKIT_API_SECRET must be at least 16 characters'),

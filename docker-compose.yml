@@ -33,10 +33,9 @@ services:
       retries: 5
 
   minio:
-    image: minio/minio:latest
+    image: bitnamilegacy/minio:latest
     container_name: medibook-minio
     restart: unless-stopped
-    command: server /data --console-address ":9001"
     environment:
       MINIO_ROOT_USER: ${MINIO_ACCESS_KEY:?MINIO_ACCESS_KEY is required}
       MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY:?MINIO_SECRET_KEY is required}
@@ -44,7 +43,7 @@ services:
       - "127.0.0.1:9000:9000"
       - "127.0.0.1:9001:9001"
     volumes:
-      - minio_data:/data
+      - minio_data:/bitnami/minio/data
     healthcheck:
       test: [ "CMD", "curl", "-f", "http://localhost:9000/minio/health/live" ]
       interval: 10s
@@ -109,7 +108,8 @@ services:
       JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
       COOKIE_SECRET: ${COOKIE_SECRET:?COOKIE_SECRET is required}
       CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost,http://localhost:3000}
-      NODE_ENV: production
+      NODE_ENV: ${NODE_ENV:-production}
+      ENABLE_DEV_ENDPOINTS: ${ENABLE_DEV_ENDPOINTS:-false}
       AI_SERVICE_URL: http://ai:8000
       AI_INTERNAL_TOKEN: ${AI_INTERNAL_TOKEN:?AI_INTERNAL_TOKEN is required}
       PAYMENT_PROVIDER: ${PAYMENT_PROVIDER:-RAZORPAY}
@@ -153,7 +153,8 @@ services:
       JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
       COOKIE_SECRET: ${COOKIE_SECRET:?COOKIE_SECRET is required}
       CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost,http://localhost:3000}
-      NODE_ENV: production
+      NODE_ENV: ${NODE_ENV:-production}
+      ENABLE_DEV_ENDPOINTS: ${ENABLE_DEV_ENDPOINTS:-false}
       AI_SERVICE_URL: http://ai:8000
       AI_INTERNAL_TOKEN: ${AI_INTERNAL_TOKEN:?AI_INTERNAL_TOKEN is required}
       PAYMENT_PROVIDER: ${PAYMENT_PROVIDER:-RAZORPAY}
@@ -194,7 +195,8 @@ services:
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/${POSTGRES_DB:-medibook}?schema=public
       REDIS_URL: redis://redis:6379
-      NODE_ENV: production
+      NODE_ENV: ${NODE_ENV:-production}
+      ENABLE_DEV_ENDPOINTS: ${ENABLE_DEV_ENDPOINTS:-false}
       SMTP_HOST: mailpit
       SMTP_PORT: 1025
     depends_on:

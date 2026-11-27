@@ -41,6 +41,6 @@ test.describe('Patient Booking & Payment E2E Journey (Real API + DB + Redis + Si
     // 8. Navigate to My Appointments and verify confirmed appointment appears
     await page.click('a:has-text("My Appointments")');
     await expect(page).toHaveURL(/\/appointments$/);
-    await expect(page.locator('text=CONFIRMED').first()).toBeVisible();
+    await expect(page.getByText('CONFIRMED', { exact: true }).first()).toBeVisible();
   });
 });

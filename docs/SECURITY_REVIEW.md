@@ -111,8 +111,12 @@ This document provides a comprehensive security review of the rebuilt MediBook t
 
 ---
 
-### A10: Server-Side Request Forgery (SSRF)
-- **Risk:** AI service or webhook client making requests to arbitrary internal addresses.
+### A10: Server-Side Request Forgery (SSRF) & Service-to-Service Auth
+- **Risk:** AI service or webhook client making requests to arbitrary internal addresses, or direct bypass of role checks by reaching backend microservices.
 - **Implementation & Mitigations:**
-  - Outgoing HTTP clients (AI Gateway, Razorpay client) connect strictly to validated upstream URLs (`AI_SERVICE_URL`, `RAZORPAY_API_URL`).
-  - Circuit breaker in AI Gateway rejects calls if latency exceeds timeouts or failures spike, with deterministic local fallback.
+  - Outgoing HTTP clients (AI Gateway, Razorpay client) connect strictly to validated upstream URLs (`AI_SERVICE_URL`, Razorpay/Fake gateways).
+  - Fast-fail circuit breaker in `AiClientService` opens on upstream timeout/5xx errors, preventing cascading thread/connection exhaustion, while Indian phone/Aadhaar PII regexes enforce digit word-boundaries (`(?<!\d)` / `(?!\d)`).
+  - FastAPI AI service enforces constant-time `X-Internal-Token` authentication (`hmac.compare_digest`), rejects non-`DOCTOR` callers on `/copilot/draft-note`, scrubs chat transcripts before upstream inference, and is isolated to internal Docker networks (`expose: ["8000"]`).
+  - Strict boolean environment parsing (`strictBooleanEnv` rejecting `ENABLE_DEV_ENDPOINTS="false"` -> `false`), non-admin driver coordinates redaction on `/ambulance/drivers/online`, `ESCAPE '!'` LIKE wildcard neutralization in `DoctorService`, and `ConsultationAttachment.isVerified` checks on chat attachments.
+- **Proof Tests:**
+  - `apps/api/test/ws4-auth-privacy-ambulance.spec.ts`, `apps/api/test/ws5-ai-infra-hardening.spec.ts`, `apps/api/test/ws6-performance-search.spec.ts`, and `services/ai/evals/test_evals.py`.
